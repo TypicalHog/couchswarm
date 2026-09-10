@@ -1,0 +1,74 @@
+'use client';
+import { useEffect, useState } from 'react';
+import { Download, Link2, MonitorPlay } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { helperRequest, helperStatus, type HelperStatus } from '@/lib/remote-helper';
+import { PAIR_TTL_MS, type Session } from '@/lib/sync';
+
+export function HelperConnection({ session, isHost, reconnect, needed, open, onOpenChange }:
+  { session: Session; isHost: boolean; reconnect: () => void; needed: boolean; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [status, setStatus] = useState<HelperStatus | null>(null);
+  const [pairingUrl, setPairingUrl] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    let running = false;
+    async function poll() {
+      let paired = false;
+      running = true;
+      try {
+        const result = await helperStatus(session, abort.signal);
+        if (abort.signal.aborted) return;
+        setStatus(result);
+        if (result.mine && result.online) setPairingUrl('');
+        paired = result.paired;
+      } catch { /* The room connection already reports connectivity failures. */ }
+      finally { running = false; }
+      // A hidden tab stops polling entirely; the listener below restarts it the moment the user comes back.
+      if (!abort.signal.aborted && !document.hidden) timer = setTimeout(() => void poll(), paired ? 3000 : 15000);
+    }
+    const onVisibility = () => { clearTimeout(timer); if (!document.hidden && !running) void poll(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    void poll();
+    return () => { abort.abort(); clearTimeout(timer); document.removeEventListener('visibilitychange', onVisibility); };
+  }, [session]);
+  async function pair() {
+    setBusy(true); setError(''); setCopied(false);
+    try { const result = await helperRequest<{ pairingUrl: string }>(session, { action: 'pair' }); setPairingUrl(result.pairingUrl); }
+    catch (error) { setError(error instanceof Error ? error.message : 'Could not create a pairing link.'); }
+    finally { setBusy(false); }
+  }
+  async function unpair() {
+    setBusy(true); setError('');
+    const servedByMine = !!status?.own;
+    try { await helperRequest(session, { action: 'unpair' }); setPairingUrl(''); setStatus(await helperStatus(session)); if (servedByMine) reconnect(); }
+    catch { setError('Could not disconnect the helper. Try again.'); }
+    finally { setBusy(false); }
+  }
+  // The status describes the helper this browser streams from; `own` says whether it is this participant's.
+  const running = !!status?.own && status.online;
+  const hostServing = !!status?.paired && !status.own;
+  // Everyone gets a next step: the host to start theirs, a guest to stop depending on the host's.
+  const hint = running ? ''
+    : hostServing ? status!.online
+      ? 'Streaming through your host’s helper. Run your own to download straight from torrent peers.'
+      : 'Waiting for your host’s helper. You can run your own instead.'
+    : isHost ? 'Start your helper so this room can reach ordinary torrent peers. Your friends only need the room link.'
+    : 'Nobody is running a helper yet. Run your own to reach ordinary torrent peers.';
+  return <>
+    <button className={`helper-button ${needed && !running ? 'primary-button' : 'outline-button'}`} onClick={() => onOpenChange(true)}><MonitorPlay size={16}/>{running ? 'Helper connected' : 'Connect your helper'}</button>
+    {hint && <p className="helper-note">{hint}</p>}
+    <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="modal"><DialogHeader><DialogTitle>Your movie-night helper</DialogTitle><DialogDescription>{isHost ? 'Run the helper on your Windows computer and keep it open while you watch. Your friends only need the room link.' : 'Run the helper on your Windows computer to download from torrent peers yourself instead of through your host. Keep it open while you watch.'}</DialogDescription></DialogHeader>
+      <ol className="helper-steps"><li>{status?.downloadUrl ? <a className="outline-button" href={status.downloadUrl}><Download size={16}/> Download for Windows</a> : <span>The helper download hasn’t been configured for this site yet.</span>}<p>Extract the ZIP, then open CouchSwarm Helper.exe.</p></li>
+        <li>{status?.mine && status.online ? <p>Your helper is already connected. Use “Disconnect helper” below before pairing another computer.</p> : <><button className="primary-button" aria-busy={busy} onClick={() => { if (!busy) void pair(); }}>{pairingUrl ? 'Create a fresh pairing link' : 'Create pairing link'}<Link2 size={16}/></button><p>Paste this private link into the helper. It works once and expires in {Math.round(PAIR_TTL_MS / 60000)} minutes.</p></>}</li></ol>
+      {pairingUrl && <div className="invite-link"><input className="text-input" aria-label="Private helper pairing link" readOnly value={pairingUrl} onFocus={event => event.target.select()}/><button className="primary-button" onClick={async () => { try { await navigator.clipboard.writeText(pairingUrl); setCopied(true); } catch { setError('Select the link and copy it manually.'); } }}>{copied ? 'Copied' : 'Copy'}</button></div>}
+      <output className="helper-note">{running ? status.status : 'Waiting for your helper.'}</output>
+      {running && !status.relayAvailable && <p className="helper-note">Direct connections are available. The site owner still needs to configure a relay for networks that block them.</p>}
+      {status?.mine && <button className="quiet-button" aria-busy={busy} onClick={() => { if (!busy) void unpair(); }}>Disconnect helper</button>}
+      {error && <p className="error" role="alert">{error}</p>}
+    </DialogContent></Dialog>
+  </>;
+}
