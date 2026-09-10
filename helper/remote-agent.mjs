@@ -1,18 +1,28 @@
-import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readdir, rm, stat } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import WebTorrent from 'webtorrent';
 import Peer from '@thaunknown/simple-peer';
-import { torrentPathIssue, torrentSource } from './torrent-helper.mjs';
+import { torrentPathIssue, torrentSource, videoSpanFiles } from './torrent-helper.mjs';
 import { serveTorrentPeer } from './remote-wire.mjs';
 import { MAX_SEATS } from './constants.mjs';
+
+const run = promisify(execFile);
+// Pieces kept selected past recent requests: enough to pipeline the swarm fetch, far short of a whole movie. A browser
+// reads at its playhead and backfills from the start of the file at the same time, so a few regions stay selected.
+const READ_AHEAD_BYTES = 32 * 1024 * 1024;
+const READ_AHEAD_WINDOWS = 4;
+const describe = error => error?.code === 'ENOSPC' ? 'The download drive is full.' : `The torrent connection failed${error?.code ? ` (${error.code})` : ''}.`;
 
 export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = () => {}, pollMs = 2000,
   createClient = () => new WebTorrent({ natUpnp: false, natPmp: false, lsd: false, utp: false, ...(process.env.COUCHSWARM_HELPER_OFFLINE === '1' ? { dht: false, tracker: false } : {}) }),
   iceOverride }) {
   let grant, origin, client, torrent, directory, mediaVersion = -1, timer, closed = false, loading, loadedSource = '', swept = false;
   let status = 'Waiting for a pairing link.', lastContact = 0, previousStatus;
-  let desiredVersion = -2, loadAbort, attemptedVersion = -2, attempts = 0;
+  let desiredVersion = -2, loadAbort, attemptedVersion = -2, attempts = 0, readyAt = 0;
   const peers = new Map();
+  const windows = [];
   const root = path.resolve(cacheRoot);
   const notify = message => { status = message; report({ status, peers: peers.size, torrentPeers: torrent?.numPeers || 0 }); };
   async function api(body) {
@@ -32,6 +42,43 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     directory = undefined;
     if (previousClient && !previousClient.destroyed) await new Promise(resolve => previousClient.destroy(resolve));
     if (!keepDownloads && previousDirectory && path.dirname(previousDirectory) === root) await rm(previousDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch(() => {});
+  }
+  // A later poll sees the room's version differ from desiredVersion and loads again.
+  function scheduleRetry() {
+    const version = attemptedVersion;
+    setTimeout(() => { if (!closed && desiredVersion === version) desiredVersion = -2; }, 15000).unref();
+  }
+  // NTFS zero-fills everything below a write, so the tail pieces an MKV player reads first would allocate the
+  // whole movie at once and can fill the drive. A sparse file only allocates the pieces that arrive.
+  async function markSparse(value, signal) {
+    if (process.platform !== 'win32') return;
+    let store = value.store;
+    while (store && !Array.isArray(store.files)) store = store.store;
+    const wanted = new Set(videoSpanFiles(value));
+    for (const [index, file] of value.files.entries()) {
+      if (signal.aborted) return;
+      const target = store?.files[index];
+      if (!target || !wanted.has(file) || file.length <= value.pieceLength) continue;
+      try {
+        await mkdir(path.dirname(target.path), { recursive: true });
+        await (await open(target.path, 'a')).close();
+        await run('fsutil', ['sparse', 'setflag', target.path], { windowsHide: true, timeout: 5000, signal });
+      } catch (error) { console.error('Sparse flag failed:', error.message); }
+    }
+  }
+  // Keep bounded runs of pieces past recent requests selected, so the swarm fetch pipelines instead of stopping after
+  // each piece a browser asks for. A request past the middle of its window slides that window forward; one outside every
+  // window opens another, retiring the oldest. The request's own stream selection has higher priority and stays first.
+  function readAhead(value, piece) {
+    if (value !== torrent || value.destroyed) return;
+    const span = Math.ceil(READ_AHEAD_BYTES / value.pieceLength);
+    const index = windows.findIndex(window => piece >= window.from && piece <= window.to);
+    if (index >= 0 && piece <= windows[index].from + span / 2) return;
+    const stale = index >= 0 ? windows.splice(index, 1)[0] : windows.length >= READ_AHEAD_WINDOWS ? windows.shift() : null;
+    if (stale) value.deselect(stale.from, stale.to);
+    const window = { from: piece, to: Math.min(value.pieces.length - 1, piece + span) };
+    windows.push(window);
+    value.select(window.from, window.to, 0);
   }
   async function load(room, signal) {
     if (torrent && room.source === loadedSource) { mediaVersion = room.mediaVersion; return; }
@@ -67,22 +114,34 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     if (closed || signal.aborted) return;
     client = createClient();
     const currentClient = client;
-    const failed = () => {
-      if (closed || signal.aborted || client !== currentClient) return;
+    const value = client.add(source, { path: directory, strategy: 'sequential', deselect: true, destroyStoreOnDestroy: !keepDownloads });
+    let cause;
+    // A torrent that already served the room is reloaded rather than abandoned: disk and swarm errors are usually transient.
+    const failed = error => {
+      if (closed || signal.aborted || client !== currentClient || torrent !== value) return;
+      console.error('Torrent failed:', error?.stack || error || 'closed without an error');
+      if (Date.now() - readyAt > 300000) attempts = 0;
       void clearTorrent().then(() => {
-        if (!closed && !signal.aborted) notify('The torrent connection failed. Choose another movie or stop and pair again to retry.');
+        if (closed || signal.aborted) return;
+        if (attempts < 3) { notify(`${describe(error)} Reconnecting…`); scheduleRetry(); } else notify(`${describe(error)} Choose the movie again in the room to retry.`);
       }).catch(() => { if (!closed && !signal.aborted) notify('Torrent stopped. Close the helper before clearing its temporary cache.'); });
     };
-    client.on('error', failed);
-    const value = client.add(source, { path: directory, strategy: 'sequential', deselect: true, destroyStoreOnDestroy: !keepDownloads });
-    value.on('error', () => { if (torrent === value) failed(); });
-    value.on('close', () => { if (torrent === value) failed(); });
+    client.on('error', error => { cause = error; failed(error); });
+    value.on('error', error => { cause = error; failed(error); });
+    // A client failure closes the torrent before reporting why, so let that report land first.
+    value.on('close', () => queueMicrotask(() => failed(cause)));
     await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('No torrent metadata arrived. Check that this torrent has online seeders.')), 90000);
-      const finish = error => { clearTimeout(timeout); signal.removeEventListener('abort', stopped); value.off('ready', ready); value.off('error', finish); value.off('close', stopped); if (error) reject(error); else resolve(); };
+      let timeout = setTimeout(() => reject(new Error('No torrent metadata arrived. Check that this torrent has online seeders.')), 90000);
+      const finish = error => { clearTimeout(timeout); signal.removeEventListener('abort', stopped); value.off('metadata', found); value.off('ready', ready); value.off('error', finish); value.off('close', stopped); if (error) reject(error); else resolve(); };
+      // Checking a kept download against its hashes can outlast the discovery budget, so it gets its own.
+      const found = () => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => reject(new Error('Checking the movie files on disk took too long.')), 600000);
+        if (!signal.aborted) notify('Checking the movie files on disk…');
+      };
       const ready = () => finish();
-      const stopped = () => finish(new Error('Torrent stopped.'));
-      value.once('ready', ready); value.once('error', finish); value.once('close', stopped);
+      const stopped = () => queueMicrotask(() => finish(new Error(cause ? describe(cause) : 'Torrent stopped.')));
+      value.once('metadata', found); value.once('ready', ready); value.once('error', finish); value.once('close', stopped);
       signal.addEventListener('abort', stopped, { once: true });
       if (signal.aborted) stopped();
       if (value.ready) ready();
@@ -90,8 +149,13 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     if (closed || signal.aborted) return;
     const issue = torrentPathIssue(value);
     if (issue) throw new Error(issue);
+    await markSparse(value, signal);
+    if (closed || signal.aborted) return;
+    if (value.destroyed) throw new Error(describe(cause));
     torrent = value;
     loadedSource = room.source;
+    readyAt = Date.now();
+    windows.length = 0;
     notify('Ready. Keep this helper open while everyone watches.');
   }
   async function poll() {
@@ -116,8 +180,10 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
           await clearTorrent();
           if (closed || controller.signal.aborted) return;
           const retry = attempts < 3 && !/public internet addresses|magnet or HTTPS|Choose another torrent/.test(error.message);
-          notify(retry ? `${error.message} Retrying…` : `${error.message} Choose the movie again in the room to retry.`);
-          if (retry) { const version = attemptedVersion; setTimeout(() => { if (!closed && desiredVersion === version) desiredVersion = -2; }, 15000).unref(); }
+          // Filesystem errors carry local paths, which the room must never see.
+          const message = error.code ? describe(error) : error.message;
+          notify(retry ? `${message} Retrying…` : `${message} Choose the movie again in the room to retry.`);
+          if (retry) scheduleRetry();
         });
       }
       const live = new Set(data.peers.map(peer => peer.id));
@@ -135,7 +201,11 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
           peer.on('error', () => {});
           const disconnected = () => { clearTimeout(timeout); if (peers.get(remote.id) === peer) peers.delete(remote.id); };
           peer.once('close', disconnected); peer.once('disconnect', disconnected);
-          peer.once('connect', () => { clearTimeout(timeout); if (torrent && !closed) serveTorrentPeer(peer, torrent); else peer.destroy(); });
+          peer.once('connect', () => {
+            clearTimeout(timeout);
+            const served = torrent;
+            if (served && !closed) serveTorrentPeer(peer, served, piece => readAhead(served, piece)); else peer.destroy();
+          });
           peer.on('signal', answer => { void api({ action: 'answer', peerId: remote.id, answer }).catch(() => peer.destroy()); });
           peer.signal(remote.offer);
         }

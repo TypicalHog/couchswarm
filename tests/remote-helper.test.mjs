@@ -143,7 +143,13 @@ test('remote helper delivers magnet metadata and seekable multi-file bytes from 
   assert.ok(received.downloaded < seeded.length, 'the helper does not download the whole torrent before a seek');
   const native = nativeClient.torrents[0];
   assert.ok(native.downloaded < seeded.length / 2, `the helper fetched only the pieces the viewer asked for (${native.downloaded} of ${seeded.length})`);
+  // bittorrent-protocol answers identical outstanding requests in arrival order, so a repeat must join the first read instead of failing it.
+  const block = () => new Promise((resolve, reject) => received.wires[0].request(6, 0, 16384, (error, data) => error ? reject(error) : resolve(Buffer.from(data))));
+  const twins = await Promise.all([block(), block()]);
+  assert.deepEqual(twins, [second.subarray(81921, 98305), second.subarray(81921, 98305)], 'both copies of a repeated block request are answered');
   assert.deepEqual(await bytes(movie, 0, 32767), second.subarray(0, 32768), 'cross-file piece with exactly one byte in the second file');
+  for (let i = 0; i < 100 && native.downloaded < seeded.length; i++) await sleep(50);
+  assert.equal(native.downloaded, seeded.length, 'a request near the start selects the read-ahead window behind it');
   assert.deepEqual(await bytes(received.files.find(file => file.name === 'a.mp4'), 0, first.length - 1), Buffer.from(first));
   const closed = !peer.connected ? Promise.resolve() : new Promise(resolve => { peer.once('close', resolve); peer.once('disconnect', resolve); });
   // Destroying the native torrent tears the agent down early, draining the stop() assertions below,
@@ -157,7 +163,7 @@ test('remote helper delivers magnet metadata and seekable multi-file bytes from 
   assert.equal((await post(route, { action: 'status' }, host.token)).online, false);
 });
 
-test('a failed native torrent cannot keep advertising readiness', { timeout: 45000 }, async t => {
+test('a failed native torrent stops advertising readiness, then reloads', { timeout: 60000 }, async t => {
   const seed = new WebTorrent(offline);
   t.after(() => destroy(seed));
   const payload = Object.assign(Buffer.alloc(16384, 23), { name: 'movie.mp4' });
@@ -168,7 +174,8 @@ test('a failed native torrent cannot keep advertising readiness', { timeout: 450
   const pair = await post(route, { action: 'pair' }, host.token);
   const cacheRoot = await mkdtemp(path.join(tmpdir(), 'couchswarm-failed-test-'));
   let nativeClient;
-  const helper = createRemoteAgent({ cacheRoot, pollMs: 100, iceOverride: [], createClient: () => nativeClient = new WebTorrent(offline) });
+  const reports = [];
+  const helper = createRemoteAgent({ cacheRoot, pollMs: 100, iceOverride: [], report: value => reports.push(value), createClient: () => nativeClient = new WebTorrent(offline) });
   t.after(async () => { await helper.stop(); if (path.dirname(cacheRoot) === tmpdir()) await rm(cacheRoot, { recursive: true, force: true }); });
   await helper.pair(pair.pairingUrl);
   let state;
@@ -185,6 +192,14 @@ test('a failed native torrent cannot keep advertising readiness', { timeout: 450
     await sleep(100);
   }
   assert.equal(state.ready, false, 'a failed native torrent cannot keep advertising readiness');
+  assert.ok(reports.some(value => /The torrent connection failed\. Reconnecting/.test(value.status)), 'the failure names its cause and promises a reload');
+  // The reload is scheduled 15 seconds after the failure.
+  for (let i = 0; i < 300 && !state.ready; i++) {
+    await sleep(100);
+    state = await post(route, { action: 'status' }, host.token);
+  }
+  assert.equal(state.ready, true, 'the helper reloads a torrent that failed after serving');
+  assert.equal(state.infoHash, seeded.infoHash);
 });
 
 // CS1-S41: a revoked pairing must stop the agent from its own poll, so this case needs its own

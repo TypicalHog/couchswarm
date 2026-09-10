@@ -17,7 +17,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
   const [helper, setHelper] = useState<{ peers?: number; host?: boolean } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const fileRef = useRef<TorrentFile | null>(null);
-  const retriedHelper = useRef(false);
+  const retriedHelper = useRef(0);
   const retriedUpgrade = useRef(false);
   const movieRef = useRef('');
   const teardownRef = useRef<Promise<void>>(Promise.resolve());
@@ -35,7 +35,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     const abort = new AbortController();
     // Helper retry budgets are per movie, not per hook mount.
     const movie = `${source}|${mediaVersion}|${fileIndex}`;
-    if (movieRef.current !== movie) { movieRef.current = movie; retriedHelper.current = false; retriedUpgrade.current = false; }
+    if (movieRef.current !== movie) { movieRef.current = movie; retriedHelper.current = 0; retriedUpgrade.current = false; }
     fileRef.current = null;
     setLoadedVersion(-1);
     setHelper(null);
@@ -100,8 +100,9 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           own => {
             if (fileRef.current?.progress === 1) return;
             setHelper(null);
-            // Selection has already re-pointed at the host's helper, so retry once before giving up.
-            if (!retriedHelper.current) { retriedHelper.current = true; setAttempt(value => value + 1); return; }
+            // Selection has already re-pointed at the host's helper, and a helper reloads a torrent that failed
+            // after serving, so allow a few reconnects before giving up.
+            if (retriedHelper.current < 3) { retriedHelper.current++; setAttempt(value => value + 1); return; }
             fail(`${own ? 'Your' : 'The host’s'} helper disconnected. Reconnect to the movie to try again.`);
           }).catch(err => { if (abort.signal.aborted) throw err; helperFailed = retriedUpgrade.current; retriedUpgrade.current = true; setStatus('Helper unavailable, using browser peers…'); return null; }) : null;
         if (remote) setHelper({ host: !remote.own });
@@ -233,6 +234,6 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- session identity is covered by roomId/token
   }, [source, fileIndex, mediaVersion, videoRef, session?.roomId, session?.token, attempt]);
 
-  const reconnect = useCallback(() => { retriedHelper.current = false; retriedUpgrade.current = false; setAttempt(value => value + 1); }, []);
+  const reconnect = useCallback(() => { retriedHelper.current = 0; retriedUpgrade.current = false; setAttempt(value => value + 1); }, []);
   return { status, error, files, stats, loadedVersion, helper, reconnect };
 }

@@ -49,17 +49,21 @@ async function fetchTorrent(url, signal) {
 export const videoFiles = files => files.filter(file => /\.(mkv|mp4|webm|m4v|ogv)$/i.test(file.name))
   .sort((a, b) => b.length - a.length || a.path.localeCompare(b.path));
 
-// fs-chunk-store sanitises only the file name, Windows folds case and treats a
-// backslash inside a name as a separator, and WebTorrent puts the raw path in
-// web seed URLs. Only files sharing a piece with a video are ever written.
-export function torrentPathIssue(torrent) {
+// Only files sharing a piece with a video are ever written.
+export function videoSpanFiles(torrent) {
   const videos = videoFiles(torrent.files);
-  if (!videos.length) return '';
+  if (!videos.length) return [];
   const from = Math.floor(Math.min(...videos.map(file => file.offset)) / torrent.pieceLength) * torrent.pieceLength;
   const to = Math.ceil(Math.max(...videos.map(file => file.offset + file.length)) / torrent.pieceLength) * torrent.pieceLength;
+  return torrent.files.filter(file => file.offset + file.length > from && file.offset < to);
+}
+
+// fs-chunk-store sanitises only the file name, Windows folds case and treats a
+// backslash inside a name as a separator, and WebTorrent puts the raw path in
+// web seed URLs.
+export function torrentPathIssue(torrent) {
   const seen = new Set();
-  for (const file of torrent.files) {
-    if (file.offset + file.length <= from || file.offset >= to) continue;
+  for (const file of videoSpanFiles(torrent)) {
     const parts = file.path.replaceAll('\\', '/').split('/');
     if (parts.slice(0, -1).some(part => /[<>:"|?*\p{Cc}]/u.test(part))) return 'This torrent has a folder name Windows cannot create. Choose another torrent.';
     if (torrent.files.length > 1 && (/[#?%\p{Cc}]/u.test(file.path) || file.path.endsWith(' ')))

@@ -30,7 +30,11 @@ export function timelinePosition(room: Pick<Room, 'position' | 'playing' | 'star
 
 export function bufferedAhead(ranges: Pick<TimeRanges, 'length' | 'start' | 'end'>, position: number) {
   for (let i = 0; i < ranges.length; i++) {
-    if (ranges.start(i) <= position + 0.15 && ranges.end(i) > position) return ranges.end(i) - position;
+    if (ranges.start(i) > position + 0.15 || ranges.end(i) <= position) continue;
+    let end = ranges.end(i);
+    // Segment joins can leave seams a few frames wide; hls.js plays across up to 0.1s, so count past them too.
+    while (i + 1 < ranges.length && ranges.start(i + 1) - end <= 0.1) end = ranges.end(++i);
+    return end - position;
   }
   return 0;
 }

@@ -25,6 +25,8 @@ test('buffer readiness measures playable time at the target, not total downloade
   assert.equal(bufferedAhead(ranges, 55), 10);
   assert.equal(bufferedAhead({ length: 1, start: () => 4.1, end: () => 12 }, 4), 8);
   assert.equal(bufferedAhead({ length: 1, start: () => 4.2, end: () => 12 }, 4), 0);
+  const seamed = { length: 3, start: (i: number) => [0, 2.05, 5][i], end: (i: number) => [2, 4.5, 30][i] };
+  assert.equal(bufferedAhead(seamed, 0), 4.5);
   assert.equal(hasBuffer(7, 0, 100, false), false);
   assert.equal(hasBuffer(8, 0, 100, false), true);
   assert.equal(hasBuffer(2, 98, 100, false), true);
