@@ -1,0 +1,144 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+const origin = process.env.TEST_ORIGIN || 'http://localhost:3001';
+const magnet = 'magnet:?xt=urn:btih:' + 'a'.repeat(40);
+async function post(path, body, token, expected = 200) {
+  const response = await fetch(origin + path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body), signal: AbortSignal.timeout(10000) })
+    .catch(error => { throw new Error(`POST ${origin + path}: ${error.message}`); });
+  const data = await response.json();
+  assert.equal(response.status, expected, data.error || `HTTP ${response.status}`);
+  return data;
+}
+
+test('room invites, authority, buffering gate, timeline, stale messages, seeking, and late joins', { timeout: 30000 }, async t => {
+  await post('/api/rooms', { source: 'invalid' }, undefined, 400);
+  const host = await post('/api/rooms', { source: magnet }, undefined, 201);
+  const path = `/api/rooms/${host.roomId}`;
+  const call = (body, expected = 200) => post(path, body, host.token, expected);
+  t.after(() => post(path, { action: 'leave' }, host.token).catch(() => {}));
+  await post(path, { action: 'snapshot' }, undefined, 401);
+  await post(path, { action: 'join', invite: 'wrong', name: 'Guest' }, undefined, 403);
+  let state = await call({ action: 'snapshot' });
+  assert.equal(state.members.length, 1);
+  assert.equal(JSON.stringify(state).includes(host.token), false);
+  await call({ action: 'play', revision: state.room.revision }, 409);
+  const heartbeat = (token, sequence, epoch = 0, ready = true, mediaVersion = 0) => post(path, { action: 'heartbeat', ready, buffered: 15, progress: .1, epoch, mediaVersion, duration: 120, sequence }, token);
+  state = await heartbeat(host.token, 1);
+  assert.equal(state.room.duration, 120);
+  state = await call({ action: 'play', revision: state.room.revision });
+  assert.equal(state.room.playing, true);
+  assert.ok(state.room.startsAt > state.serverNow);
+  const guest = await post(path, { action: 'join', invite: host.invite, name: 'Guest' }, undefined, 201);
+  t.after(() => post(path, { action: 'leave' }, guest.token).catch(() => {}));
+  state = await call({ action: 'snapshot' });
+  assert.equal(state.room.playing, false, 'a late join cancels the pending start');
+  assert.equal(state.members.length, 2);
+  await post(path, { action: 'play', revision: state.room.revision }, guest.token, 403);
+  await call({ action: 'play', revision: state.room.revision }, 409);
+  await heartbeat(guest.token, 2);
+  state = await call({ action: 'play', revision: state.room.revision });
+  assert.equal(state.room.playing, true, state.room.reason);
+  const oldRevision = state.room.revision;
+  state = await heartbeat(guest.token, 3, 0, false);
+  assert.equal(state.room.playing, false, 'buffer loss pauses the room');
+  state = await heartbeat(guest.token, 2, 0, true);
+  assert.equal(state.members.find(m => m.id === guest.memberId).ready, false, 'old heartbeat cannot restore readiness');
+  await call({ action: 'play', revision: oldRevision }, 409);
+  state = await heartbeat(guest.token, 4);
+  assert.equal(state.room.playing, true, 'the room resumes itself once everyone has buffered again');
+  state = await call({ action: 'pause', revision: state.room.revision });
+  assert.equal(state.room.playing, false);
+  await new Promise(resolve => setTimeout(resolve, 2100));
+  state = await heartbeat(guest.token, 2, 0, false);
+  assert.equal(state.members.find(m => m.id === guest.memberId).ready, false, 'a stale sequence is accepted again once the member has been quiet for 2 s');
+  state = await call({ action: 'seek', position: 60, revision: state.room.revision });
+  assert.equal(state.room.position, 60);
+  assert.equal(state.room.epoch, 1);
+  await call({ action: 'play', revision: state.room.revision }, 409);
+  await heartbeat(host.token, 5, 1);
+  await heartbeat(guest.token, 5, 1);
+  state = await call({ action: 'play', revision: state.room.revision });
+  assert.equal(state.room.playing, true, state.room.reason);
+  assert.equal(state.room.position, 60);
+  state = await call({ action: 'source', source: magnet, revision: state.room.revision });
+  assert.equal(state.room.position, 0);
+  assert.equal(state.room.duration, 0);
+  assert.equal(state.room.mediaVersion, 1);
+  assert.equal(state.room.playing, false);
+  await post(path, { action: 'leave' }, guest.token);
+  state = await call({ action: 'snapshot' });
+  assert.equal(state.members.length, 1);
+  await call({ action: 'leave' });
+});
+
+test('rejects malformed requests, rewinds at the end, and gates seats, moderation and methods', { timeout: 60000 }, async t => {
+  const host = await post('/api/rooms', { source: magnet }, undefined, 201);
+  const path = `/api/rooms/${host.roomId}`;
+  const call = (body, expected = 200) => post(path, body, host.token, expected);
+  t.after(() => post(path, { action: 'leave' }, host.token).catch(() => {}));
+  const beat = (token, sequence, extra = {}) => post(path, { action: 'heartbeat', ready: true, buffered: 15, progress: .1, epoch: 0, mediaVersion: 0, duration: 120, sequence, ...extra }, token);
+  const raw = (body, contentType = 'application/json') => fetch(origin + path, { method: 'POST', headers: { 'Content-Type': contentType, Authorization: `Bearer ${host.token}` }, body, signal: AbortSignal.timeout(10000) });
+  assert.match(host.hostKey, /^[a-f0-9]{64}$/);
+  await call({ action: 'sing' }, 400);
+  await call({}, 400);
+  assert.equal((await raw(JSON.stringify({ action: 'snapshot' }), 'text/plain')).status, 400);
+  assert.equal((await raw(JSON.stringify({ action: 'snapshot', pad: 'x'.repeat(12000) }))).status, 400);
+  await call({ action: 'heartbeat', sequence: '5' }, 400);
+  await call({ action: 'heartbeat', sequence: 1e300 }, 400);
+  let state = await call({ action: 'snapshot' });
+  await call({ action: 'seek', position: 10, revision: state.room.revision }, 409);
+  const guest = await post(path, { action: 'join', invite: host.invite, name: 'Guest' }, undefined, 201);
+  state = await beat(guest.token, 1, { duration: 999 });
+  assert.equal(state.room.duration, 0, 'only the host reports the duration');
+  state = await beat(host.token, 1);
+  assert.equal(state.room.duration, 120);
+  await call({ action: 'seek', position: 'start', revision: state.room.revision }, 400);
+  state = await call({ action: 'play', revision: state.room.revision });
+  assert.equal(state.room.playing, true, state.room.reason);
+  await call({ action: 'play', revision: state.room.revision }, 409);
+  state = await beat(host.token, 2, { duration: 60 });
+  assert.equal(state.room.duration, 120, 'the movie cannot shrink under a playing room');
+  state = await beat(host.token, 3);
+  assert.equal(state.room.duration, 120);
+  state = await call({ action: 'seek', position: 120, revision: state.room.revision });
+  assert.deepEqual([state.room.position, state.room.epoch, state.room.playing], [120, 1, false]);
+  await beat(host.token, 4, { epoch: 1 });
+  state = await beat(guest.token, 2, { epoch: 1 });
+  state = await call({ action: 'play', revision: state.room.revision });
+  assert.deepEqual([state.room.position, state.room.epoch, state.room.playing], [0, 2, false], 'play at the end rewinds instead of starting');
+  const { mediaVersion, fileIndex } = state.room;
+  state = await call({ action: 'file', fileIndex, revision: state.room.revision });
+  assert.equal(state.room.mediaVersion, mediaVersion, 'reselecting the current video is not a media change');
+  await post(path, { action: 'kick', memberId: host.memberId, revision: state.room.revision }, guest.token, 403);
+  await call({ action: 'kick', memberId: host.memberId, revision: state.room.revision }, 400);
+  state = await call({ action: 'kick', memberId: guest.memberId, revision: state.room.revision });
+  assert.equal(state.members.some(member => member.id === guest.memberId), false);
+  await post(path, { action: 'snapshot' }, guest.token, 401);
+  state = await call({ action: 'rotate', revision: state.room.revision });
+  assert.match(state.invite, /^[a-f0-9]{64}$/);
+  await post(path, { action: 'join', invite: host.invite, name: 'Stale link' }, undefined, 403);
+  await post(path, { action: 'join', invite: state.invite, name: 'New link' }, undefined, 201);
+  for (const route of ['/api/rooms', path, `${path}/helper`, '/api/helper']) {
+    const response = await fetch(origin + route, { signal: AbortSignal.timeout(10000) });
+    assert.equal(response.status, 405, route);
+    assert.equal(response.headers.get('allow'), 'POST');
+  }
+  for (const hostKey of ['', 'f'.repeat(64)]) {
+    await post(path, { action: 'join', invite: state.invite, name: 'Not the host', hostKey }, undefined, 201);
+    assert.equal((await call({ action: 'snapshot' })).room.hostId, host.memberId, 'only the real host key moves the room');
+  }
+  const returning = await post(path, { action: 'join', invite: state.invite, name: 'Host', hostKey: host.hostKey }, undefined, 201);
+  assert.equal((await call({ action: 'snapshot' })).room.hostId, returning.memberId);
+
+  const full = await post('/api/rooms', { source: magnet }, undefined, 201);
+  const fullPath = `/api/rooms/${full.roomId}`;
+  t.after(() => post(fullPath, { action: 'leave' }, full.token).catch(() => {}));
+  const lapsed = await post(fullPath, { action: 'join', invite: full.invite, name: 'Lapsed' }, undefined, 201);
+  await new Promise(resolve => setTimeout(resolve, 12500));
+  for (let i = 0; i < 11; i++) await post(fullPath, { action: 'join', invite: full.invite, name: `Guest ${i}` }, undefined, 201);
+  await post(fullPath, { action: 'heartbeat', ready: true, buffered: 15, progress: .1, epoch: 0, mediaVersion: 0, duration: 120, sequence: 1 }, full.token);
+  await post(fullPath, { action: 'join', invite: full.invite, name: 'One too many' }, undefined, 409);
+  const seat = await post(fullPath, { action: 'heartbeat', ready: true, buffered: 15, progress: .1, epoch: 0, mediaVersion: 0, duration: 0, sequence: 1 }, lapsed.token, 409);
+  assert.match(seat.error, /This couch is full \(12 people\)/, 'a lapsed seat cannot be reclaimed while the room is full');
+});

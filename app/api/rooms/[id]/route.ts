@@ -1,0 +1,175 @@
+import { cleanName, getDb, hash, json, notAllowed, readBody, roomExpired, secret, type RunResult } from '@/lib/db';
+import { allReady, MAX_SEATS, PRESENCE_MS, SPECTATOR_EPOCH, timelinePosition, validSource, type Member, type Room } from '@/lib/sync';
+
+const BUFFERING = 'Someone is buffering. Waiting for everyone.';
+
+type StoredRoom = {
+  id: string; name: string; host_id: string; invite_hash: string; host_key_hash: string; source: string;
+  file_index: number; media_version: number; epoch: number; revision: number;
+  playing: number; position: number; starts_at: number; duration: number; reason: string; created_at: number;
+};
+type StoredMember = { id: string; name: string; ready: number; buffered: number; progress: number; epoch: number; last_seen: number };
+
+function publicRoom(row: StoredRoom): Room {
+  return { id: row.id, name: row.name, hostId: row.host_id, source: row.source, fileIndex: row.file_index,
+    mediaVersion: row.media_version, epoch: row.epoch, revision: row.revision, playing: !!row.playing,
+    position: row.position, startsAt: row.starts_at, duration: row.duration, reason: row.reason };
+}
+
+function number(value: unknown, min: number, max: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : min;
+}
+
+export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
+  const serverReceivedAt = Date.now();
+  const { id } = await context.params;
+  const db = getDb();
+  let stored = await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<StoredRoom>();
+  if (!stored) return json({ error: 'This room does not exist. Check your invite link.' }, 404);
+  if (await roomExpired(db, id, stored.created_at, Date.now())) {
+    await db.batch([
+      db.prepare('DELETE FROM helper_peers WHERE helper_id IN (SELECT id FROM helpers WHERE room_id = ?)').bind(id),
+      db.prepare('DELETE FROM helpers WHERE room_id = ?').bind(id),
+      db.prepare('DELETE FROM members WHERE room_id = ?').bind(id),
+      db.prepare('DELETE FROM rooms WHERE id = ?').bind(id),
+    ]);
+    return json({ error: 'This room has expired. Create a new room for tonight.' }, 410);
+  }
+  let body;
+  try { body = await readBody(request); } catch { return json({ error: 'Invalid room request.' }, 400); }
+  const now = Date.now();
+  // Every action below must be named here, or it is refused before any authority check runs.
+  if (typeof body.action !== 'string' || !['join', 'snapshot', 'heartbeat', 'leave', 'source', 'file', 'play', 'pause', 'seek', 'kick', 'rotate'].includes(body.action)) return json({ error: 'Unknown room action.' }, 400);
+  if (body.action === 'join') {
+    if (typeof body.invite !== 'string' || await hash(body.invite) !== stored.invite_hash) return json({ error: 'This invite link is invalid.' }, 403);
+    const memberId = crypto.randomUUID();
+    const token = secret();
+    const name = cleanName(body.name);
+    if (!name) return json({ error: 'Enter your name to join.' }, 400);
+    const idle = await db.prepare('SELECT COUNT(*) AS n FROM members WHERE room_id = ? AND report_sequence = 0 AND last_seen > ?').bind(id, now - 60_000).first<{ n: number }>();
+    if ((idle?.n ?? 0) >= 24) return json({ error: 'Too many joins. Try again in a minute.' }, 429);
+    const result = await db.prepare('INSERT INTO members (id, room_id, token_hash, name, last_seen) SELECT ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ?')
+      .bind(memberId, id, await hash(token), name, now, id, now - PRESENCE_MS, MAX_SEATS).run();
+    if (!result.meta.changes) return json({ error: `This couch is full (${MAX_SEATS} people). Try again when a seat opens.` }, 409);
+    if (typeof body.hostKey === 'string' && body.hostKey.length === 64 && await hash(body.hostKey) === stored.host_key_hash)
+      await db.prepare('UPDATE rooms SET host_id = ?, revision = revision + 1 WHERE id = ?').bind(memberId, id).run();
+    const host = stored.playing ? await db.prepare('SELECT last_seen FROM members WHERE id = ?').bind(stored.host_id).first<{ last_seen: number }>() : null;
+    const pausedAt = host && host.last_seen <= now - PRESENCE_MS ? host.last_seen + PRESENCE_MS : now;
+    await db.prepare('UPDATE rooms SET playing = 0, position = ?, reason = ?, revision = revision + 1 WHERE id = ? AND playing = 1')
+      .bind(timelinePosition(publicRoom(stored), pausedAt), 'A friend joined. Waiting for their buffer.', id).run();
+    return json({ roomId: id, memberId, token, invite: body.invite }, 201);
+  }
+  const token = request.headers.get('Authorization')?.replace(/^Bearer /, '') || '';
+  if (!/^[a-f0-9]{64}$/.test(token)) return json({ error: 'Reopen your invite link to join this room.' }, 401);
+  const actor = await db.prepare('SELECT id FROM members WHERE room_id = ? AND token_hash = ?').bind(id, await hash(token)).first<{ id: string }>();
+  if (!actor) return json({ error: 'Your seat has expired. Join the room again.' }, 401);
+
+  // Evaluate the old lease before a returning host can renew it.
+  if (stored.playing) {
+    const host = await db.prepare('SELECT last_seen FROM members WHERE id = ?').bind(stored.host_id).first<{ last_seen: number }>();
+    if (!host || host.last_seen <= now - PRESENCE_MS) {
+      const stoppedAt = host ? Math.min(now, host.last_seen + PRESENCE_MS) : now;
+      await db.prepare('UPDATE rooms SET playing = 0, position = ?, revision = revision + 1, reason = ? WHERE id = ? AND revision = ?')
+        .bind(timelinePosition(publicRoom(stored), stoppedAt), 'The host disconnected. Waiting for them to return.', id, stored.revision).run();
+      stored = (await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<StoredRoom>())!;
+    }
+  }
+
+  const readMembers = async (): Promise<Member[]> => {
+    const { results } = await db.prepare('SELECT id, name, ready, buffered, progress, epoch, last_seen FROM members WHERE room_id = ? AND last_seen > ? ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, rowid')
+      .bind(id, Date.now() - PRESENCE_MS, stored!.host_id).all<StoredMember>();
+    return results.map(m => ({ id: m.id, name: m.name, ready: !!m.ready, buffered: m.buffered, progress: m.progress, epoch: m.epoch, lastSeen: m.last_seen }));
+  };
+
+  let invite = '';
+  if (body.action === 'heartbeat') {
+    if (typeof body.sequence !== 'number' || !Number.isSafeInteger(body.sequence) || body.sequence < 0) return json({ error: 'Invalid report.' }, 400);
+    const duration = number(body.duration, 0, 604800);
+    const epoch = number(body.epoch, -1, 1e9);
+    // A lapsed seat rejoins as a spectator until it reports ready (never the host, who owns the timeline), and cannot take a seat the room no longer has.
+    const report = await db.prepare('UPDATE members SET ready = ?, buffered = ?, progress = ?, epoch = CASE WHEN ? OR (epoch != ? AND last_seen > ?) THEN ? ELSE ? END, last_seen = ?, report_sequence = ? WHERE id = ? AND (report_sequence < ? OR (last_seen > 0 AND last_seen < ?)) AND (last_seen > ? OR (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ?)')
+      .bind(body.ready === true ? 1 : 0, number(body.buffered, 0, 604800), number(body.progress, 0, 1), body.ready === true || actor.id === stored.host_id ? 1 : 0, SPECTATOR_EPOCH, now - PRESENCE_MS, epoch, SPECTATOR_EPOCH, now, body.sequence,
+        actor.id, body.sequence, now - 2000, now - PRESENCE_MS, id, now - PRESENCE_MS, MAX_SEATS).run();
+    if (!report.meta.changes) {
+      const me = await db.prepare('SELECT last_seen FROM members WHERE id = ?').bind(actor.id).first<{ last_seen: number }>();
+      if (me && me.last_seen > 0 && me.last_seen <= now - PRESENCE_MS) return json({ error: `This couch is full (${MAX_SEATS} people). Try again when a seat opens.` }, 409);
+    }
+    if (report.meta.changes && actor.id === stored.host_id && duration > 0 && body.mediaVersion === stored.media_version)
+      await db.prepare('UPDATE rooms SET duration = ? WHERE id = ? AND media_version = ? AND duration != ? AND (playing = 0 OR duration = 0 OR ? >= duration)')
+        .bind(duration, id, stored.media_version, duration, duration).run();
+  } else if (body.action === 'leave') {
+    await db.batch([
+      db.prepare('UPDATE members SET last_seen = 0, ready = 0, report_sequence = ? WHERE id = ?').bind(Number.MAX_SAFE_INTEGER, actor.id),
+      db.prepare('DELETE FROM helper_peers WHERE helper_id IN (SELECT id FROM helpers WHERE room_id = ? AND member_id = ?)').bind(id, actor.id),
+      db.prepare('DELETE FROM helpers WHERE room_id = ? AND member_id = ?').bind(id, actor.id),
+    ]);
+  } else if (body.action !== 'snapshot') {
+    if (actor.id !== stored.host_id) return json({ error: 'Only the host can control playback.' }, 403);
+    if (body.revision !== stored.revision) return json({ error: 'The room changed. Try that again.' }, 409);
+    let result: RunResult;
+    if (body.action === 'source') {
+      if (!validSource(body.source)) return json({ error: 'Enter a valid magnet link or HTTPS .torrent URL.' }, 400);
+      result = await db.prepare('UPDATE rooms SET source = ?, file_index = 0, media_version = media_version + 1, epoch = epoch + 1, revision = revision + 1, playing = 0, position = 0, starts_at = 0, duration = 0, reason = ? WHERE id = ? AND revision = ?')
+        .bind(body.source, 'Buffering a new movie.', id, stored.revision).run();
+    } else if (body.action === 'file') {
+      if (!Number.isInteger(body.fileIndex) || Number(body.fileIndex) < 0 || Number(body.fileIndex) > 10000) return json({ error: 'Invalid video selection.' }, 400);
+      if (Number(body.fileIndex) === stored.file_index) return json({ room: publicRoom(stored), members: await readMembers(), serverNow: Date.now(), serverReceivedAt });
+      result = await db.prepare('UPDATE rooms SET file_index = ?, media_version = media_version + 1, epoch = epoch + 1, revision = revision + 1, playing = 0, position = 0, duration = 0, reason = ? WHERE id = ? AND revision = ?')
+        .bind(body.fileIndex, 'Buffering the selected video.', id, stored.revision).run();
+    } else if (body.action === 'play') {
+      const members = await readMembers();
+      if (!stored.source || stored.duration <= 0 || !allReady(members, publicRoom(stored), now)) return json({ error: 'Wait for everyone to buffer before pressing play.' }, 409);
+      if (stored.position >= stored.duration) {
+        result = await db.prepare('UPDATE rooms SET playing = 0, position = 0, epoch = epoch + 1, revision = revision + 1, reason = ? WHERE id = ? AND revision = ? AND playing = 0')
+          .bind('Back to the start. Waiting for everyone to buffer.', id, stored.revision).run();
+      } else {
+        result = await db.prepare('UPDATE rooms SET playing = 1, starts_at = ?, revision = revision + 1, reason = ? WHERE id = ? AND revision = ? AND playing = 0 AND NOT EXISTS (SELECT 1 FROM members WHERE room_id = ? AND last_seen > ? AND epoch != ? AND (ready = 0 OR epoch != ?))')
+          .bind(now + 3000, 'Playing together.', id, stored.revision, id, now - PRESENCE_MS, SPECTATOR_EPOCH, stored.epoch).run();
+      }
+    } else if (body.action === 'pause') {
+      result = await db.prepare('UPDATE rooms SET playing = 0, position = ?, revision = revision + 1, reason = ? WHERE id = ? AND revision = ?')
+        .bind(timelinePosition(publicRoom(stored), now), 'Paused by the host.', id, stored.revision).run();
+    } else if (body.action === 'seek') {
+      if (!stored.source || stored.duration <= 0) return json({ error: 'Wait for the movie to load before seeking.' }, 409);
+      if (typeof body.position !== 'number' || !Number.isFinite(body.position)) return json({ error: 'Invalid seek position.' }, 400);
+      const position = number(body.position, 0, stored.duration);
+      result = await db.prepare('UPDATE rooms SET playing = 0, position = ?, epoch = epoch + 1, revision = revision + 1, reason = ? WHERE id = ? AND revision = ?')
+        .bind(position, 'Finding your place. Waiting for everyone to buffer.', id, stored.revision).run();
+    } else if (body.action === 'kick') {
+      if (typeof body.memberId !== 'string' || body.memberId === stored.host_id || !await db.prepare('SELECT 1 AS n FROM members WHERE id = ? AND room_id = ?').bind(body.memberId, id).first<{ n: number }>()) return json({ error: 'Choose someone to remove.' }, 400);
+      const removal = await db.batch([
+        db.prepare('DELETE FROM helper_peers WHERE helper_id IN (SELECT id FROM helpers WHERE room_id = ?) AND (member_id = ? OR helper_id IN (SELECT id FROM helpers WHERE member_id = ?)) AND EXISTS (SELECT 1 FROM rooms WHERE id = ? AND revision = ?)').bind(id, body.memberId, body.memberId, id, stored.revision),
+        db.prepare('DELETE FROM helpers WHERE room_id = ? AND member_id = ? AND EXISTS (SELECT 1 FROM rooms WHERE id = ? AND revision = ?)').bind(id, body.memberId, id, stored.revision),
+        db.prepare('DELETE FROM members WHERE id = ? AND room_id = ? AND EXISTS (SELECT 1 FROM rooms WHERE id = ? AND revision = ?)').bind(body.memberId, id, id, stored.revision),
+        db.prepare('UPDATE rooms SET revision = revision + 1 WHERE id = ? AND revision = ?').bind(id, stored.revision),
+      ]);
+      result = removal[3];
+    } else if (body.action === 'rotate') {
+      invite = secret();
+      result = await db.prepare('UPDATE rooms SET invite_hash = ?, revision = revision + 1 WHERE id = ? AND revision = ?')
+        .bind(await hash(invite), id, stored.revision).run();
+    } else return json({ error: 'Unknown room action.' }, 400);
+    if (!result.meta.changes) return json({ error: 'The room changed. Try again when everyone is ready.' }, 409);
+  }
+
+  stored = (await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<StoredRoom>())!;
+  let room = publicRoom(stored);
+  const members = await readMembers();
+  if (room.playing && (!allReady(members, room, Date.now()) || timelinePosition(room, Date.now()) >= room.duration)) {
+    const hostPresent = members.some(m => m.id === room.hostId);
+    const ended = room.duration > 0 && timelinePosition(room, Date.now()) >= room.duration;
+    const reason = ended ? 'That’s a wrap. Ready for another?' : hostPresent ? BUFFERING : 'The host disconnected. Waiting for them to return.';
+    await db.prepare('UPDATE rooms SET playing = 0, position = ?, revision = revision + 1, reason = ? WHERE id = ? AND revision = ?')
+      .bind(timelinePosition(room, Date.now()), reason, id, room.revision).run();
+    stored = (await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<StoredRoom>())!;
+    room = publicRoom(stored);
+  } else if (!room.playing && room.reason === BUFFERING && allReady(members, room, Date.now())) {
+    await db.prepare('UPDATE rooms SET playing = 1, starts_at = ?, revision = revision + 1, reason = ? WHERE id = ? AND revision = ? AND playing = 0')
+      .bind(Date.now() + 3000, 'Playing together.', id, room.revision).run();
+    stored = (await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<StoredRoom>())!;
+    room = publicRoom(stored);
+  }
+  return json({ room, members, serverNow: Date.now(), serverReceivedAt, ...(invite ? { invite } : {}) });
+}
+
+export const GET = notAllowed, PUT = notAllowed, DELETE = notAllowed, PATCH = notAllowed;

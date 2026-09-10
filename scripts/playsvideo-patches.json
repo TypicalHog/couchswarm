@@ -1,0 +1,21 @@
+{
+  "engine.js": [
+    {
+      "find": "this._subtitleTracks = msg.subtitleTracks ?? [];",
+      "replace": "this._subtitleTracks = this.options.embeddedSubtitlePolicy === \"off\" ? [] : (msg.subtitleTracks ?? []);",
+      "count": 2
+    },
+    {
+      "find": "console.log(`[engine] ${msg}`);",
+      "replace": "if (/^(error|WARN)/.test(msg)) console.log(`[engine] ${msg}`);",
+      "count": 1
+    }
+  ],
+  "worker.js": [
+    {
+      "find": "console.log(`[worker] ${msg}`);",
+      "replace": "if (/^(error|WARN)/.test(msg)) console.log(`[worker] ${msg}`);",
+      "count": 1
+    }
+  ]
+}
