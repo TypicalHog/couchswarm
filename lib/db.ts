@@ -36,14 +36,25 @@ export function notAllowed() {
   return new Response(null, { status: 405, headers: { Allow: 'POST', 'Cache-Control': 'no-store' } });
 }
 
+// A database outage must reach the room as an honest status, not a bodyless 500.
+export function withDb<A extends unknown[]>(handler: (request: Request, ...args: A) => Promise<Response>) {
+  return async (request: Request, ...args: A) => {
+    try { return await handler(request, ...args); }
+    catch (error) { console.error(error); return json({ error: 'The room database is unavailable. Try again in a moment.' }, 503); }
+  };
+}
+
 export async function readBody(request: Request, limit = 12000): Promise<Record<string, unknown>> {
   if (!(request.headers.get('content-type') || '').toLowerCase().startsWith('application/json')) throw new Error('Invalid request.');
   if (Number(request.headers.get('content-length')) > limit) throw new Error('Request is too large.');
   const reader = request.body?.getReader();
+  // A body that dribbles in forever holds a whole invocation open; the callers already answer 400.
+  const expired = reader && new Promise<never>((_, reject) => AbortSignal.timeout(5000).addEventListener('abort', () => reject(new Error('Request is too slow.')), { once: true }));
   const decoder = new TextDecoder();
   let text = '', bytes = 0;
   while (reader) {
-    const chunk = await reader.read();
+    // cancel() only settles once the client stops sending, so the deadline must not wait on it.
+    const chunk = await Promise.race([reader.read(), expired!]).catch(error => { void reader.cancel().catch(() => {}); throw error; });
     if (chunk.done) break;
     bytes += chunk.value.byteLength;
     if (bytes > limit) { await reader.cancel(); throw new Error('Request is too large.'); }

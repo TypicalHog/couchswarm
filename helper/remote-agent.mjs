@@ -1,28 +1,25 @@
 import { mkdir, mkdtemp, open, readdir, rm, stat } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import WebTorrent from 'webtorrent';
 import Peer from '@thaunknown/simple-peer';
-import { torrentPathIssue, torrentSource, videoSpanFiles } from './torrent-helper.mjs';
+import { markSparse, torrentPathIssue, torrentSource, videoSpanFiles } from './torrent-helper.mjs';
 import { serveTorrentPeer } from './remote-wire.mjs';
 import { MAX_SEATS } from './constants.mjs';
 
-const run = promisify(execFile);
 // Pieces kept selected past recent requests: enough to pipeline the swarm fetch, far short of a whole movie. A browser
 // reads at its playhead and backfills from the start of the file at the same time, so a few regions stay selected.
 const READ_AHEAD_BYTES = 32 * 1024 * 1024;
 const READ_AHEAD_WINDOWS = 4;
 const describe = error => error?.code === 'ENOSPC' ? 'The download drive is full.' : `The torrent connection failed${error?.code ? ` (${error.code})` : ''}.`;
 
-export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = () => {}, pollMs = 2000,
+export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = () => {}, pollMs = 2000, readAheadBytes = READ_AHEAD_BYTES,
   createClient = () => new WebTorrent({ natUpnp: false, natPmp: false, lsd: false, utp: false, ...(process.env.COUCHSWARM_HELPER_OFFLINE === '1' ? { dht: false, tracker: false } : {}) }),
   iceOverride }) {
   let grant, origin, client, torrent, directory, mediaVersion = -1, timer, closed = false, loading, loadedSource = '', swept = false;
   let status = 'Waiting for a pairing link.', lastContact = 0, previousStatus;
-  let desiredVersion = -2, loadAbort, attemptedVersion = -2, attempts = 0, readyAt = 0;
+  let desiredVersion = -2, loadAbort, attemptedVersion = -2, attempts = 0, readyAt = 0, misses = 0;
+  let servedPieces = { from: 0, to: -1 };
   const peers = new Map();
-  const windows = [];
   const root = path.resolve(cacheRoot);
   const notify = message => { status = message; report({ status, peers: peers.size, torrentPeers: torrent?.numPeers || 0 }); };
   async function api(body) {
@@ -30,7 +27,13 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       headers: { 'Content-Type': 'application/json', ...(grant ? { Authorization: `Bearer ${grant.token}` } : {}) },
       body: JSON.stringify({ ...body, ...(grant ? { id: grant.id } : {}) }), signal: AbortSignal.timeout(15000) });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) { const error = new Error(data.error || 'The website could not be reached.'); error.status = response.status; throw error; }
+    if (!response.ok) {
+      // The launcher window renders this verbatim, so a hostile origin gets neither a multi-line alarm block nor a
+      // sentence that reads as the app speaking.
+      const said = typeof data.error === 'string' ? data.error.replace(/\s+/g, ' ').trim().slice(0, 160) : '';
+      const error = new Error(said ? `The room website says: ${said}` : 'The website could not be reached.');
+      error.status = response.status; throw error;
+    }
     return data;
   }
   async function clearTorrent() {
@@ -48,35 +51,17 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     const version = attemptedVersion;
     setTimeout(() => { if (!closed && desiredVersion === version) desiredVersion = -2; }, 15000).unref();
   }
-  // NTFS zero-fills everything below a write, so the tail pieces an MKV player reads first would allocate the
-  // whole movie at once and can fill the drive. A sparse file only allocates the pieces that arrive.
-  async function markSparse(value, signal) {
-    if (process.platform !== 'win32') return;
-    let store = value.store;
-    while (store && !Array.isArray(store.files)) store = store.store;
-    const wanted = new Set(videoSpanFiles(value));
-    for (const [index, file] of value.files.entries()) {
-      if (signal.aborted) return;
-      const target = store?.files[index];
-      if (!target || !wanted.has(file) || file.length <= value.pieceLength) continue;
-      try {
-        await mkdir(path.dirname(target.path), { recursive: true });
-        await (await open(target.path, 'a')).close();
-        await run('fsutil', ['sparse', 'setflag', target.path], { windowsHide: true, timeout: 5000, signal });
-      } catch (error) { console.error('Sparse flag failed:', error.message); }
-    }
-  }
   // Keep bounded runs of pieces past recent requests selected, so the swarm fetch pipelines instead of stopping after
   // each piece a browser asks for. A request past the middle of its window slides that window forward; one outside every
   // window opens another, retiring the oldest. The request's own stream selection has higher priority and stays first.
-  function readAhead(value, piece) {
+  function readAhead(value, piece, windows) {
     if (value !== torrent || value.destroyed) return;
-    const span = Math.ceil(READ_AHEAD_BYTES / value.pieceLength);
+    const span = Math.ceil(readAheadBytes / value.pieceLength);
     const index = windows.findIndex(window => piece >= window.from && piece <= window.to);
     if (index >= 0 && piece <= windows[index].from + span / 2) return;
     const stale = index >= 0 ? windows.splice(index, 1)[0] : windows.length >= READ_AHEAD_WINDOWS ? windows.shift() : null;
     if (stale) value.deselect(stale.from, stale.to);
-    const window = { from: piece, to: Math.min(value.pieces.length - 1, piece + span) };
+    const window = { from: piece, to: Math.min(servedPieces.to, piece + span) };
     windows.push(window);
     value.select(window.from, window.to, 0);
   }
@@ -92,7 +77,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     let created;
     try {
       await mkdir(root, { recursive: true });
-      // Kept downloads live in the root itself, so nothing there is ours to sweep or name.
+      // Kept downloads are the user's to keep, so nothing under the root is ours to sweep or name.
       if (!swept && !keepDownloads) {
         swept = true;
         for (const name of await readdir(root).catch(() => [])) {
@@ -101,10 +86,16 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
           const stale = path.join(root, name);
           const info = await stat(stale).catch(() => null);
           if (!info || !info.isDirectory() || Date.now() - info.mtimeMs <= 3600000) continue;
+          if (!await stat(path.join(stale, '.couchswarm')).catch(() => null)) continue;
           await rm(stale, { recursive: true, force: true }).catch(() => {});
         }
       }
-      created = keepDownloads ? root : await mkdtemp(path.join(root, 'room-'));
+      // A host-chosen torrent controls its own relative paths, so kept downloads get their own
+      // directory instead of writing straight into the folder the user picked.
+      created = keepDownloads ? path.join(root, `torrent-${source.infoHash}`) : await mkdtemp(path.join(root, 'room-'));
+      if (keepDownloads) await mkdir(created, { recursive: true });
+      // The sweep above only deletes directories carrying this marker, so a user folder named room-abc123 is safe.
+      if (!keepDownloads) await (await open(path.join(created, '.couchswarm'), 'w')).close();
     } catch (error) {
       // The room must never see a local filesystem path; the launcher window still does.
       report({ status: error.message, peers: peers.size, torrentPeers: 0 });
@@ -147,15 +138,18 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       if (value.ready) ready();
     });
     if (closed || signal.aborted) return;
-    const issue = torrentPathIssue(value);
+    const issue = torrentPathIssue(value, directory);
     if (issue) throw new Error(issue);
     await markSparse(value, signal);
     if (closed || signal.aborted) return;
     if (value.destroyed) throw new Error(describe(cause));
+    // Serve and prefetch only the pieces the video span covers: torrentPathIssue and markSparse validate that span
+    // alone, so a write outside it lands in an unchecked, non-sparse file. An empty span leaves nothing to serve.
+    const spanned = videoSpanFiles(value), last = spanned[spanned.length - 1];
+    servedPieces = spanned.length ? { from: Math.floor(spanned[0].offset / value.pieceLength), to: Math.floor((last.offset + last.length - 1) / value.pieceLength) } : { from: 0, to: -1 };
     torrent = value;
     loadedSource = room.source;
     readyAt = Date.now();
-    windows.length = 0;
     notify('Ready. Keep this helper open while everyone watches.');
   }
   async function poll() {
@@ -164,6 +158,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       const data = await api({ action: 'poll', mediaVersion, infoHash: torrent?.infoHash || '', status });
       if (closed) return;
       lastContact = Date.now();
+      misses = 0;
       if (status === 'Reconnecting to the room…') { notify(previousStatus ?? (torrent ? 'Ready. Keep this helper open while everyone watches.' : 'Connected. Finding your movie…')); previousStatus = undefined; }
       if (data.room.mediaVersion !== desiredVersion) {
         if (data.room.mediaVersion !== attemptedVersion) { attemptedVersion = data.room.mediaVersion; attempts = 0; }
@@ -199,12 +194,15 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
           peers.set(remote.id, peer);
           const timeout = setTimeout(() => peer.destroy(), 45000);
           peer.on('error', () => {});
-          const disconnected = () => { clearTimeout(timeout); if (peers.get(remote.id) === peer) peers.delete(remote.id); };
+          // Each viewer keeps its own read-ahead windows; a shared list lets one viewer evict another's prefetch.
+          let served; const own = [];
+          const disconnected = () => { clearTimeout(timeout); if (peers.get(remote.id) === peer) peers.delete(remote.id);
+            if (served && !served.destroyed) for (const window of own.splice(0)) served.deselect(window.from, window.to); };
           peer.once('close', disconnected); peer.once('disconnect', disconnected);
           peer.once('connect', () => {
             clearTimeout(timeout);
-            const served = torrent;
-            if (served && !closed) serveTorrentPeer(peer, served, piece => readAhead(served, piece)); else peer.destroy();
+            served = torrent;
+            if (served && !closed) serveTorrentPeer(peer, served, piece => readAhead(served, piece, own), servedPieces); else peer.destroy();
           });
           peer.on('signal', answer => { void api({ action: 'answer', peerId: remote.id, answer }).catch(() => peer.destroy()); });
           peer.signal(remote.offer);
@@ -217,8 +215,10 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       if (Date.now() - lastContact > 30000) { for (const peer of peers.values()) peer.destroy(); peers.clear(); }
       if (status !== 'Reconnecting to the room…') previousStatus = status;
       notify('Reconnecting to the room…');
+      misses++;
     }
-    if (!closed) timer = setTimeout(() => poll().catch(() => {}), pollMs);
+    // A site outage must not be retried at full cadence by every paired helper.
+    if (!closed) timer = setTimeout(() => poll().catch(() => {}), Math.min(pollMs * 2 ** Math.min(misses, 4), 30000));
   }
   async function stop(inform = true) {
     closed = true; clearTimeout(timer);
@@ -238,7 +238,9 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       const code = new URLSearchParams(url.hash.slice(1)).get('helper');
       if (!code || !/^[a-f0-9]{64}$/.test(code)) throw new Error('Copy a new pairing link from your CouchSwarm room.');
       origin = url.origin;
-      notify('Connecting to your room…');
+      // Naming the origin the helper is about to obey; safe here only because polling has not started, so this
+      // status never reaches a room.
+      notify(`Connecting to ${url.host}…`);
       grant = await api({ action: 'claim', code });
       lastContact = Date.now();
       notify('Helper paired.');

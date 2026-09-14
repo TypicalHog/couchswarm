@@ -9,13 +9,12 @@ function Slider({
   min = 0,
   max = 100,
   'aria-label': ariaLabel,
+  getAriaValueText,
   ...props
-}: SliderPrimitive.Root.Props) {
-  const _values = Array.isArray(value)
-    ? value
-    : Array.isArray(defaultValue)
-      ? defaultValue
-      : [min, max];
+}: Omit<SliderPrimitive.Root.Props, 'children'> &
+  Pick<SliderPrimitive.Thumb.Props, 'getAriaValueText'>) {
+  const source = value ?? defaultValue;
+  const thumbCount = Array.isArray(source) ? source.length : 1;
 
   return (
     <SliderPrimitive.Root
@@ -39,11 +38,12 @@ function Slider({
             className="bg-primary select-none data-horizontal:h-full data-vertical:w-full"
           />
         </SliderPrimitive.Track>
-        {Array.from({ length: _values.length }, (_, index) => (
+        {Array.from({ length: thumbCount }, (_, index) => (
           <SliderPrimitive.Thumb
             data-slot="slider-thumb"
             key={index}
             aria-label={ariaLabel}
+            getAriaValueText={getAriaValueText}
             className="border-ring ring-ring/50 relative size-3 rounded-full border bg-white transition-[color,box-shadow] after:absolute after:-inset-2 hover:ring-3 focus-visible:ring-3 focus-visible:outline-hidden active:ring-3 block shrink-0 select-none disabled:pointer-events-none disabled:opacity-50"
           />
         ))}

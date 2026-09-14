@@ -1,8 +1,11 @@
-import { cleanName, getDb, hash, json, notAllowed, readBody, roomExpired, secret } from '@/lib/db';
-import { iceConfiguration, validSignal, type HelperRoom, type HelperRow } from '@/lib/helper-auth';
+import { cleanName, getDb, hash, json, notAllowed, readBody, roomExpired, secret, withDb } from '@/lib/db';
+import { validSignal, type HelperRoom, type HelperRow } from '@/lib/helper-auth';
+import { iceConfiguration } from '@/lib/ice';
 import { HELPER_PEER_TTL_MS, MAX_HELPER_PEERS } from '@/lib/sync';
 
-export async function POST(request: Request) {
+export const maxDuration = 10;
+
+async function handler(request: Request) {
   let body;
   try { body = await readBody(request, 40000); } catch { return json({ error: 'Invalid helper request.' }, 400); }
   const db = getDb();
@@ -50,4 +53,5 @@ export async function POST(request: Request) {
     peers: peers.results.map(peer => ({ id: peer.id, offer: peer.answer ? null : JSON.parse(peer.offer), answered: !!peer.answer })), ...await iceConfiguration(helper.id) });
 }
 
+export const POST = withDb(handler);
 export const GET = notAllowed, PUT = notAllowed, DELETE = notAllowed, PATCH = notAllowed;

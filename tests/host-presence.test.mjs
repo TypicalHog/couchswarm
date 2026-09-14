@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 const origin = process.env.TEST_ORIGIN || 'http://localhost:3001';
+// Mirrors PRESENCE_MS in lib/sync.ts; an .mjs suite cannot import the .ts module. Keep them equal.
+const PRESENCE_MS = 12_000;
 
 test('an expired host lease cannot silently restart a deserted playing room', { timeout: 30000 }, async t => {
   const send = async (path, body, token) => {
@@ -17,10 +19,12 @@ test('an expired host lease cannot silently restart a deserted playing room', { 
   let state = await send(path, report, host.token);
   state = await send(path, { action: 'play', revision: state.room.revision }, host.token);
   assert.equal(state.room.playing, true);
-  await new Promise(resolve => setTimeout(resolve, 12500));
+  // The room must stop where the host's lease lapsed, not where this request arrived.
+  const expected = (state.members.find(member => member.id === host.memberId).lastSeen + PRESENCE_MS - state.room.startsAt) / 1000;
+  await new Promise(resolve => setTimeout(resolve, PRESENCE_MS + 500));
   state = await send(path, { ...report, sequence: 2 }, host.token);
   assert.equal(state.room.playing, false);
   assert.match(state.room.reason, /host disconnected/);
-  assert.ok(state.room.position > 8 && state.room.position <= 9, `the room stops at the host's lease expiry, not at this request (${state.room.position})`);
+  assert.ok(Math.abs(state.room.position - expected) < 0.01, `the room stops at the host's lease expiry, not at this request (${state.room.position}, expected ${expected})`);
   await send(path, { action: 'leave' }, host.token);
 });

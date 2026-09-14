@@ -1,6 +1,6 @@
 import type { Session } from '@/lib/sync';
 
-export type HelperStatus = { paired: boolean; online: boolean; ready: boolean; own: boolean; mine: boolean; status: string; infoHash: string; downloadUrl: string; iceServers: RTCIceServer[]; relayAvailable: boolean };
+export type HelperStatus = { paired: boolean; online: boolean; ready: boolean; own: boolean; mine: boolean; mineOnline: boolean; mineStatus: string; status: string; infoHash: string; downloadUrl: string; iceServers: RTCIceServer[]; relayAvailable: boolean };
 export async function helperRequest<T>(session: Session, body: object, signal?: AbortSignal): Promise<T> {
   const bounded = signal ? AbortSignal.any([signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000);
   const response = await fetch(`/api/rooms/${session.roomId}/helper`, { method: 'POST',
@@ -22,12 +22,20 @@ export async function connectRemoteHelper(session: Session, mediaVersion: number
     if (signal.aborted) abort();
   });
   const deadline = Date.now() + 120000, offlineDeadline = Date.now() + 20000;
+  let misses = 0;
   while (!status.ready) {
     // Offline for a while: stream browser-only now; the readiness watcher upgrades when the helper returns.
     if (!status.online && Date.now() > offlineDeadline) return null;
     if (Date.now() > deadline) throw new Error(`${status.own ? 'Your' : 'The host’s'} helper is not ready. Keep it open and check that the torrent has seeders.`);
     report(status.online ? status.status : status.own ? 'Open your helper to continue…' : 'Waiting for the host to open their helper…');
-    await sleep(); status = await helperStatus(session, signal);
+    await sleep();
+    // A blip in a 120 s wait is not a dead helper; the heartbeat below tolerates the same four misses.
+    try { status = await helperStatus(session, signal); misses = 0; }
+    catch (error) {
+      const code = (error as { status?: number }).status;
+      if (signal.aborted || code === 403 || code === 410 || ++misses >= 4) throw error;
+      continue;
+    }
     if (!status.paired) return null;
   }
   const { own } = status;

@@ -4,10 +4,11 @@ let client: Client | undefined;
 function connection() {
   if (client) return client;
   // Local development needs no environment; predev migrates the same file.
-  const url = process.env.TURSO_DATABASE_URL || (process.env.VERCEL ? '' : 'file:.local/rooms.db');
+  const url = process.env.TURSO_DATABASE_URL || (process.env.VERCEL || process.env.NODE_ENV === 'production' ? '' : 'file:.local/rooms.db');
   if (!url) throw new Error('Set TURSO_DATABASE_URL and run npm run db:migrate before starting CouchSwarm.');
   if (process.env.VERCEL && url.startsWith('file:')) throw new Error('Vercel requires a remote Turso database.');
-  return client = createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN });
+  // Without a busy timeout a second writer on the same .local file fails instantly with SQLITE_BUSY.
+  return client = createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN, timeout: 2000 });
 }
 function result(value: ResultSet) { return { results: value.rows, success: true, meta: { changes: value.rowsAffected } }; }
 class Statement {

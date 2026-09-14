@@ -1,16 +1,20 @@
+import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readdir, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { lookup } from 'node:dns/promises';
 import { BlockList, isIP } from 'node:net';
 import { get } from 'node:https';
 import { pipeline } from 'node:stream/promises';
+import { promisify } from 'node:util';
 import WebTorrent from 'webtorrent';
 import parseTorrent from 'parse-torrent';
 import rangeParser from 'range-parser';
 import { MAX_ROOM_TORRENTS, MAX_SEATS } from './constants.mjs';
 
 const PREFIX = '/torrent-helper';
+const ROUTE = new RegExp(`^${PREFIX}/(sessions|metadata|seed)/([a-f0-9]{64})(?:/(.*))?$`);
+const run = promisify(execFile);
 // A room holds MAX_SEATS people and the helper serves MAX_ROOM_TORRENTS rooms, so no honest
 // caller can need more leases than this; the cap only ever rejects abuse.
 const MAX_SESSIONS = MAX_ROOM_TORRENTS * MAX_SEATS;
@@ -22,7 +26,14 @@ for (const [address, prefix] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0',
 for (const [address, prefix] of [['::', 96], ['::1', 128], ['64:ff9b::', 96], ['2002::', 16], ['2001::', 32],
   ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8]]) blocked.addSubnet(address, prefix, 'ipv6');
 const publicAddress = address => !blocked.check(address, isIP(address) === 6 ? 'ipv6' : 'ipv4');
-const publicHost = value => { const host = value.replace(/^\[|\]$/g, ''); return !isIP(host) || publicAddress(host); };
+// A name is not an address: resolve it here the way fetchTorrent does, or `localhost` and
+// `127.0.0.1.nip.io` walk straight past the filter below.
+const publicHost = async value => {
+  const host = value.replace(/^\[|\]$/g, '');
+  if (isIP(host)) return publicAddress(host);
+  const addresses = await lookup(host, { all: true }).catch(() => []);
+  return addresses.length > 0 && addresses.every(({ address }) => publicAddress(address));
+};
 
 async function fetchTorrent(url, signal) {
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
@@ -46,8 +57,9 @@ async function fetchTorrent(url, signal) {
     request.on('error', reject);
   });
 }
+// The room shares one fileIndex, so the tie-break compares code units rather than the viewer's locale.
 export const videoFiles = files => files.filter(file => /\.(mkv|mp4|webm|m4v|ogv)$/i.test(file.name))
-  .sort((a, b) => b.length - a.length || a.path.localeCompare(b.path));
+  .sort((a, b) => b.length - a.length || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 
 // Only files sharing a piece with a video are ever written.
 export function videoSpanFiles(torrent) {
@@ -58,17 +70,43 @@ export function videoSpanFiles(torrent) {
   return torrent.files.filter(file => file.offset + file.length > from && file.offset < to);
 }
 
+// NTFS zero-fills everything below a write, so the tail pieces an MKV player reads first would allocate the
+// whole movie at once and can fill the drive. A sparse file only allocates the pieces that arrive.
+export async function markSparse(value, signal) {
+  if (process.platform !== 'win32') return;
+  let store = value.store;
+  while (store && !Array.isArray(store.files)) store = store.store;
+  const wanted = new Set(videoSpanFiles(value));
+  for (const [index, file] of value.files.entries()) {
+    if (signal?.aborted) return;
+    const target = store?.files[index];
+    if (!target || !wanted.has(file) || file.length <= value.pieceLength) continue;
+    try {
+      await mkdir(path.dirname(target.path), { recursive: true });
+      await (await open(target.path, 'a')).close();
+      await run('fsutil', ['sparse', 'setflag', target.path], { windowsHide: true, timeout: 5000, signal });
+    } catch (error) { console.error('Sparse flag failed:', error.message); }
+  }
+}
+
 // fs-chunk-store sanitises only the file name, Windows folds case and treats a
 // backslash inside a name as a separator, and WebTorrent puts the raw path in
 // web seed URLs.
-export function torrentPathIssue(torrent) {
+export function torrentPathIssue(torrent, root = '') {
   const seen = new Set();
   for (const file of videoSpanFiles(torrent)) {
     const parts = file.path.replaceAll('\\', '/').split('/');
     if (parts.slice(0, -1).some(part => /[<>:"|?*\p{Cc}]/u.test(part))) return 'This torrent has a folder name Windows cannot create. Choose another torrent.';
+    // Win32 reroutes NUL.mkv as well as NUL, and folds away a trailing dot or space, so Node writes an
+    // entry through \\?\ that nothing else on the machine can open, list or delete.
+    if (parts.some(part => /^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(part) || /[. ]$/.test(part))) return 'This torrent has a folder name Windows cannot create. Choose another torrent.';
+    // fsutil and every Win32 tool still stop at MAX_PATH, so a deep torrent in a deep folder is not writable sparse.
+    if (root && path.join(root, file.path).length > 250) return 'This torrent stores its files too deep for your download folder. Choose another torrent or a shorter folder.';
     if (torrent.files.length > 1 && (/[#?%\p{Cc}]/u.test(file.path) || file.path.endsWith(' ')))
       return 'This multi-file torrent has a filename WebTorrent cannot request as a web seed path. Choose another torrent.';
-    const key = [...parts.slice(0, -1), parts[parts.length - 1].replace(/[<>:"/\\|?*\p{Cc}]/gu, '')].join('/').toLowerCase();
+    const name = parts[parts.length - 1].replace(/[<>:"/\\|?*\p{Cc}]/gu, '');
+    if (!name) return 'This torrent has a folder name Windows cannot create. Choose another torrent.';
+    const key = [...parts.slice(0, -1), name].join('/').toLowerCase();
     if (seen.has(key)) return 'This torrent has two files that Windows would store under the same name. Choose another torrent.';
     seen.add(key);
   }
@@ -107,21 +145,32 @@ export async function torrentSource(source, signal) {
   delete parsed.as;
   parsed.urlList = [];
   if (process.env.COUCHSWARM_HELPER_OFFLINE !== '1') {
+    // A BEP9 hint is ip:port, and a name resolved here cannot be pinned to WebTorrent's later connect.
     parsed.peerAddresses = (parsed.peerAddresses || []).filter(peer => {
       let hint; try { hint = decodeURIComponent(peer); } catch { hint = peer; }
-      return publicHost(hint.replace(/:\d+$/, ''));
+      const host = hint.replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
+      return !!isIP(host) && publicAddress(host);
     });
-    parsed.announce = (parsed.announce || []).filter(tracker => {
+    // http/https announces are excluded because undici follows redirects, which would re-point the
+    // announce at any address after this filter has run.
+    // dns.lookup takes neither a signal nor a timeout, so cap the list and bound the whole phase: a magnet
+    // listing hundreds of trackers otherwise holds a source switch and stop() open for as long as it resolves.
+    // Whatever has not answered by then drops, the same fail-closed answer publicHost gives a lookup error.
+    const trackers = (parsed.announce || []).slice(0, 64);
+    const deadline = signal ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000);
+    const allowed = deadline.aborted ? [] : await Promise.race([Promise.all(trackers.map(tracker => {
       const url = URL.parse(tracker);
-      return !!url && ['udp:', 'http:', 'https:', 'ws:', 'wss:'].includes(url.protocol) && publicHost(url.hostname);
-    });
+      return url && ['udp:', 'ws:', 'wss:'].includes(url.protocol) ? publicHost(url.hostname) : false;
+    })), new Promise(resolve => deadline.addEventListener('abort', () => resolve([]), { once: true }))]);
+    parsed.announce = trackers.filter((_, index) => allowed[index]);
   }
   return parsed;
 }
 
 export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, graceMs = 60000,
   createClient = () => new WebTorrent({ natUpnp: false, natPmp: false, lsd: false, utp: false,
-    tracker: { announce: ['wss://tracker.openwebtorrent.com', 'wss://tracker.webtorrent.dev'] } }) }) {
+    ...(process.env.COUCHSWARM_HELPER_OFFLINE === '1' ? { dht: false, tracker: false }
+      : { tracker: { announce: ['wss://tracker.openwebtorrent.com', 'wss://tracker.webtorrent.dev'] } }) }) }) {
   const origin = new URL(siteOrigin).origin;
   const root = path.resolve(cacheRoot);
   const entries = new Map();
@@ -132,6 +181,9 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
   async function dispose(entry) {
     if (entry.disposed) return;
     entry.disposed = true;
+    // markSparse recreates the files it flags, so stop it before the rm below or it leaves a markerless
+    // session directory the sweep will never reclaim.
+    entry.abort.abort();
     clearTimeout(entry.timeout);
     for (const stream of entry.streams) stream.destroy();
     if (entry.client && !entry.client.destroyed) await new Promise(resolve => entry.client.destroy(resolve));
@@ -172,11 +224,15 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
           if (!name.startsWith('session-')) continue;
           const stale = path.join(root, name);
           if ([...entries.values()].some(other => other.directory === stale)) continue;
-          const { mtimeMs } = await stat(stale).catch(() => ({ mtimeMs: Date.now() }));
-          if (Date.now() - mtimeMs > 3600000) await rm(stale, { recursive: true, force: true }).catch(() => {});
+          const info = await stat(stale).catch(() => null);
+          if (!info || !info.isDirectory() || Date.now() - info.mtimeMs <= 3600000) continue;
+          if (!await stat(path.join(stale, '.couchswarm')).catch(() => null)) continue;
+          await rm(stale, { recursive: true, force: true }).catch(() => {});
         }
       }
       const directory = await mkdtemp(path.join(root, 'session-'));
+      // The cache root can be a folder the user picked, so the sweep above deletes only what carries this marker.
+      await (await open(path.join(directory, '.couchswarm'), 'w')).close();
       entry.directory = directory;
       if (entry.disposed) { await rm(directory, { recursive: true, force: true }); return; }
       const client = entry.client = createClient();
@@ -186,12 +242,15 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
         cleanup(entry);
       };
       client.on('error', () => fail('The helper lost its torrent connection. Reconnect to try again.'));
-      const torrent = entry.torrent = client.add(parsed, { path: directory, strategy: 'sequential', deselect: true, destroyStoreOnDestroy: true }, torrent => {
+      const torrent = entry.torrent = client.add(parsed, { path: directory, strategy: 'sequential', deselect: true, destroyStoreOnDestroy: true }, async torrent => {
         if (entry.disposed) return;
         clearTimeout(entry.timeout);
         if (!videoFiles(torrent.files).length) { fail('This torrent does not contain an MKV, MP4, WebM, M4V, or OGV video.'); return; }
-        const issue = torrentPathIssue(torrent);
+        const issue = torrentPathIssue(torrent, directory);
         if (issue) { fail(issue); return; }
+        // entry.ready unlocks the read endpoint, which drives the first store write, so flag the files first.
+        await markSparse(torrent, entry.abort.signal);
+        if (entry.disposed) return;
         entry.ready = true;
         // Reads select only the requested pieces. Avoid a full background movie
         // download when everybody already has enough buffer or leaves the room.
@@ -250,7 +309,7 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
         else {
           for (const other of entries.values()) if (!other.sessions.size) { clearTimeout(other.idleTimer); entries.delete(other.key); cleanup(other); }
           if (entries.size >= MAX_ROOM_TORRENTS) { json(res, 429, { error: 'The helper supports two active torrents. Leave another room first.' }); return; }
-          entry = { key, sessions: new Set(), streams: new Set(), ready: false, disposed: false };
+          entry = { key, sessions: new Set(), streams: new Set(), ready: false, disposed: false, abort: new AbortController() };
           entries.set(key, entry);
           void initialize(entry, room.source);
         }
@@ -259,7 +318,7 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
         entry.sessions.add(id);
         json(res, 201, { id, source: room.source, mediaVersion: room.mediaVersion }); return;
       }
-      const match = url.pathname.match(/^\/torrent-helper\/(sessions|metadata|seed)\/([a-f0-9]{64})(?:\/(.*))?$/);
+      const match = url.pathname.match(ROUTE);
       if (!match) { json(res, 404, { error: 'Not found.' }); return; }
       const [, action, id, suffix = ''] = match;
       const session = sessions.get(id);
@@ -286,14 +345,17 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
         res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Accept-Ranges': 'bytes', 'Content-Length': 0, 'Cache-Control': 'no-store' });
         res.end(); return;
       }
-      let ranges = req.headers.range ? rangeParser(file.length, req.headers.range) : null;
+      // RFC 9110 14.1.2: a suffix-length past the end of the file means the whole representation.
+      const suffixRange = /^\s*bytes\s*=\s*-(\d+)\s*$/.exec(req.headers.range || '');
+      const header = suffixRange && Number(suffixRange[1]) >= file.length ? `bytes=0-${file.length - 1}` : req.headers.range;
+      let ranges = header ? rangeParser(file.length, header) : null;
       if (ranges === -1) { res.writeHead(416, { 'Content-Range': `bytes */${file.length}` }); res.end(); return; }
       if (ranges && (!Array.isArray(ranges) || ranges.length !== 1 || ranges.type !== 'bytes')) ranges = null;
       const { start, end } = ranges?.[0] || { start: 0, end: file.length - 1 };
       res.writeHead(ranges ? 206 : 200, { 'Content-Type': 'application/octet-stream', 'Accept-Ranges': 'bytes',
-        'Content-Length': Math.max(0, end - start + 1), 'Cache-Control': 'no-store',
+        'Content-Length': end - start + 1, 'Cache-Control': 'no-store',
         ...(ranges ? { 'Content-Range': `bytes ${start}-${end}/${file.length}` } : {}) });
-      if (req.method === 'HEAD' || !file.length) { res.end(); return; }
+      if (req.method === 'HEAD') { res.end(); return; }
       const stream = file.createReadStream({ start, end: end === 0 ? Math.min(1, file.length - 1) : end });
       entry.streams.add(stream);
       // WebTorrent treats end=0 as absent. Limit this edge case to one byte.

@@ -17,5 +17,12 @@
       "replace": "if (/^(error|WARN)/.test(msg)) console.log(`[worker] ${msg}`);",
       "count": 1
     }
+  ],
+  "adapters/wasm-ffmpeg.js": [
+    {
+      "find": "/* @vite-ignore */",
+      "replace": "/* @vite-ignore */ /* webpackIgnore: true */",
+      "count": 1
+    }
   ]
 }

@@ -8,12 +8,12 @@ export const MAX_HELPER_PEERS = 12;
 export const PAIR_TTL_MS = 300_000;
 export const SPECTATOR_EPOCH = -2;
 export type Room = {
-  id: string; name: string; hostId: string; source: string; fileIndex: number;
+  id: string; hostId: string; source: string; fileIndex: number;
   mediaVersion: number; epoch: number; revision: number; playing: boolean;
   position: number; startsAt: number; duration: number; reason: string;
 };
 export type Member = {
-  id: string; name: string; ready: boolean; buffered: number; progress: number;
+  id: string; name: string; ready: boolean; buffered: number;
   epoch: number; lastSeen: number;
 };
 export type Snapshot = { room: Room; members: Member[]; serverNow: number; serverReceivedAt: number };
@@ -32,8 +32,9 @@ export function bufferedAhead(ranges: Pick<TimeRanges, 'length' | 'start' | 'end
   for (let i = 0; i < ranges.length; i++) {
     if (ranges.start(i) > position + 0.15 || ranges.end(i) <= position) continue;
     let end = ranges.end(i);
-    // Segment joins can leave seams a few frames wide; hls.js plays across up to 0.1s, so count past them too.
-    while (i + 1 < ranges.length && ranges.start(i + 1) - end <= 0.1) end = ranges.end(++i);
+    // Segment joins can leave seams a few frames wide; hls.js plays across up to 0.1s, so count past them too
+    // (0.1001 because an exactly-0.1s seam subtracts to either side of 0.1 in binary floating point).
+    while (i + 1 < ranges.length && ranges.start(i + 1) - end < 0.1001) end = ranges.end(++i);
     return end - position;
   }
   return 0;

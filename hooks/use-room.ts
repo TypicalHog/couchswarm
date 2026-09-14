@@ -3,12 +3,27 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { allReady, bufferedAhead, estimateServerNow, hasBuffer, timelinePosition, validSource, type Session, type Snapshot } from '@/lib/sync';
 import { useTorrent } from '@/hooks/use-torrent';
 
+let seat: Promise<boolean> | null = null;
+// One seat per browser profile: a duplicated tab shares this session's token and would fight it for the seat.
+// Memoised per document, so a remount or a rotated session never re-requests a lock this tab already holds.
+function claimSeat(roomId: string) {
+  if (!seat) seat = new Promise<boolean>(resolve => {
+    if (typeof navigator.locks === 'undefined') { resolve(true); return; }
+    void navigator.locks.request(`couchswarm:seat:${roomId}`, { ifAvailable: true }, lock => {
+      resolve(!!lock);
+      return lock ? new Promise<void>(() => { /* Held until this document goes away. */ }) : undefined;
+    }).catch(() => resolve(true));
+  });
+  return seat;
+}
+
 export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   const [session, setSession] = useState<Session | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [invitation, setInvitation] = useState<{ roomId: string; invite: string } | null>(null);
   const [error, setError] = useState('');
   const [networkError, setNetworkError] = useState('');
+  const [unsupported, setUnsupported] = useState(false);
   const [busy, setBusy] = useState(false);
   const [connected, setConnected] = useState(false);
   const [armed, setArmed] = useState(false);
@@ -27,12 +42,17 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   const appliedEpoch = useRef(-1);
   const mediaPlaying = useRef(false);
   const unlocking = useRef(false);
+  const pending = useRef(false);
+  const bridged = useRef({ epoch: -1, until: 0 });
   const rtt = useRef(0);
   const best = useRef({ rtt: Infinity, at: 0 });
   const staleControl = useRef(false);
+  // A transient control failure still self-heals, but a 1 Hz heartbeat must not wipe it before it is read.
+  const controlError = useRef(0);
   const creating = useRef<Promise<boolean> | null>(null);
   const leaving = useRef(false);
-  const localNow = () => anchor.current.server + (performance.now() - anchor.current.local);
+  // Stable so the callbacks that read the shared clock do not have to be rebuilt every render.
+  const localNow = useCallback(() => anchor.current.server + (performance.now() - anchor.current.local), []);
 
   useEffect(() => {
     setDuration(0);
@@ -40,7 +60,48 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     setPlayhead(0);
     setCountdown(0);
     appliedEpoch.current = -1;
+    bridged.current = { epoch: -1, until: 0 };
   }, [room?.mediaVersion]);
+
+  const applyRoomState = useCallback(() => {
+    const state = live.current;
+    const current = state.snapshot?.room;
+    const video = videoRef.current;
+    if (!current || !video) return;
+    if (unlocking.current) return;
+    // A request still in flight is proof the tab is alive, but only until its 10 s abort would have fired.
+    if ((!pending.current || performance.now() - lastContact.current > 11000) && performance.now() - lastContact.current > Math.max(3500, 1000 + 2 * rtt.current)) { video.pause(); setConnected(false); return; }
+    if (state.media.loadedVersion !== current.mediaVersion || video.readyState < 1) return;
+    const now = localNow();
+    const target = timelinePosition(current, now);
+    const drift = target - video.currentTime;
+    if (performance.now() >= bridged.current.until && (appliedEpoch.current !== current.epoch || Math.abs(drift) > 0.75 || (!current.playing && Math.abs(drift) > .12))) {
+      if (!video.seeking) { video.currentTime = target; appliedEpoch.current = current.epoch; }
+    }
+    const shouldPlay = current.playing && now >= current.startsAt && state.armed && !state.media.error && !video.ended;
+    if (shouldPlay) {
+      // Half the error, capped at a still-inaudible 8 %, quantised so a 10 Hz tick does not churn the resampler.
+      const rate = Math.abs(drift) < .05 ? 1 : 1 + Math.max(-.08, Math.min(.08, Math.round(drift * 50) / 100));
+      if (video.playbackRate !== rate) video.playbackRate = rate;
+      if (video.paused && !mediaPlaying.current) {
+        mediaPlaying.current = true;
+        void video.play().catch(err => { if ((err as Error).name === 'NotAllowedError') setArmed(false); }).finally(() => { mediaPlaying.current = false; });
+      }
+    } else { video.pause(); video.playbackRate = 1; }
+    const ahead = bufferedAhead(video.buffered, target);
+    // A paused element never fetches past the edge it stopped at, so a hole or a suspended read leaves the
+    // ready gate unreachable. Touch that edge once per epoch; the drift corrector brings the playhead back.
+    if (!current.playing && bridged.current.epoch !== current.epoch && appliedEpoch.current === current.epoch
+      && video.readyState >= 3 && !video.seeking && !video.ended && ahead > 0
+      && Math.abs(video.currentTime - target) < .12 && !hasBuffer(ahead, target, video.duration, false)) {
+      bridged.current = { epoch: current.epoch, until: performance.now() + 600 };
+      video.currentTime = target + ahead + 0.05;
+    }
+    setPlayhead(value => Math.floor(value) === Math.floor(target) ? value : target);
+    setBuffered(value => Math.floor(value) === Math.floor(ahead) ? value : ahead);
+    setDuration(Number.isFinite(video.duration) ? video.duration : 0);
+    setCountdown(current.playing ? Math.max(0, Math.ceil((current.startsAt - now) / 1000)) : 0);
+  }, [videoRef, localNow]);
 
   const accept = useCallback((data: Snapshot, sent: number) => {
     if (!data?.room) return false;
@@ -49,9 +110,10 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     latestResponse.current = data.serverNow;
     const received = performance.now();
     const roundTrip = received - sent;
-    if (!anchor.current.server || (roundTrip < 1500 && (roundTrip <= best.current.rtt * 1.25 || received - best.current.at > 60_000))) {
+    const network = Math.max(0, roundTrip - (data.serverNow - data.serverReceivedAt));
+    if (!anchor.current.server || (network < 1500 && (network <= best.current.rtt * 1.25 || received - best.current.at > 60_000))) {
       anchor.current = { server: estimateServerNow(data.serverNow, data.serverReceivedAt, roundTrip), local: received };
-      best.current = { rtt: roundTrip, at: received };
+      best.current = { rtt: network, at: received };
     }
     rtt.current = Math.max(roundTrip, rtt.current * 0.8);
     lastContact.current = received;
@@ -59,16 +121,18 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     live.current.snapshot = data;
     setSnapshot(data);
     setConnected(true);
+    applyRoomState();
     return true;
-  }, []);
+  }, [applyRoomState]);
 
   const request = useCallback(async <T,>(path: string, body: Record<string, unknown>, token?: string): Promise<T> => {
     let response: Response;
     try {
       response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body), signal: AbortSignal.timeout(10000) });
     } catch { throw new Error('The room could not be reached. Try again.'); }
-    const data = await response.json().catch(() => ({})) as { error?: string };
-    if (!response.ok) throw Object.assign(new Error(data.error || 'The room could not be reached. Try again.'), { status: response.status });
+    const data = await response.json().catch(() => null) as { error?: string } | null;
+    if (!response.ok) throw Object.assign(new Error(data?.error || 'The room could not be reached. Try again.'), { status: response.status });
+    if (!data) throw new Error('The room could not be reached. Try again.');
     return data as T;
   }, []);
 
@@ -85,16 +149,20 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   }, []);
 
   useEffect(() => {
-    if (typeof AbortSignal.any !== 'function') { setError('CouchSwarm needs a current browser: Chrome or Edge 116+, Firefox 124+, or Safari 17.4+.'); return; }
+    if (typeof AbortSignal.any !== 'function') { setUnsupported(true); setError('CouchSwarm needs a current browser: Chrome or Edge 116+, Firefox 124+, or Safari 17.4+.'); return; }
     const roomId = new URLSearchParams(location.search).get('room');
     const invite = new URLSearchParams(location.hash.slice(1)).get('invite') || '';
     if (!roomId) return;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(roomId)) { setError('This invite link is not valid.'); return; }
     try {
       const saved = JSON.parse(sessionStorage.getItem(`couchswarm:${roomId}`) || 'null') as Session | null;
       if (saved?.roomId === roomId && saved.token) { setSession(saved); return; }
     } catch { /* An expired tab credential can be replaced by the invite. */ }
     setInvitation({ roomId, invite });
   }, []);
+
+  // A back/forward-cache restore of a tab that already left brings back a seat the server has released.
+  useEffect(() => { const restore = (event: PageTransitionEvent) => { if (event.persisted && leaving.current) location.reload(); }; window.addEventListener('pageshow', restore); return () => window.removeEventListener('pageshow', restore); }, []);
 
   const create = (source = '', name = '') => {
     if (creating.current) { setError('Still creating the room. Try again in a moment.'); return Promise.resolve(false); }
@@ -122,6 +190,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     if (!session) return;
     if (!sequence.current) sequence.current = Date.now();
     let stopped = false;
+    let failures = 0;
     let timer: ReturnType<typeof setTimeout>;
     const heartbeat = async () => {
       if (leaving.current) return;
@@ -135,13 +204,15 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
         && appliedEpoch.current === current.epoch && video.readyState >= 2 && !video.seeking
         && Math.abs(video.currentTime - target) < 1.5 && hasBuffer(ahead, target, video.duration, current.playing));
       const sent = performance.now();
+      pending.current = true;
       try {
         const data = await request<Snapshot>(`/api/rooms/${session.roomId}`, { action: current ? 'heartbeat' : 'snapshot',
-          ready, buffered: ahead, progress: state.media.stats.progress, epoch: current?.epoch ?? -1,
+          ready, buffered: ahead, epoch: current?.epoch ?? -1,
           mediaVersion: state.media.loadedVersion, duration: video && Number.isFinite(video.duration) ? video.duration : 0,
           sequence: ++sequence.current,
         }, session.token);
-        if (!stopped) setNetworkError(accept(data, sent) ? '' : 'The room sent an unexpected reply. Retrying.');
+        failures = 0;
+        if (!stopped) { const ok = accept(data, sent); if (!ok) setNetworkError('The room sent an unexpected reply. Retrying.'); else if (performance.now() >= controlError.current) setNetworkError(''); }
       } catch (err) {
         if (stopped) return;
         const status = (err as { status?: number }).status;
@@ -152,45 +223,21 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
           if (status === 401 && invite) setInvitation({ roomId: session.roomId, invite }); else setError((err as Error).message);
           return;
         }
+        failures++;
         setNetworkError((err as Error).message);
-      }
-      if (!stopped && !leaving.current) timer = setTimeout(heartbeat, Math.max(0, 1000 - (performance.now() - sent)));
+      } finally { pending.current = false; }
+      // Back off a failing room instead of pinning it at 1 Hz, and hold an idle lobby at the watchdog's floor.
+      const period = failures ? Math.min(8000, 1000 * 2 ** failures) * (.8 + Math.random() * .4) : live.current.snapshot?.room.source ? 1000 : 2000;
+      if (!stopped && !leaving.current) timer = setTimeout(heartbeat, Math.max(0, period - (performance.now() - sent)));
     };
-    void heartbeat();
+    void claimSeat(session.roomId).then(ok => { if (!ok) setError('This room is already open in another CouchSwarm tab.'); else if (!stopped) void heartbeat(); });
     return () => { stopped = true; clearTimeout(timer); };
-  }, [session, request, accept, videoRef]);
+  }, [session, request, accept, videoRef, localNow]);
 
   useEffect(() => {
-    const tick = setInterval(() => {
-      const state = live.current;
-      const current = state.snapshot?.room;
-      const video = videoRef.current;
-      if (!current || !video) return;
-      if (unlocking.current) return;
-      if (performance.now() - lastContact.current > Math.max(3500, 1000 + 2 * rtt.current)) { video.pause(); setConnected(false); return; }
-      if (state.media.loadedVersion !== current.mediaVersion || video.readyState < 1) return;
-      const now = localNow();
-      const target = timelinePosition(current, now);
-      const drift = target - video.currentTime;
-      if (appliedEpoch.current !== current.epoch || Math.abs(drift) > 0.75 || (!current.playing && Math.abs(drift) > .12)) {
-        if (!video.seeking) { video.currentTime = target; appliedEpoch.current = current.epoch; }
-      }
-      const shouldPlay = current.playing && now >= current.startsAt && state.armed && !state.media.error && !video.ended;
-      if (shouldPlay) {
-        video.playbackRate = Math.abs(drift) > .15 ? (drift > 0 ? 1.03 : .97) : Math.abs(drift) < .05 ? 1 : video.playbackRate;
-        if (video.paused && !mediaPlaying.current) {
-          mediaPlaying.current = true;
-          void video.play().catch(err => { if ((err as Error).name === 'NotAllowedError') setArmed(false); }).finally(() => { mediaPlaying.current = false; });
-        }
-      } else { video.pause(); video.playbackRate = 1; }
-      const ahead = bufferedAhead(video.buffered, target);
-      setPlayhead(value => Math.floor(value) === Math.floor(target) ? value : target);
-      setBuffered(value => Math.floor(value) === Math.floor(ahead) ? value : ahead);
-      setDuration(Number.isFinite(video.duration) ? video.duration : 0);
-      setCountdown(current.playing ? Math.max(0, Math.ceil((current.startsAt - now) / 1000)) : 0);
-    }, 100);
+    const tick = setInterval(applyRoomState, 100);
     return () => clearInterval(tick);
-  }, [videoRef]);
+  }, [applyRoomState]);
 
   const control = async (action: string, extra: Record<string, unknown> = {}) => {
     const state = live.current;
@@ -201,10 +248,10 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     try {
       const data = await request<Snapshot>(`/api/rooms/${state.session.roomId}`, { action, revision: state.snapshot.room.revision, ...extra }, state.session.token);
       if (!accept(data, sent)) { setError('The room sent an unexpected reply. Try that again.'); return false; }
-      const rotated = (data as unknown as { invite?: string }).invite;
-      if (rotated) saveSession({ ...state.session, invite: rotated });
+      const rotated = data as unknown as { invite?: string; hostKey?: string };
+      if (rotated.invite) saveSession({ ...state.session, invite: rotated.invite, ...(rotated.hostKey ? { hostKey: rotated.hostKey } : {}) });
       return true;
-    } catch (err) { staleControl.current = (err as { status?: number }).status === 409; setError((err as Error).message); return false; }
+    } catch (err) { const status = (err as { status?: number }).status; staleControl.current = status === 409; if (status) setError((err as Error).message); else { controlError.current = performance.now() + 5000; setNetworkError((err as Error).message); } return false; }
     finally { setBusy(false); }
   };
 
@@ -232,14 +279,14 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     if (session) {
       leaving.current = true;
       sendLeave(session);
-      try { sessionStorage.removeItem(`couchswarm:${session.roomId}`); localStorage.removeItem(`couchswarm:host:${session.roomId}`); } catch { /* Storage blocked: nothing to clear. */ }
+      try { sessionStorage.removeItem(`couchswarm:${session.roomId}`); } catch { /* Storage blocked: nothing to clear. */ }
     }
     location.assign('/');
   };
 
   const isHost = room ? room.hostId === session?.memberId : !session;
   const everyoneReady = !!(room && snapshot && allReady(snapshot.members, room, snapshot.serverNow));
-  return { session, room, members: snapshot?.members || [], invitation, error: error || networkError, busy, connected, armed, playhead,
+  return { session, room, members: snapshot?.members || [], invitation, error: error || networkError, unsupported, busy, connected, armed, playhead,
     buffered, duration, countdown, media, isHost, everyoneReady, create, join, control, enable, leave,
     inviteUrl: session ? `${typeof location === 'undefined' ? '' : location.origin}/?room=${session.roomId}#invite=${session.invite}` : '',
   };

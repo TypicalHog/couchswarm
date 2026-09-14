@@ -24,7 +24,7 @@ input.on('line', line => {
 input.on('close', () => {
   // The launcher window only closes once this process exits.
   const deadline = new Promise(resolve => setTimeout(resolve, 15000).unref());
-  void pending.then(() => Promise.race([agent?.stop(), deadline])).finally(() => process.exit(0));
+  void Promise.race([pending.then(() => agent?.stop()).catch(() => {}), deadline]).finally(() => process.exit(0));
 });
-process.on('SIGTERM', () => { void agent?.stop().finally(() => process.exit(0)); });
+process.on('SIGTERM', () => { void Promise.resolve(agent?.stop()).catch(() => {}).finally(() => process.exit(0)); });
 report({ status: 'Paste the pairing link from your room to begin.' });

@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { isMkv, videoFiles } from '../lib/video-files.ts';
 import { videoFiles as helperVideoFiles } from '../helper/torrent-helper.mjs';
+import { MAX_SEATS } from '../lib/sync.ts';
+import { MAX_SEATS as helperSeats } from '../helper/constants.mjs';
 
 test('MKV torrents select the main movie and retain other video choices', () => {
   const files = [
@@ -25,4 +27,9 @@ test('existing MP4, WebM, M4V and OGV videos keep their selection order', () => 
 test('the packaged helper and the site select the same video files', () => {
   const files = [{ name: 'sample.mp4', path: 'r/sample.mp4', length: 10 }, { name: 'Movie.MKV', path: 'r/Movie.MKV', length: 1000 }, { name: 'poster.jpg', path: 'r/poster.jpg', length: 2000 }, { name: 'clip.ogv', path: 'r/clip.ogv', length: 10 }];
   assert.deepEqual(helperVideoFiles(files), videoFiles(files));
+  const ties = ['A.mkv', 'Zebra.mkv', 'Ärger.mkv'].map(name => ({ name, path: name, length: 40 }));
+  assert.deepEqual(videoFiles(ties).map(file => file.name), ['A.mkv', 'Zebra.mkv', 'Ärger.mkv'], 'equal lengths tie-break on code units, not on the runner locale');
+  assert.deepEqual(helperVideoFiles(ties), videoFiles(ties));
 });
+
+test('the packaged helper and the site agree on the seat count', () => assert.equal(helperSeats, MAX_SEATS));

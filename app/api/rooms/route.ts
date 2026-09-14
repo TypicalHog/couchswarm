@@ -1,9 +1,11 @@
-import { cleanName, getDb, hash, json, notAllowed, readBody, secret } from '@/lib/db';
+import { cleanName, getDb, hash, json, notAllowed, readBody, secret, withDb } from '@/lib/db';
 import { PRESENCE_MS, ROOM_TTL_MS, validSource } from '@/lib/sync';
+
+export const maxDuration = 10;
 
 const expiredRooms = 'SELECT id FROM rooms WHERE created_at < ? AND NOT EXISTS (SELECT 1 FROM members WHERE members.room_id = rooms.id AND members.last_seen > ?)';
 
-export async function POST(request: Request) {
+async function handler(request: Request) {
   let body;
   try { body = await readBody(request); } catch { return json({ error: 'Invalid room request.' }, 400); }
   const source = typeof body.source === 'string' ? body.source.trim() : '';
@@ -23,12 +25,13 @@ export async function POST(request: Request) {
     db.prepare(`DELETE FROM helpers WHERE room_id IN (${expiredRooms})`).bind(cutoff, seen),
     db.prepare(`DELETE FROM members WHERE room_id IN (${expiredRooms})`).bind(cutoff, seen),
     db.prepare(`DELETE FROM rooms WHERE id IN (${expiredRooms})`).bind(cutoff, seen),
-    db.prepare('INSERT INTO rooms (id, name, host_id, invite_hash, host_key_hash, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .bind(id, 'The living room', memberId, inviteHash, hostKeyHash, source, now),
+    db.prepare('INSERT INTO rooms (id, name, host_id, invite_hash, host_key_hash, source, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .bind(id, 'The living room', memberId, inviteHash, hostKeyHash, source, source ? 'Buffering a new movie.' : 'Waiting for a movie.', now),
     db.prepare('INSERT INTO members (id, room_id, token_hash, name, last_seen) VALUES (?, ?, ?, ?, ?)')
       .bind(memberId, id, tokenHash, name, now),
   ]);
   return json({ roomId: id, memberId, token, invite, hostKey }, 201);
 }
 
+export const POST = withDb(handler);
 export const GET = notAllowed, PUT = notAllowed, DELETE = notAllowed, PATCH = notAllowed;

@@ -11,7 +11,7 @@ const { buildMkvKeyframeIndexFromUrl } = await import(new URL('./pipeline/mkv-ke
 const { buildSegmentPlan } = await import(new URL('./pipeline/segment-plan.js', playsvideo).href);
 const { processSegmentWithAbort } = await import(new URL('./pipeline/segment-processor.js', playsvideo).href);
 
-test('MKV range streaming indexes metadata, remuxes video and audio, and seeks to a later segment', async () => {
+test('MKV range streaming indexes metadata, remuxes video and audio, and seeks to a later segment', { timeout: 60000 }, async () => {
   // Repeat a synthetic two-second clip to make a movie-sized index without
   // keeping a large fixture in the repository. No codecs need to be re-encoded.
   const clip = await demuxFile(fileURLToPath(new URL('./fixtures/h264-aac.mp4', import.meta.url)));
@@ -88,7 +88,7 @@ test('MKV range streaming indexes metadata, remuxes video and audio, and seeks t
   }
 });
 
-test('the bundled audio WASM actually decodes MP3 and produces AAC', async () => {
+test('the bundled audio WASM actually decodes MP3 and produces AAC', { timeout: 30000 }, async () => {
   const wasmBinary = await readFile(new URL('./vendor/ffmpeg-core-audio/ffmpeg-core.wasm', playsvideo));
   // Supply the worker's location to the browser-targeted Emscripten factory;
   // the real shipped WASM executes here, with its bytes supplied from disk.

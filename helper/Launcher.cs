@@ -194,6 +194,7 @@ class CouchSwarmHelper : Form {
     readonly Label status = new Label(), meta = new Label();
     readonly FlatButton pair = new FlatButton(), stop = new FlatButton(), browse = new FlatButton();
     readonly Check keep = new Check();
+    readonly ToolTip tips = new ToolTip();
     readonly JavaScriptSerializer json = new JavaScriptSerializer();
     Process helper;
     bool quitting, running;
@@ -234,6 +235,8 @@ class CouchSwarmHelper : Form {
         diskTitle.SetBounds(24, 18, 456, 18);
         Dress(folder);
         folder.SetBounds(37, 52, 300, 20);
+        // The box shows about 42 characters of a path, so keep the whole (expanded) one a hover away.
+        folder.TextChanged += (s, e) => tips.SetToolTip(folder, Environment.ExpandEnvironmentVariables(folder.Text));
         browse.Text = "Browse…"; browse.SetBounds(362, 42, 118, 40);
         keep.Text = "Keep downloads when I close"; keep.Checked = true; keep.SetBounds(23, 98, 456, 26);
         var keepHint = new Label { Text = "Turn this off to delete the movie when you stop sharing or close.", ForeColor = Skin.Muted, Font = new Font("Segoe UI", 8.5F), TextAlign = ContentAlignment.MiddleLeft };
@@ -246,6 +249,8 @@ class CouchSwarmHelper : Form {
         // Three lines: the longest real message (a rejected torrent plus its retry advice) needs 57px.
         status.SetBounds(46, 18, 434, 76);
         status.AutoEllipsis = true;
+        // This card is the only feedback surface and never takes focus, so Narrator needs it announced.
+        status.LiveSetting = System.Windows.Forms.Automation.AutomationLiveSetting.Polite;
         meta.ForeColor = Skin.Muted; meta.Font = new Font("Segoe UI", 8.5F);
         meta.SetBounds(46, 96, 434, 18);
         statusCard.Controls.AddRange(new Control[] { status, meta });
@@ -256,11 +261,17 @@ class CouchSwarmHelper : Form {
 
         pair.Click += (s, e) => {
             if (link.Text.Trim().Length == 0) { link.Focus(); return; }
+            // Node expands neither %VARS% nor relative paths, and the helper's own folder is its working directory.
+            string chosen = Environment.ExpandEnvironmentVariables(folder.Text.Trim());
+            // Explorer's "Copy as path" pastes the quotes too, and Path.IsPathRooted throws on those and on '|':
+            // an unparseable path is simply not rooted, and lands on the same status line instead of a crash dialog.
+            bool rooted; try { rooted = Path.IsPathRooted(chosen); } catch (ArgumentException) { rooted = false; }
+            if (chosen.Length > 0 && !rooted) { folder.Focus(); Say("Choose the download folder with Browse.", Skin.Alarm); return; }
             SetRunning(true);
             lastLink = link.Text.Trim();
             SaveSettings();
             Say("Connecting to your room…", Skin.Lime);
-            Send(new { action = "pair", url = lastLink, folder = folder.Text.Trim(), keepDownloads = keep.Checked });
+            Send(new { action = "pair", url = lastLink, folder = chosen, keepDownloads = keep.Checked });
             link.Clear();
         };
         stop.Click += (s, e) => {
@@ -273,20 +284,30 @@ class CouchSwarmHelper : Form {
                 dialog.Description = "Choose where CouchSwarm saves downloaded movies.";
                 dialog.ShowNewFolderButton = true;
                 if (folder.Text.Trim().Length > 0) dialog.SelectedPath = folder.Text.Trim();
-                if (dialog.ShowDialog(this) == DialogResult.OK) { folder.Text = dialog.SelectedPath; SaveSettings(); }
+                if (dialog.ShowDialog(this) == DialogResult.OK) { folder.Text = dialog.SelectedPath; folder.SelectionStart = folder.Text.Length; folder.ScrollToCaret(); SaveSettings(); }
             }
         };
-        Shown += (s, e) => { Align(); Cue(link, "Paste your pairing link here"); Cue(folder, DefaultFolder); link.Focus(); StartHelper(); };
+        Shown += (s, e) => {
+            // This fixed client size scales past a small work area at high DPI, putting the status card off-screen.
+            var work = Screen.FromControl(this).WorkingArea;
+            if (Height > work.Height) { AutoScrollMinSize = ClientSize; AutoScroll = true; Height = work.Height; }
+            Align(); Cue(link, "Paste your pairing link here"); Cue(folder, DefaultFolder); link.Focus(); StartHelper();
+        };
         FormClosing += (s, e) => {
             SaveSettings();
-            if (helper != null && !helper.HasExited) {
-                e.Cancel = true;
-                if (!quitting) {
-                    quitting = true;
-                    Enabled = false;
-                    Say(keep.Checked ? "Closing the helper. Downloaded movies stay in your folder." : "Closing the helper and clearing temporary movie data…", Skin.Muted);
-                    helper.StandardInput.Close();
-                }
+            if (helper == null || helper.HasExited) return;
+            // Cancelling FormClosing on WM_QUERYENDSESSION vetoes the session end, so let shutdown and logoff through.
+            if (e.CloseReason == CloseReason.WindowsShutDown || e.CloseReason == CloseReason.TaskManagerClosing) {
+                quitting = true;
+                try { helper.StandardInput.Close(); } catch {}
+                return;
+            }
+            e.Cancel = true;
+            if (!quitting) {
+                quitting = true;
+                Enabled = false;
+                Say(keep.Checked ? "Closing the helper. Downloaded movies stay in your folder." : "Closing the helper and clearing temporary movie data…", Skin.Muted);
+                helper.StandardInput.Close();
             }
         };
         LoadSettings();
@@ -309,7 +330,8 @@ class CouchSwarmHelper : Form {
     void Say(string text, Color dot) { status.Text = text; statusCard.Dot = dot; statusCard.Invalidate(); }
     void SetRunning(bool value) {
         running = value;
-        pair.Enabled = !value; stop.Enabled = value;
+        // Enable the successor before disabling the focused button: WinForms moves focus off a control it disables.
+        if (value) { stop.Enabled = true; pair.Enabled = false; } else { pair.Enabled = true; stop.Enabled = false; }
         browse.Enabled = !value; keep.Enabled = !value; folder.ReadOnly = value;
     }
     static string SettingsPath() {
@@ -330,7 +352,14 @@ class CouchSwarmHelper : Form {
         } catch {}
     }
     void Send(object command) {
-        try { if (helper == null || helper.HasExited) StartHelper(); helper.StandardInput.WriteLine(json.Serialize(command)); helper.StandardInput.Flush(); }
+        try {
+            if (helper == null || helper.HasExited) StartHelper();
+            // .NET Framework builds StandardInput with Console.InputEncoding (the ANSI code page in a
+            // windowless app); desktop.mjs reads UTF-8, so write the bytes ourselves.
+            var bytes = new UTF8Encoding(false).GetBytes(json.Serialize(command) + "\n");
+            helper.StandardInput.BaseStream.Write(bytes, 0, bytes.Length);
+            helper.StandardInput.BaseStream.Flush();
+        }
         catch { Say("Could not start the helper. Extract the whole ZIP and try again.", Skin.Alarm); SetRunning(false); }
     }
     void OnUi(Action action) { if (!IsDisposed && IsHandleCreated) { try { BeginInvoke(action); } catch (InvalidOperationException) {} } }
@@ -379,8 +408,11 @@ class CouchSwarmHelper : Form {
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr flag, string text);
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetDefaultDllDirectories(int flags);
     [STAThread]
     static void Main() {
+        // LOAD_LIBRARY_SEARCH_SYSTEM32: dwmapi.dll is not a KnownDLL, so keep it off the extraction folder.
+        try { SetDefaultDllDirectories(0x800); } catch {}
         SetProcessDPIAware();
         bool first;
         using (var instance = new Mutex(true, "Local\\CouchSwarmHelper", out first)) {

@@ -4,46 +4,76 @@ import utMetadata from 'ut_metadata';
 
 // Outstanding block requests per viewer: 256 x 16 KiB keeps 4 MiB in flight, enough for a distant guest.
 const MAX_REQUESTS = 256;
+// A block may be up to 128 KiB, so the count alone does not bound memory.
+const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
+// WebTorrent only repeats an outstanding request when a reservation is hotswapped back to this wire; a
+// viewer that stacks more than this is flooding, not streaming.
+const MAX_DUPLICATES = 8;
 
 // Advertise availability to our authenticated room only. Each requested block
 // is fetched and verified by the native torrent before the browser receives it.
-export function serveTorrentPeer(peer, torrent, readAhead = () => {}) {
+export function serveTorrentPeer(peer, torrent, readAhead = () => {}, pieces = null) {
   const wire = new Wire();
   const reads = new Map();
+  let queuedBytes = 0;
+  let armed = false;
   wire.extendedHandshake.reqq = MAX_REQUESTS;
-  wire.use(utMetadata(torrent.torrentFile));
   wire.on('error', () => peer.destroy());
   peer.on('error', () => wire.destroy());
   const cleanup = () => { for (const read of reads.values()) read.stream?.destroy(); reads.clear(); wire.destroy(); };
   peer.once('close', cleanup);
   peer.once('disconnect', cleanup);
+  // bittorrent-protocol's _pull() removes the first Request matching (piece, offset, length), not the one that owns
+  // this callback, so a queued duplicate must be moved to the front or its reply is silently dropped.
+  const answer = (read, error, block, piece, offset, length) => {
+    for (const respond of read.callbacks) {
+      const i = wire.peerRequests.findIndex(request => request.callback === respond);
+      // respond(error) rejects, and reject() pulls a second matching Request: a duplicate can lose its entry
+      // without a message, so send the reject that entry was owed.
+      if (i < 0) { if (error && wire.hasFast) wire.reject(piece, offset, length); continue; }
+      if (i) [wire.peerRequests[0], wire.peerRequests[i]] = [wire.peerRequests[i], wire.peerRequests[0]];
+      respond(error, block);
+    }
+  };
   wire.on('handshake', infoHash => {
-    if (infoHash !== torrent.infoHash) return peer.destroy();
+    if (infoHash !== torrent.infoHash) { peer.destroy(); return; }
+    armed = true;
+    // Armed only now, so a wrong infohash is never served the info dict; must precede handshake(), which sends the
+    // extended handshake built from extendedMapping straight away.
+    wire.use(utMetadata(torrent.torrentFile));
     wire.handshake(torrent.infoHash, Buffer.concat([Buffer.from('-CS0001-'), randomBytes(12)]), { fast: true });
     const bits = Buffer.alloc(Math.ceil(torrent.pieces.length / 8), 255);
     if (torrent.pieces.length % 8) bits[bits.length - 1] = (255 << (8 - torrent.pieces.length % 8)) & 255;
     wire.bitfield(bits);
   });
-  wire.on('interested', () => wire.unchoke());
+  // peer.destroy() is deferred, so a rejected peer keeps parsing the same message: staying choked is what stops it.
+  wire.on('interested', () => { if (armed) wire.unchoke(); });
   wire.on('cancel', (piece, offset, length) => {
     const read = reads.get(`${piece}:${offset}:${length}`);
     if (!read) return;
-    // bittorrent-protocol drops the earliest matching request, so only its reply is owed no more.
+    // bittorrent-protocol drops the first matching request, so one of the queued replies is owed no more.
     read.callbacks.shift();
     if (!read.callbacks.length) { read.cancelled = true; read.stream?.destroy(); }
   });
   wire.on('request', (piece, offset, length, callback) => {
     const start = piece * torrent.pieceLength + offset;
     const pieceSize = Math.min(torrent.pieceLength, torrent.length - piece * torrent.pieceLength);
-    if (!Number.isInteger(piece) || !Number.isInteger(offset) || !Number.isInteger(length) || piece < 0 || offset < 0 || length < 1 || length > 128 * 1024 || offset + length > pieceSize) {
+    // A piece outside the video span belongs to a file nothing validated or marked sparse, and reading it here is
+    // what makes the torrent download and write it.
+    if (!Number.isInteger(piece) || !Number.isInteger(offset) || !Number.isInteger(length) || piece < 0 || offset < 0 || length < 1 || length > 128 * 1024 || offset + length > pieceSize || (pieces && (piece < pieces.from || piece > pieces.to))) {
       callback(new Error('Invalid block request.')); return;
     }
     const key = `${piece}:${offset}:${length}`;
     const pending = reads.get(key);
-    // bittorrent-protocol matches replies to identical requests by arrival order and drops both when one is
-    // answered out of turn, so a repeated request joins the read already in flight.
-    if (pending) { pending.callbacks.push(callback); return; }
-    if (reads.size >= MAX_REQUESTS) { callback(new Error('Too many block requests.')); return; }
+    // A repeated request joins the read already in flight, but never a cancelled one: its replies are no longer sent,
+    // so the duplicate would be black-holed instead of starting its own read.
+    if (pending && !pending.cancelled) {
+      // A refusal cannot drain bittorrent-protocol's peerRequests for a duplicate, so the channel has to go.
+      if (pending.callbacks.length >= MAX_DUPLICATES) { peer.destroy(); return; }
+      pending.callbacks.push(callback); return;
+    }
+    if (reads.size >= MAX_REQUESTS || queuedBytes + length > MAX_REQUEST_BYTES) { callback(new Error('Too many block requests.')); return; }
+    queuedBytes += length;
     readAhead(piece);
     /** @type {{ stream: import('node:stream').Readable | null, cancelled: boolean, callbacks: ((error: Error | null, block?: Buffer) => void)[] }} */
     const read = { stream: null, cancelled: false, callbacks: [callback] };
@@ -67,10 +97,13 @@ export function serveTorrentPeer(peer, torrent, readAhead = () => {}) {
       if (read.cancelled || peer.destroyed) return;
       if (total !== length) throw new Error('Incomplete torrent block.');
       return Buffer.concat(chunks, length);
-    })().then(block => { if (block) for (const respond of read.callbacks) respond(null, block); },
-      error => { if (!read.cancelled && !peer.destroyed) for (const respond of read.callbacks) respond(error); })
-      .finally(() => reads.delete(key));
+    })().then(block => { if (block) answer(read, null, block, piece, offset, length); },
+      error => { if (!read.cancelled && !peer.destroyed) answer(read, error, undefined, piece, offset, length); })
+      .finally(() => { queuedBytes -= length; if (reads.get(key) === read) reads.delete(key); });
   });
   peer.pipe(wire).pipe(peer);
+  // A browser peer only sends control messages (handshake, interested, request, cancel, have, bitfield);
+  // anything that cannot be framed inside 256 KiB is a flood, not a message.
+  peer.on('data', () => { if (wire._bufferSize > 256 * 1024) peer.destroy(); });
   return wire;
 }

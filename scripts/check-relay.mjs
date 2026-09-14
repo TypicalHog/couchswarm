@@ -6,6 +6,8 @@ const urls = (process.env.COUCHSWARM_TURN_URLS || '').split(',').map(url => url.
 const secret = process.env.COUCHSWARM_TURN_SECRET;
 if (!urls.length || !secret) throw new Error('Set COUCHSWARM_TURN_URLS and COUCHSWARM_TURN_SECRET for the running relay.');
 for (const url of urls) {
+  // libjuice, the ICE backend behind this Node stack, has no TURN-TCP or TURN-TLS transport; only browsers use these URLs.
+  if (url.startsWith('turns:') || /transport=tcp/i.test(url)) { console.log(`SKIP (browser-only; this Node stack relays over UDP): ${url}`); continue; }
   const username = `${Math.floor(Date.now() / 1000) + 300}:couchswarm-check`;
   const credential = createHmac('sha1', secret).update(username).digest('base64');
   const config = { iceTransportPolicy: 'relay', iceServers: [{ urls: url, username: encodeURIComponent(username), credential: encodeURIComponent(credential) }] };

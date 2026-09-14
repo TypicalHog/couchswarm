@@ -21,6 +21,7 @@ test('room invites, authority, buffering gate, timeline, stale messages, seeking
   await post(path, { action: 'join', invite: 'wrong', name: 'Guest' }, undefined, 403);
   let state = await call({ action: 'snapshot' });
   assert.equal(state.members.length, 1);
+  assert.equal(state.room.reason, 'Buffering a new movie.', 'a room created with a source starts out buffering that movie');
   assert.equal(JSON.stringify(state).includes(host.token), false);
   await call({ action: 'play', revision: state.room.revision }, 409);
   const heartbeat = (token, sequence, epoch = 0, ready = true, mediaVersion = 0) => post(path, { action: 'heartbeat', ready, buffered: 15, progress: .1, epoch, mediaVersion, duration: 120, sequence }, token);
@@ -33,6 +34,7 @@ test('room invites, authority, buffering gate, timeline, stale messages, seeking
   t.after(() => post(path, { action: 'leave' }, guest.token).catch(() => {}));
   state = await call({ action: 'snapshot' });
   assert.equal(state.room.playing, false, 'a late join cancels the pending start');
+  assert.equal(state.room.reason, 'A friend joined. Waiting for their buffer.', 'the join itself cancelled the start, not the buffering reconciler');
   assert.equal(state.members.length, 2);
   await post(path, { action: 'play', revision: state.room.revision }, guest.token, 403);
   await call({ action: 'play', revision: state.room.revision }, 409);
@@ -44,7 +46,7 @@ test('room invites, authority, buffering gate, timeline, stale messages, seeking
   assert.equal(state.room.playing, false, 'buffer loss pauses the room');
   state = await heartbeat(guest.token, 2, 0, true);
   assert.equal(state.members.find(m => m.id === guest.memberId).ready, false, 'old heartbeat cannot restore readiness');
-  await call({ action: 'play', revision: oldRevision }, 409);
+  assert.match((await call({ action: 'play', revision: oldRevision }, 409)).error, /The room changed/, 'the stale revision is what refuses this, not the buffer gate');
   state = await heartbeat(guest.token, 4);
   assert.equal(state.room.playing, true, 'the room resumes itself once everyone has buffered again');
   state = await call({ action: 'pause', revision: state.room.revision });
@@ -66,6 +68,10 @@ test('room invites, authority, buffering gate, timeline, stale messages, seeking
   assert.equal(state.room.duration, 0);
   assert.equal(state.room.mediaVersion, 1);
   assert.equal(state.room.playing, false);
+  state = await heartbeat(host.token, 6, 2, true, 0);
+  assert.equal(state.room.duration, 0, 'a heartbeat from the previous movie cannot pin its duration');
+  state = await heartbeat(host.token, 7, 2, true, 1);
+  assert.equal(state.room.duration, 120, 'the current movie adopts the duration the host reports');
   await post(path, { action: 'leave' }, guest.token);
   state = await call({ action: 'snapshot' });
   assert.equal(state.members.length, 1);
@@ -88,6 +94,8 @@ test('rejects malformed requests, rewinds at the end, and gates seats, moderatio
   await call({ action: 'heartbeat', sequence: 1e300 }, 400);
   let state = await call({ action: 'snapshot' });
   await call({ action: 'seek', position: 10, revision: state.room.revision }, 409);
+  await post('/api/rooms/00000000-0000-0000-0000-000000000000', { action: 'snapshot' }, undefined, 404);
+  await post(path, { action: 'join', invite: host.invite, name: '   ' }, undefined, 400);
   const guest = await post(path, { action: 'join', invite: host.invite, name: 'Guest' }, undefined, 201);
   state = await beat(guest.token, 1, { duration: 999 });
   assert.equal(state.room.duration, 0, 'only the host reports the duration');
@@ -107,9 +115,13 @@ test('rejects malformed requests, rewinds at the end, and gates seats, moderatio
   state = await beat(guest.token, 2, { epoch: 1 });
   state = await call({ action: 'play', revision: state.room.revision });
   assert.deepEqual([state.room.position, state.room.epoch, state.room.playing], [0, 2, false], 'play at the end rewinds instead of starting');
-  const { mediaVersion, fileIndex } = state.room;
+  const { mediaVersion, fileIndex, epoch } = state.room;
   state = await call({ action: 'file', fileIndex, revision: state.room.revision });
   assert.equal(state.room.mediaVersion, mediaVersion, 'reselecting the current video is not a media change');
+  await call({ action: 'file', fileIndex: 3.5, revision: state.room.revision }, 400);
+  state = await call({ action: 'file', fileIndex: fileIndex + 1, revision: state.room.revision });
+  assert.deepEqual([state.room.fileIndex, state.room.mediaVersion, state.room.epoch, state.room.position, state.room.duration, state.room.playing],
+    [fileIndex + 1, mediaVersion + 1, epoch + 1, 0, 0, false], 'switching video bumps the media version and restarts buffering');
   await post(path, { action: 'kick', memberId: host.memberId, revision: state.room.revision }, guest.token, 403);
   await call({ action: 'kick', memberId: host.memberId, revision: state.room.revision }, 400);
   state = await call({ action: 'kick', memberId: guest.memberId, revision: state.room.revision });
@@ -124,21 +136,35 @@ test('rejects malformed requests, rewinds at the end, and gates seats, moderatio
     assert.equal(response.status, 405, route);
     assert.equal(response.headers.get('allow'), 'POST');
   }
-  for (const hostKey of ['', 'f'.repeat(64)]) {
+  for (const hostKey of ['', 'f'.repeat(64), host.hostKey]) {
     await post(path, { action: 'join', invite: state.invite, name: 'Not the host', hostKey }, undefined, 201);
     assert.equal((await call({ action: 'snapshot' })).room.hostId, host.memberId, 'only the real host key moves the room');
   }
-  const returning = await post(path, { action: 'join', invite: state.invite, name: 'Host', hostKey: host.hostKey }, undefined, 201);
+  const returning = await post(path, { action: 'join', invite: state.invite, name: 'Host', hostKey: state.hostKey }, undefined, 201);
   assert.equal((await call({ action: 'snapshot' })).room.hostId, returning.memberId);
 
   const full = await post('/api/rooms', { source: magnet }, undefined, 201);
   const fullPath = `/api/rooms/${full.roomId}`;
   t.after(() => post(fullPath, { action: 'leave' }, full.token).catch(() => {}));
   const lapsed = await post(fullPath, { action: 'join', invite: full.invite, name: 'Lapsed' }, undefined, 201);
+  const quiet = await post('/api/rooms', { source: magnet }, undefined, 201);
+  const quietPath = `/api/rooms/${quiet.roomId}`;
+  t.after(() => post(quietPath, { action: 'leave' }, quiet.token).catch(() => {}));
+  const watcher = await post(quietPath, { action: 'join', invite: quiet.invite, name: 'Watcher' }, undefined, 201);
+  const beatQuiet = (token, sequence, ready = true) => post(quietPath, { action: 'heartbeat', ready, buffered: 15, progress: .1, epoch: 0, mediaVersion: 0, duration: 120, sequence }, token);
+  await beatQuiet(quiet.token, 1);
+  let quietState = await beatQuiet(watcher.token, 1);
+  quietState = await post(quietPath, { action: 'play', revision: quietState.room.revision }, quiet.token);
+  assert.equal(quietState.room.playing, true, quietState.room.reason);
+  await beatQuiet(watcher.token, 2, false);
   await new Promise(resolve => setTimeout(resolve, 12500));
   for (let i = 0; i < 11; i++) await post(fullPath, { action: 'join', invite: full.invite, name: `Guest ${i}` }, undefined, 201);
   await post(fullPath, { action: 'heartbeat', ready: true, buffered: 15, progress: .1, epoch: 0, mediaVersion: 0, duration: 120, sequence: 1 }, full.token);
   await post(fullPath, { action: 'join', invite: full.invite, name: 'One too many' }, undefined, 409);
   const seat = await post(fullPath, { action: 'heartbeat', ready: true, buffered: 15, progress: .1, epoch: 0, mediaVersion: 0, duration: 0, sequence: 1 }, lapsed.token, 409);
   assert.match(seat.error, /This couch is full \(12 people\)/, 'a lapsed seat cannot be reclaimed while the room is full');
+  await beatQuiet(quiet.token, 2);
+  quietState = await beatQuiet(watcher.token, 3, false);
+  assert.equal(quietState.members.find(m => m.id === watcher.memberId).epoch, -2, 'a lapsed seat comes back as a spectator');
+  assert.equal(quietState.room.playing, true, 'an unready spectator does not hold the room paused');
 });

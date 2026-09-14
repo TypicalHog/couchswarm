@@ -20,6 +20,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
   const retriedHelper = useRef(0);
   const retriedUpgrade = useRef(false);
   const movieRef = useRef('');
+  const sourceRef = useRef('');
   const teardownRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
@@ -29,6 +30,8 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     let client: WebTorrent | undefined;
     let torrent: Torrent | undefined;
     let mkvPlayer: PlaysVideoEngine | undefined;
+    let torrentFailed = false;
+    let gotMetadata = false;
     let peerTimer: ReturnType<typeof setTimeout> | undefined;
     let helperTimer: ReturnType<typeof setTimeout> | undefined;
     let releaseLock: (() => void) | undefined;
@@ -39,7 +42,8 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     fileRef.current = null;
     setLoadedVersion(-1);
     setHelper(null);
-    setFiles([]);
+    // The file list belongs to the torrent, not the selection: keep it across a file switch so the picker stays mounted.
+    if (sourceRef.current !== source) { sourceRef.current = source; setFiles([]); }
     setError('');
     setStats({ speed: 0, peers: 0, progress: 0, filename: '', size: 0 });
     setStatus(source ? 'Finding your movie…' : '');
@@ -63,12 +67,18 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
             return lock ? new Promise<void>(release => { releaseLock = release; }) : undefined;
           }).catch(() => resolve(false));
         });
-        if (!locked) { fail('This movie is already open in another CouchSwarm tab.'); return; }
+        if (!locked) { try { sessionStorage.removeItem('couchswarm:sw-reload'); } catch { /* Storage blocked: nothing to clear. */ } fail('This movie is already open in another CouchSwarm tab. Close or reload that tab, then reconnect here.'); return; }
         if (disposed) { releaseLock?.(); return; }
-        const { default: TorrentClient } = await import('webtorrent/dist/webtorrent.min.js');
+        const { default: TorrentClient } = await import('webtorrent/dist/webtorrent.min.js')
+          .catch(() => { throw new Error('The streaming files could not be loaded — this site may have been updated. Reload this page and rejoin.'); });
         if (disposed) return;
-        const registration = await navigator.serviceWorker.register('/sw.min.js', { scope: '/' });
-        await navigator.serviceWorker.ready;
+        const registration = await navigator.serviceWorker.register('/sw.min.js', { scope: '/' })
+          .catch(() => { throw new Error('Streaming could not start: this browser blocked CouchSwarm’s video service worker. Allow site data for this site, then reload this page.'); });
+        const activated = await Promise.race([
+          navigator.serviceWorker.ready.then(() => true),
+          new Promise<boolean>(resolve => setTimeout(() => resolve(false), 15000)),
+        ]);
+        if (!activated) throw new Error('Streaming could not start: this browser did not activate the CouchSwarm video service. Reload this page.');
         if (!navigator.serviceWorker.controller) {
           const claimed = (ms: number) => new Promise<boolean>(resolve => {
             const timer = setTimeout(() => resolve(false), ms);
@@ -110,34 +120,41 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           if (disposed) return;
           setHelper({ peers: value.peers });
           if (!value.ready) setStatus(`Your helper is finding torrent peers… ${value.peers} connected`);
-        }) : null;
+        }).catch(err => { if (abort.signal.aborted) throw err; setStatus('Helper unavailable, using browser peers…'); return null; }) : null;
         if (disposed) return;
         if (bridge) {
           const heartbeat = async () => {
             try { await bridge.status(); }
-            catch { bridge.release(); if (!disposed) fail('The torrent helper disconnected. Reconnect to the movie to try again.'); return; }
+            catch (err) {
+              bridge.release();
+              const reported = err instanceof Error && (err as { status?: number }).status !== undefined ? err.message : '';
+              if (!disposed) fail(reported || 'The torrent helper disconnected. Reconnect to the movie to try again.');
+              return;
+            }
             if (!disposed) helperTimer = setTimeout(() => void heartbeat(), 5000);
           };
           helperTimer = setTimeout(() => void heartbeat(), 5000);
         }
-        if (session && !remote && !bridge && !helperFailed) {
-          // A helper that becomes ready later upgrades this browser-only stream. The restart
-          // deletes this attempt's store, so adopt one only before any video bytes land.
+        if (session && !bridge && !helperFailed && !remote?.own) {
+          // A helper that becomes ready later upgrades this browser-only stream, and a guest on the host's
+          // helper remounts onto their own once it is ready. The restart interrupts playback, so adopt one
+          // only before any video bytes land.
           // A helper that was offered and could not be reached is upgraded to once per movie, never in a loop.
           const watch = async () => {
             try {
-              const { ready } = await helperStatus(session, abort.signal);
+              const { ready, own } = await helperStatus(session, abort.signal);
               if (disposed) return;
-              if (ready) { if (!fileRef.current?.downloaded) setAttempt(value => value + 1); return; }
+              if (ready && (!remote || own)) { if (!fileRef.current?.downloaded) setAttempt(value => value + 1); return; }
             }
             catch { /* The room connection already reports connectivity failures. */ }
             if (!disposed) helperTimer = setTimeout(() => void watch(), document.hidden ? 30000 : 15000);
           };
           helperTimer = setTimeout(() => void watch(), document.hidden ? 30000 : 15000);
         }
-        torrent = client.add(remote?.infoHash || bridge?.metadata || source, { strategy: 'sequential', deselect: true, destroyStoreOnDestroy: true }, value => {
+        torrent = client.add(remote?.infoHash || bridge?.metadata || source, { strategy: 'sequential', deselect: true, destroyStoreOnDestroy: false, storeCacheSlots: 8 }, value => {
           if (disposed) return;
-          // Nothing else holds a store while this tab owns the media lock; reclaim movies left by closed tabs.
+          // The store survives teardown so a reconnect resumes; nothing else holds one while this tab
+          // owns the media lock, so reclaim every other movie here.
           void (async () => {
             const root = await navigator.storage.getDirectory();
             const keep = `${value.name} - ${value.infoHash!.slice(0, 8)}`;
@@ -151,13 +168,18 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           if (!videos.length) { fail('No video found. Choose a torrent containing an MKV, MP4, WebM, M4V, or OGV video.'); return; }
           if (!file) { fail(`The host chose video #${fileIndex + 1}, but this torrent has ${videos.length}. Ask the host to pick again.`); return; }
           fileRef.current = file;
+          // WebTorrent treats an end of 0 as absent and streams the whole file against a Content-Length of 1.
+          file.on('iterator', ({ iterator, req }, replace) => {
+            if (!/^bytes=0-0$/.test(req.headers.range || '')) return;
+            replace((async function* () { for await (const chunk of iterator) { yield chunk.subarray(0, 1); return; } })());
+          });
           setStats(s => ({ ...s, filename: file.name, size: file.length }));
           setStatus('Buffering your seat…');
+          if (isMkv(file.name) && (typeof MediaSource === 'undefined' || !MediaSource.canConstructInDedicatedWorker)) {
+            fail('This browser cannot play MKV video. Ask the host for an MP4 or WebM version, or watch in Chrome or Edge.'); return;
+          }
           file.select();
           if (isMkv(file.name)) {
-            if (typeof MediaSource === 'undefined' || !MediaSource.canConstructInDedicatedWorker) {
-              fail('This browser cannot play MKV video. Ask the host for an MP4 or WebM version, or watch in Chrome or Edge.'); return;
-            }
             setStatus('Preparing MKV playback…');
             void import('playsvideo').then(({ PlaysVideoEngine }) => {
               if (disposed) return;
@@ -166,6 +188,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
                 if (!disposed) { setStatus('Buffering your seat…'); setLoadedVersion(mediaVersion); }
               });
               mkvPlayer.addEventListener('error', event => {
+                if (torrentFailed) return;
                 const detail = (event as CustomEvent<{ message?: string }>).detail;
                 fail(/worker crashed|CompileError|dynamically imported module/i.test(detail?.message || '')
                   ? 'The MKV player files could not be loaded — this site may have been updated. Reload this page and rejoin.'
@@ -182,21 +205,35 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         });
         if (remote) {
           torrent.on('wire', value => {
-            const wire = value as { peerId: string; setTimeout(ms: number, unref: boolean): void };
             // This authenticated bridge downloads requested blocks on demand; a slow swarm is not a dead peer.
-            if (wire.peerId?.startsWith('2d4353303030312d')) wire.setTimeout(0, true);
+            // Match the connection this browser opened: any swarm peer can claim the helper's peer id.
+            const peers = (torrent as unknown as { _peers: Map<string, { wire?: unknown }> })._peers;
+            if (value === peers?.get(remote.peer.id)?.wire) (value as { setTimeout(ms: number, unref: boolean): void }).setTimeout(0, true);
           });
           const add = () => { if (!disposed) torrent!.addPeer(remote.peer); };
           if (torrent.infoHash) add(); else torrent.once('infoHash', add);
         }
-        torrent.on('error', error => fail(/quota|storage/i.test(String(error))
+        torrent.on('error', error => { torrentFailed = true; fail(/quota|storage/i.test(String(error))
           ? 'Your browser ran out of storage for this movie. Free up disk space or use another device.'
-          : 'Could not load this torrent. Check the link; .torrent URLs must allow browser access (CORS).'));
+          : 'Could not load this torrent. Check the link; .torrent URLs must allow browser access (CORS).'); });
+        torrent.on('metadata', () => { gotMetadata = true; });
         peerTimer = setTimeout(() => {
-          if (!disposed && (!fileRef.current || fileRef.current.downloaded === 0)) {
+          if (disposed) return;
+          const file = fileRef.current;
+          // No file yet means metadata never arrived, or the retained store is still being hash-verified.
+          if (!file) {
+            setStatus(gotMetadata ? 'Checking the part of this movie already saved on this device…'
+              : bridge || remote ? 'Your helper is connected, but no video pieces have arrived yet. The torrent needs reachable seeders.'
+              : 'No video data yet. Start CouchSwarm with the torrent helper to reach ordinary torrent peers, or use a torrent with a WebRTC seeder or HTTPS web seed.');
+            return;
+          }
+          if (file.downloaded === 0) {
             setStatus(bridge || remote ? 'Your helper is connected, but no video pieces have arrived yet. The torrent needs reachable seeders.'
               : 'No video data yet. Start CouchSwarm with the torrent helper to reach ordinary torrent peers, or use a torrent with a WebRTC seeder or HTTPS web seed.');
+            return;
           }
+          // An MKV cannot start until its index, which sits at the end of the file, has arrived.
+          if (isMkv(file.name) && mkvPlayer?.phase !== 'ready') setStatus('Still preparing this MKV. Playback cannot start until the end of the file arrives from the swarm.');
         }, 25_000);
       } catch (err) { fail(err instanceof Error ? err.message : 'Unable to start torrent streaming.'); }
     }
@@ -209,12 +246,15 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     }, 1000);
     // The MKV engine owns media errors while it chooses or recovers its playback path.
     const mediaError = () => {
+      if (torrentFailed) return;
       if (fileRef.current && isMkv(fileRef.current.name)) {
         if (mkvPlayer?.phase !== 'ready' || !video.error) return;
         fail(`Your browser stopped decoding this video (error ${video.error.code}). Reconnect to the movie or try a version with H.264 video.`);
         return;
       }
-      fail('Your browser cannot decode this video. Try a version with H.264 video and AAC audio.');
+      fail(video.error?.code === MediaError.MEDIA_ERR_NETWORK
+        ? 'The video stream was interrupted. Reconnect to the movie to try again.'
+        : 'Your browser cannot decode this video. Try a version with H.264 video and AAC audio.');
     };
     video.addEventListener('error', mediaError);
     return () => {

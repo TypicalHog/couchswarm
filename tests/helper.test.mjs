@@ -7,8 +7,10 @@ import path from 'node:path';
 import { once } from 'node:events';
 import WebTorrent from 'webtorrent';
 import MemoryStore from 'memory-chunk-store';
-import { createTorrentHelper } from '../helper/torrent-helper.mjs';
+import { createTorrentHelper, torrentPathIssue, torrentSource } from '../helper/torrent-helper.mjs';
 
+// Offline by default, so a helper built without the createClient below still cannot reach the DHT or a public tracker.
+process.env.COUCHSWARM_HELPER_OFFLINE ??= '1';
 const token = 'a'.repeat(64);
 const roomId = '12345678-1234-1234-1234-123456789abc';
 const offline = { dht: false, tracker: false, lsd: false, utp: false, natUpnp: false, natPmp: false };
@@ -79,6 +81,7 @@ test('helper obtains magnet metadata over TCP and serves verified single-file ra
   assert.deepEqual(await (await env.call('/health')).json(), { available: true });
   assert.equal((await env.call('/sessions', { method: 'POST', headers: { 'Content-Type': 'text/plain', Authorization: `Bearer ${token}` }, body: '{}' })).status, 415);
   assert.equal((await env.call('/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ roomId: 'not-a-room' }) })).status, 400);
+  assert.equal((await env.call('/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ roomId, pad: 'x'.repeat(2000) }) })).status, 400, 'an oversized request body is rejected before parsing');
   const first = await env.open();
   const second = await env.open();
   assert.equal(first.status, 201);
@@ -107,11 +110,19 @@ test('helper obtains magnet metadata over TCP and serves verified single-file ra
     assert.deepEqual(Buffer.from(await response.arrayBuffer()), payload.subarray(start, end + 1));
   }
   assert.equal((await env.call(`/seed/${first.id}`, { headers: { Range: 'bytes=999999-' } })).status, 416);
-  for (const range of ['bytes=0-1, 4-5', 'bytes=abc'])
-    assert.equal((await env.call(`/seed/${first.id}`, { headers: { Range: range } })).status, 200, 'a malformed or multi-range header returns the whole body');
+  assert.equal((await env.call(`/seed/${first.id}`, { headers: { Range: 'bytes=-999999' } })).status, 206, 'an oversized suffix range returns the whole representation');
+  for (const range of ['bytes=0-1, 4-5', 'bytes=abc']) {
+    const response = await env.call(`/seed/${first.id}`, { headers: { Range: range } });
+    assert.equal(response.status, 200, range);
+    assert.equal(response.headers.get('content-range'), null, range);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), Buffer.from(payload), 'a malformed or multi-range header returns the whole body');
+  }
   assert.equal((await env.call(`/seed/${first.id}`, { method: 'POST' })).status, 405);
   const traversal = await env.call(`/seed/${first.id}/..%2f..%2fREADME.md`);
   assert.equal(traversal.status, 404); assert.match((await traversal.json()).error, /not in the torrent/, 'the encoded traversal reaches the torrent file lookup');
+  const shared = await env.call(`/seed/${second.id}`, { headers: { Range: 'bytes=0-8191' } });
+  assert.equal(shared.status, 206);
+  assert.deepEqual(Buffer.from(await shared.arrayBuffer()), payload.subarray(0, 8192), 'the second viewer is served verified bytes from the shared download');
   await env.call(`/sessions/${first.id}`, { method: 'DELETE' });
   assert.equal((await env.call(`/metadata/${first.id}`)).status, 410);
   assert.equal((await env.call(`/metadata/${second.id}`)).status, 200, 'one viewer leaving keeps others connected');
@@ -154,6 +165,9 @@ test('multi-file webseed handles spaces, unicode, and pieces spanning file bound
 test('helper rejects private-network metadata URLs and expires inactive viewers', { timeout: 15000 }, async t => {
   const payload = Object.assign(Buffer.alloc(32768, 1), { name: 'movie.mp4' });
   const env = await setup(t, payload, { idleMs: 1000 });
+  const busy = await env.open();
+  const keepAlive = setInterval(() => void env.call(`/sessions/${busy.id}`).catch(() => {}), 300);
+  t.after(() => clearInterval(keepAlive));
   env.setSource('https://127.0.0.1/private.torrent');
   const local = await env.open();
   assert.match((await env.ready(local.id)).error, /public internet/);
@@ -161,4 +175,39 @@ test('helper rejects private-network metadata URLs and expires inactive viewers'
   // The sweep ticks every idleMs and releases when idle exceeds it, so release lands by seen + 2 * idleMs.
   await new Promise(resolve => setTimeout(resolve, 3100));
   assert.equal((await env.call(`/sessions/${local.id}`)).status, 410);
+  clearInterval(keepAlive);
+  assert.equal((await env.call(`/sessions/${busy.id}`)).status, 200, 'a polled lease survives the sweep');
+});
+
+test('a magnet cannot point the helper at the private network', { timeout: 5000 }, async () => {
+  const magnet = 'magnet:?xt=urn:btih:' + 'a'.repeat(40)
+    + '&x.pe=127.0.0.1:6881&x.pe=10.0.0.5:6881&x.pe=' + encodeURIComponent('[::1]:6881') + '&x.pe=203.0.113.7:6881'
+    + '&tr=' + encodeURIComponent('udp://127.0.0.1:1337') + '&tr=' + encodeURIComponent('http://203.0.113.9/announce')
+    + '&tr=' + encodeURIComponent('file:///etc/passwd') + '&tr=' + encodeURIComponent('udp://203.0.113.7:1337')
+    + '&ws=' + encodeURIComponent('https://127.0.0.1/f')
+    + '&xs=' + encodeURIComponent('https://127.0.0.1/f.torrent')
+    + '&as=' + encodeURIComponent('https://127.0.0.1/g.torrent');
+  // The filter only runs when offline mode is off, so this one test drops it and puts it back.
+  delete process.env.COUCHSWARM_HELPER_OFFLINE;
+  try {
+    const parsed = await torrentSource(magnet);
+    assert.deepEqual(parsed.peerAddresses, ['203.0.113.7:6881'], 'only public IP-literal peer hints survive');
+    assert.deepEqual(parsed.announce, ['udp://203.0.113.7:1337'], 'only public udp, ws and wss trackers survive');
+    assert.deepEqual(parsed.urlList, []);
+    assert.deepEqual([parsed.xs, parsed.as], [undefined, undefined]);
+  } finally { process.env.COUCHSWARM_HELPER_OFFLINE = '1'; }
+  const offlineParsed = await torrentSource(magnet);
+  assert.equal(offlineParsed.peerAddresses.length, 4, 'offline mode keeps loopback hints so the suites can seed locally');
+  assert.equal(offlineParsed.announce.length, 4);
+});
+
+test('torrentPathIssue rejects only the paths Windows cannot store', { timeout: 5000 }, async () => {
+  const torrentOf = (...paths) => ({ pieceLength: 16384,
+    files: paths.map((value, index) => ({ name: value.split('/').pop(), path: value, length: 100, offset: index * 100 })) });
+  for (const entry of ['Pack/NUL.mkv', 'Pack./Movie.mkv'])
+    assert.match(torrentPathIssue(torrentOf(entry)), /Windows cannot create/, entry);
+  assert.match(torrentPathIssue(torrentOf('Movie.mkv', '<>')), /Windows cannot create/, 'a name that sanitises to nothing');
+  assert.match(torrentPathIssue(torrentOf('Movie.mkv'), 'x'.repeat(250)), /too deep for your download folder/);
+  for (const entry of ['com.mkv', 'Contact.mkv', 'nullify.mkv', 'console/x.mkv'])
+    assert.equal(torrentPathIssue(torrentOf(entry)), '', entry);
 });

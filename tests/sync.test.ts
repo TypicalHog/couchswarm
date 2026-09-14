@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { allReady, bufferedAhead, estimateServerNow, hasBuffer, SPECTATOR_EPOCH, timelinePosition, validSource, type Room } from '../lib/sync.ts';
 
-const room: Room = { id: 'room', name: 'Room', hostId: 'host', source: '', fileIndex: 0, mediaVersion: 0, epoch: 3,
+const room: Room = { id: 'room', hostId: 'host', source: '', fileIndex: 0, mediaVersion: 0, epoch: 3,
   revision: 1, playing: true, position: 20, startsAt: 10000, duration: 100, reason: '' };
 
 test('clock estimate excludes server processing from network delay', () => {
@@ -27,9 +27,19 @@ test('buffer readiness measures playable time at the target, not total downloade
   assert.equal(bufferedAhead({ length: 1, start: () => 4.2, end: () => 12 }, 4), 0);
   const seamed = { length: 3, start: (i: number) => [0, 2.05, 5][i], end: (i: number) => [2, 4.5, 30][i] };
   assert.equal(bufferedAhead(seamed, 0), 4.5);
+  assert.equal(bufferedAhead({ length: 2, start: (i: number) => [0, 2.1][i], end: (i: number) => [2, 30][i] }, 0), 30);
+  assert.equal(bufferedAhead({ length: 0, start: () => 0, end: () => 0 }, 0), 0);
+  const chained = { length: 4, start: (i: number) => [0, 1.05, 2.05, 9][i], end: (i: number) => [1, 2, 3, 12][i] };
+  assert.equal(bufferedAhead(chained, 0), 3);
+  assert.equal(bufferedAhead({ length: 2, start: (i: number) => [0, 1.095][i], end: (i: number) => [1, 5][i] }, 0), 5);
+  assert.equal(bufferedAhead({ length: 2, start: (i: number) => [0, 1.2][i], end: (i: number) => [1, 5][i] }, 0), 1);
   assert.equal(hasBuffer(7, 0, 100, false), false);
   assert.equal(hasBuffer(8, 0, 100, false), true);
   assert.equal(hasBuffer(2, 98, 100, false), true);
+  assert.equal(hasBuffer(0, 99.7, 100, false), false);
+  assert.equal(hasBuffer(0, 99.85, 100, false), true);
+  assert.equal(hasBuffer(0, 100, 100, true), true);
+  assert.equal(hasBuffer(0, 50, 100, false), false);
   assert.equal(hasBuffer(0, 0, 0, false), false);
   assert.equal(hasBuffer(2.9, 0, 100, true), false);
   assert.equal(hasBuffer(3, 0, 100, true), true);

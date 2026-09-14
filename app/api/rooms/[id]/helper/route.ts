@@ -1,8 +1,11 @@
-import { hash, json, notAllowed, readBody, secret } from '@/lib/db';
-import { iceConfiguration, roomAccess, validSignal, type HelperRow } from '@/lib/helper-auth';
-import { HELPER_ONLINE_MS, HELPER_PEER_TTL_MS, MAX_HELPER_PEERS, PAIR_TTL_MS } from '@/lib/sync';
+import { hash, json, notAllowed, readBody, secret, withDb } from '@/lib/db';
+import { roomAccess, validSignal, type HelperRow } from '@/lib/helper-auth';
+import { iceConfiguration } from '@/lib/ice';
+import { HELPER_ONLINE_MS, HELPER_PEER_TTL_MS, MAX_HELPER_PEERS, PAIR_TTL_MS, PRESENCE_MS } from '@/lib/sync';
 
-export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
+export const maxDuration = 10;
+
+async function handler(request: Request, context: { params: Promise<{ id: string }> }) {
   const access = await roomAccess(request, (await context.params).id);
   if (!access) return json({ error: 'This room session has expired.' }, 403);
   const { db, room, memberId } = access;
@@ -19,6 +22,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const online = isOnline(helper);
   const ready = isReady(helper);
   if (body.action === 'status') return json({ paired: !!helper?.token_hash, online, ready, own, mine: !!mine?.token_hash,
+    mineOnline: isOnline(mine), mineStatus: mine?.status || '',
     status: helper?.status || 'Connect a helper to reach ordinary torrent peers.',
     infoHash: ready ? helper!.info_hash : '',
     downloadUrl: process.env.COUCHSWARM_HELPER_DOWNLOAD_URL || '',
@@ -26,9 +30,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (body.action === 'pair' && isOnline(mine)) return json({ error: 'Your helper is connected. Disconnect it before pairing another one.' }, 409);
   if (body.action === 'pair' || body.action === 'unpair') {
     const code = secret();
-    const url = new URL(request.url), forwarded = request.headers.get('x-forwarded-host');
-    // A caller can forge x-forwarded-host, so honour it only when the request arrived over loopback; a proxy that rewrites the upstream host needs COUCHSWARM_PUBLIC_ORIGIN (distinct from the standalone helper’s COUCHSWARM_ORIGIN).
-    const origin = process.env.COUCHSWARM_PUBLIC_ORIGIN || (forwarded && /^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(url.hostname) ? `${request.headers.get('x-forwarded-proto') || url.protocol.slice(0, -1)}://${forwarded}` : url.origin);
+    const url = new URL(request.url);
+    // x-forwarded-host is caller-controlled (Next fills it in from Host) and url.hostname is only this server's listen address, so build the link from Host; a proxy that rewrites Host needs COUCHSWARM_PUBLIC_ORIGIN (distinct from the standalone helper’s COUCHSWARM_ORIGIN).
+    const origin = process.env.COUCHSWARM_PUBLIC_ORIGIN || `${url.protocol}//${request.headers.get('host') || url.host}`;
     const statements = [
       db.prepare('DELETE FROM helper_peers WHERE helper_id IN (SELECT id FROM helpers WHERE room_id = ? AND member_id = ?)').bind(room.id, memberId),
       db.prepare('DELETE FROM helpers WHERE room_id = ? AND member_id = ?').bind(room.id, memberId),
@@ -42,7 +46,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (!helper || !ready) return json({ error: `${own ? 'Your' : 'The host’s'} helper is not ready yet.` }, 409);
     const offer = validSignal(body.offer, 'offer');
     if (body.mediaVersion !== room.media_version || !offer) return json({ error: 'This connection request is stale or invalid.' }, 409);
-    const active = await db.prepare('SELECT COUNT(*) AS count FROM helper_peers WHERE helper_id = ? AND member_id != ? AND last_seen > ?').bind(helper.id, memberId, Date.now() - HELPER_PEER_TTL_MS).first<{ count: number }>();
+    const active = await db.prepare('SELECT COUNT(*) AS count FROM helper_peers WHERE helper_id = ? AND member_id != ? AND last_seen > ? AND member_id IN (SELECT id FROM members WHERE last_seen > ?)').bind(helper.id, memberId, Date.now() - HELPER_PEER_TTL_MS, Date.now() - PRESENCE_MS).first<{ count: number }>();
     if ((active?.count || 0) >= MAX_HELPER_PEERS) return json({ error: 'All helper connections are in use.' }, 429);
     const peerId = crypto.randomUUID();
     await db.batch([
@@ -66,4 +70,5 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   return json({ answer: peer.answer ? JSON.parse(peer.answer) : null });
 }
 
+export const POST = withDb(handler);
 export const GET = notAllowed, PUT = notAllowed, DELETE = notAllowed, PATCH = notAllowed;

@@ -1,6 +1,6 @@
 {
   "name": "couchswarm",
-  "version": "1.0.0",
+  "version": "1.0.169",
   "private": true,
   "license": "Unlicense OR MIT OR Apache-2.0",
   "engines": {
@@ -15,13 +15,13 @@
   "scripts": {
     "predev": "node scripts/prepare-streaming.mjs && node scripts/migrate-database.mjs",
     "prebuild": "node scripts/prepare-streaming.mjs",
-    "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test tests/sync.test.ts tests/video-files.test.ts",
+    "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test tests/ice.test.ts tests/remote-helper-client.test.ts tests/sync.test.ts tests/video-files.test.ts",
     "test:rooms": "node --test tests/rooms.test.mjs tests/host-presence.test.mjs",
     "test:mkv": "node --test tests/mkv.test.mjs",
     "test:helper": "node --test tests/helper.test.mjs",
     "test:remote": "node --test tests/remote-helper.test.mjs",
     "test:relay": "node scripts/check-relay.mjs",
-    "test:all": "npm test && npm run test:mkv && npm run test:helper",
+    "test:offline": "npm test && npm run test:mkv && npm run test:helper",
     "helper": "node helper/server.mjs",
     "helper:desktop": "node helper/desktop.mjs",
     "build:helper": "node scripts/build-helper.mjs",
@@ -29,6 +29,7 @@
     "build": "node scripts/migrate-database.mjs && next build --webpack",
     "start": "next start",
     "db:migrate": "node scripts/migrate-database.mjs",
+    "typecheck": "tsc --noEmit",
     "lint": "oxlint",
     "format": "oxfmt",
     "db:generate": "drizzle-kit generate"
@@ -50,7 +51,6 @@
     "range-parser": "1.3.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
-    "react-server-dom-webpack": "19.2.6",
     "tailwind-merge": "3.6.0",
     "tw-animate-css": "1.4.0",
     "ut_metadata": "5.0.1",

@@ -18,8 +18,10 @@ export const metadata: Metadata = {
   title: 'CouchSwarm — Movie night, together',
   description: 'One room, one play button. Watch browser-compatible torrents in sync with your people.',
   icons: { icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }, { url: '/favicon.ico', sizes: '32x32' }], apple: '/apple-touch-icon.png' },
+  // Vercel derives the deployment URL itself; elsewhere the social image needs an absolute base, or the build warns and falls back to localhost.
+  metadataBase: URL.parse(process.env.COUCHSWARM_PUBLIC_ORIGIN || '') ?? undefined,
   openGraph: { title: 'CouchSwarm — Movie night, together', description: 'One room, one play button. Watch browser-compatible torrents in sync with your people.', type: 'website', siteName: 'CouchSwarm' },
-  twitter: { card: 'summary', title: 'CouchSwarm — Movie night, together', description: 'One room, one play button. Watch browser-compatible torrents in sync with your people.' },
+  twitter: { card: 'summary_large_image', title: 'CouchSwarm — Movie night, together', description: 'One room, one play button. Watch browser-compatible torrents in sync with your people.' },
 };
 
 export const viewport: Viewport = { themeColor: '#101411' };
