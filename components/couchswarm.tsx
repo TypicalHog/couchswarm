@@ -65,6 +65,12 @@ export default function CouchSwarm() {
   const formVisible = modal === 'source' || (!hasSource && isHost && !swarm.invitation);
   const playHint = !isHost ? 'Your host controls the room' : !swarm.everyoneReady && !isPlaying ? 'Waiting for everyone to buffer' : 'You control the room';
   const announcement = hasSource && swarm.countdown > 0 && swarm.armed ? `Starting in ${swarm.countdown}` : !swarm.connected && session ? (room ? 'Connection lost, reconnecting' : 'Connecting to the room') : room?.reason || '';
+  // canPlay already requires the host, so both the button and the space bar reach the room only for them.
+  const togglePlayback = () => {
+    if (!canPlay || Date.now() - lastToggle.current < 400) return;
+    lastToggle.current = Date.now();
+    void swarm.control(isPlaying ? 'pause' : 'play');
+  };
 
   useEffect(() => {
     if (!feedback) return;
@@ -75,6 +81,19 @@ export default function CouchSwarm() {
   // The rejoin dialog portals to the body, outside the fullscreen player card, so it cannot paint until we leave.
   useEffect(() => { if (swarm.invitation && document.fullscreenElement) void document.exitFullscreen().catch(() => {}); }, [swarm.invitation]);
   useEffect(() => { const on = () => setIsFullscreen(!!document.fullscreenElement); document.addEventListener('fullscreenchange', on); return () => { document.removeEventListener('fullscreenchange', on); clearTimeout(hideTimer.current); }; }, []);
+  // Space is the usual play key, but it also types, presses buttons and nudges sliders, so it reaches the
+  // room only from an idle page. Re-bound each render so it always closes over the current room state.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.code !== 'Space' || event.repeat || event.ctrlKey || event.metaKey || event.altKey || modal || swarm.invitation) return;
+      if ((event.target as HTMLElement | null)?.closest('input, textarea, select, button, [contenteditable], [role=slider], [role=dialog]')) return;
+      if (!canPlay) return;
+      event.preventDefault();
+      togglePlayback();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  });
 
   async function invite() {
     if (!session && !await swarm.create('', hostName)) return;
@@ -142,7 +161,7 @@ export default function CouchSwarm() {
           </div>
           <div className="player-controls">
             <div className="timeline"><span className="time">{time(seek ?? swarm.playhead)}</span><Slider aria-label="Playback position" getAriaValueText={(_, v) => time(v)} value={[seek ?? swarm.playhead]} min={0} max={swarm.duration || 1} step={1} disabled={seekLost} onValueChange={value => setSeek(Array.isArray(value) ? value[0] : value)} onValueCommitted={(value, details) => { const position = Array.isArray(value) ? value[0] : value; const send = () => void swarm.control('seek', { position }).finally(() => setSeek(null)); clearTimeout(seekTimer.current); if (details.reason === 'keyboard') seekTimer.current = setTimeout(send, 400); else send(); }}/><span className="time">{swarm.duration ? time(swarm.duration) : '--:--'}</span></div>
-            <div className="control-row"><div className="control-group"><button className="play-button" aria-disabled={!canPlay} aria-describedby="play-hint" onClick={() => { if (!canPlay) return; if (Date.now() - lastToggle.current < 400) return; lastToggle.current = Date.now(); void swarm.control(isPlaying ? 'pause' : 'play'); }}>{isPlaying ? <Pause size={15} fill="currentColor"/> : <Play size={15} fill="currentColor"/>}{isPlaying ? 'Pause for all' : 'Play for all'}</button><div className="volume-control" onMouseEnter={() => setVolumeOpen(true)} onMouseLeave={e => { if (!e.currentTarget.contains(document.activeElement)) setVolumeOpen(false); }} onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setVolumeOpen(false); }}><button className="icon-button" aria-label={muted ? 'Unmute' : 'Mute'} title={muted ? 'Unmute; volume slider opens above' : 'Mute; volume slider opens above'} onClick={() => { if (!muted) { setMuted(true); return; } const v = volume > 0 ? volume : .5; setVolume(v); if (videoRef.current) videoRef.current.volume = v; setMuted(false); }} onFocus={() => setVolumeOpen(true)}>{muted ? <VolumeX size={19}/> : <Volume2 size={19}/>}</button>{volumeOpen && <div className="volume-slider"><Slider aria-label="Your volume" getAriaValueText={(_, v) => `${Math.round(v * 100)}%`} value={[muted ? 0 : volume]} min={0} max={1} step={.01} onValueChange={value => { const v = Array.isArray(value) ? value[0] : value; setVolume(v); setMuted(v === 0); if (videoRef.current) videoRef.current.volume = v; }}/></div>}</div><span className="control-hint" id="play-hint"><Crown size={13}/>{playHint}</span></div><div className="control-group"><span className="pill"><span className={`dot ${swarm.everyoneReady ? 'live' : ''}`}/>{!hasSource ? 'Waiting for a movie' : !swarm.connected ? 'Reconnecting' : isPlaying ? 'In sync' : swarm.everyoneReady ? 'Everyone ready' : 'Buffering'}</span><button className="icon-button" aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} aria-pressed={isFullscreen} onClick={() => void fullscreen()}><Maximize size={18}/></button></div></div>
+            <div className="control-row"><div className="control-group"><button className="play-button" aria-disabled={!canPlay} aria-describedby="play-hint" title={isHost ? `${isPlaying ? 'Pause' : 'Play'} for everyone (space)` : undefined} onClick={togglePlayback}>{isPlaying ? <Pause size={15} fill="currentColor"/> : <Play size={15} fill="currentColor"/>}{isPlaying ? 'Pause for all' : 'Play for all'}</button><div className="volume-control" onMouseEnter={() => setVolumeOpen(true)} onMouseLeave={e => { if (!e.currentTarget.contains(document.activeElement)) setVolumeOpen(false); }} onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setVolumeOpen(false); }}><button className="icon-button" aria-label={muted ? 'Unmute' : 'Mute'} title={muted ? 'Unmute; volume slider opens above' : 'Mute; volume slider opens above'} onClick={() => { if (!muted) { setMuted(true); return; } const v = volume > 0 ? volume : .5; setVolume(v); if (videoRef.current) videoRef.current.volume = v; setMuted(false); }} onFocus={() => setVolumeOpen(true)}>{muted ? <VolumeX size={19}/> : <Volume2 size={19}/>}</button>{volumeOpen && <div className="volume-slider"><Slider aria-label="Your volume" getAriaValueText={(_, v) => `${Math.round(v * 100)}%`} value={[muted ? 0 : volume]} min={0} max={1} step={.01} onValueChange={value => { const v = Array.isArray(value) ? value[0] : value; setVolume(v); setMuted(v === 0); if (videoRef.current) videoRef.current.volume = v; }}/></div>}</div><span className="control-hint" id="play-hint"><Crown size={13}/>{playHint}</span></div><div className="control-group"><span className="pill"><span className={`dot ${swarm.everyoneReady ? 'live' : ''}`}/>{!hasSource ? 'Waiting for a movie' : !swarm.connected ? 'Reconnecting' : isPlaying ? 'In sync' : swarm.everyoneReady ? 'Everyone ready' : 'Buffering'}</span><button className="icon-button" aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} aria-pressed={isFullscreen} onClick={() => void fullscreen()}><Maximize size={18}/></button></div></div>
           </div>
           <output className="notice">{feedback}</output>
         </div>
