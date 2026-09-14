@@ -1,0 +1,63 @@
+// Bitmap subtitles (.sub with its .idx, .sup) are image streams, and a frame-based .sub needs a frame rate
+// nothing knows before playback, so neither can reach a <track> and neither is offered.
+export function subtitleFiles<T extends { name: string; path: string }>(files: T[]): T[] {
+  return files.filter(file => /\.(srt|ass|ssa|vtt)$/i.test(file.name))
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+// Valid UTF-8 always decodes, so a fatal throw means a legacy codepage; Western European covers nearly
+// every torrent subtitle that is not already UTF-8, and guessing further would need a charset picker.
+export function decodeSubtitle(bytes: AllowSharedBufferSource) {
+  const view = ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : new Uint8Array(bytes);
+  // UTF-16 is not valid UTF-8, so without this every character would arrive separated by a null byte.
+  if (view[0] === 0xFF && view[1] === 0xFE) return new TextDecoder('utf-16le').decode(bytes);
+  if (view[0] === 0xFE && view[1] === 0xFF) return new TextDecoder('utf-16be').decode(bytes);
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+  catch { return new TextDecoder('windows-1252').decode(bytes); }
+}
+
+const TIMING = /^(\d+):(\d{1,2}):(\d{1,2})[.,](\d{1,3}) *--> *(\d+):(\d{1,2}):(\d{1,2})[.,](\d{1,3})/;
+// Layer, Start, End, then the six fields before Text, which keeps every comma of its own.
+const DIALOGUE = /^Dialogue:\s*[^,]*,([^,]+),([^,]+),(?:[^,]*,){6}(.*)$/;
+
+const clock = (h: string, m: string, s: string, ms: string) =>
+  `${h.padStart(2, '0')}:${m.padStart(2, '0')}:${s.padStart(2, '0')}.${ms.padEnd(3, '0')}`;
+
+// WebVTT reads an arrow in cue text as the start of the next cue, which would swallow every cue after it.
+const escapeArrows = (line: string) => line.replaceAll('-->', '--&gt;');
+
+// ASS counts hundredths where WebVTT counts thousandths.
+function assClock(value: string) {
+  const parts = /^(\d+):(\d{1,2}):(\d{1,2})[.,](\d{1,2})$/.exec(value.trim());
+  return parts ? clock(parts[1], parts[2], parts[3], `${parts[4].padEnd(2, '0')}0`) : '';
+}
+
+// WebVTT is the only format a <track> can load. Styling, positioning and karaoke are dropped to plain text,
+// which is what the MKV player already does with the same subtitle muxed into the movie.
+export function toWebVTT(text: string, filename: string) {
+  const body = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  // A browser rejects a whole .vtt whose signature is missing, so only a real one skips the rewrite below;
+  // an .srt that was renamed .vtt falls through and is repaired instead of attaching an empty track.
+  if (/\.vtt$/i.test(filename) && /^WEBVTT([ \t\n]|$)/.test(body)) return body;
+  if (/\.(ass|ssa)$/i.test(filename)) {
+    const cues = [];
+    for (const line of body.split('\n')) {
+      const dialogue = DIALOGUE.exec(line);
+      // A vector drawing keeps its coordinates in the text field and would render as visible gibberish.
+      if (!dialogue || /\\p[1-9]/.test(dialogue[3])) continue;
+      const start = assClock(dialogue[1]), end = assClock(dialogue[2]);
+      const cue = escapeArrows(dialogue[3].replace(/\{[^}]*\}/g, '').replaceAll('\\h', ' ').replace(/\\[Nn]/g, '\n')).trim();
+      if (start && end && cue) cues.push(`${start} --> ${end}\n${cue}`);
+    }
+    return `WEBVTT\n\n${cues.join('\n\n')}\n`;
+  }
+  // Rewriting only the timing lines leaves cue numbers, blank lines and <i>/<b> tags alone: WebVTT reads a
+  // numeric line as a cue identifier and renders those tags itself, so every one of them is already legal.
+  const lines = body.split('\n').map(line => {
+    const timing = TIMING.exec(line);
+    return timing
+      ? `${clock(timing[1], timing[2], timing[3], timing[4])} --> ${clock(timing[5], timing[6], timing[7], timing[8])}`
+      : escapeArrows(line);
+  });
+  return `WEBVTT\n\n${lines.join('\n')}\n`;
+}

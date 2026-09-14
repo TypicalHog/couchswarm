@@ -1,17 +1,44 @@
 'use client';
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import type WebTorrent from 'webtorrent/dist/webtorrent.min.js';
-import type { Torrent, TorrentFile } from 'webtorrent/dist/webtorrent.min.js';
+import type { Torrent, TorrentFile, TorrentFileStream } from 'webtorrent/dist/webtorrent.min.js';
 import type { PlaysVideoEngine } from 'playsvideo';
 import { isMkv, videoFiles } from '@/lib/video-files';
+import { decodeSubtitle, subtitleFiles, toWebVTT } from '@/lib/subtitles';
 import { connectHelper } from '@/lib/torrent-helper';
 import { connectRemoteHelper, helperStatus } from '@/lib/remote-helper';
 import type { Session } from '@/lib/sync';
+
+// A read parks on a piece that a destroyed torrent will never deliver, and only destroying the stream ends
+// that wait, so the caller is handed the stream to abandon rather than a promise that could outlive the room.
+function readFile(file: TorrentFile, hold: (stream: TorrentFileStream) => void) {
+  return new Promise<Uint8Array>((resolve, reject) => {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    hold(file.createReadStream()
+      .on('data', chunk => { chunks.push(chunk); size += chunk.length; })
+      .on('end', () => {
+        const bytes = new Uint8Array(size);
+        let at = 0;
+        for (const chunk of chunks) { bytes.set(chunk, at); at += chunk.length; }
+        resolve(bytes);
+      })
+      .on('error', reject)
+      // Reached when the stream is abandoned; after a resolve above this settles nothing.
+      .on('close', () => reject(new Error('This subtitle could not be read from the torrent.'))));
+  });
+}
 
 export function useTorrent(source: string, fileIndex: number, mediaVersion: number, videoRef: RefObject<HTMLVideoElement | null>, session: Session | null) {
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [files, setFiles] = useState<{ name: string; path: string; size: number }[]>([]);
+  const [subtitles, setSubtitles] = useState<{ name: string; path: string }[]>([]);
+  // null is subtitles off; a number indexes the torrent's own list; a File is this participant's upload.
+  const [subtitle, setSubtitle] = useState<number | File | null>(null);
+  const [subtitleError, setSubtitleError] = useState('');
+  const [subtitleBusy, setSubtitleBusy] = useState(false);
+  const subtitleRef = useRef<TorrentFile[]>([]);
   const [stats, setStats] = useState({ speed: 0, peers: 0, progress: 0, filename: '', size: 0 });
   const [loadedVersion, setLoadedVersion] = useState(-1);
   const [helper, setHelper] = useState<{ peers?: number; host?: boolean } | null>(null);
@@ -38,12 +65,14 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     const abort = new AbortController();
     // Helper retry budgets are per movie, not per hook mount.
     const movie = `${source}|${mediaVersion}|${fileIndex}`;
-    if (movieRef.current !== movie) { movieRef.current = movie; retriedHelper.current = 0; retriedUpgrade.current = false; }
+    // A subtitle chosen for the last movie would index a file list this one does not have.
+    if (movieRef.current !== movie) { movieRef.current = movie; retriedHelper.current = 0; retriedUpgrade.current = false; setSubtitle(null); }
     fileRef.current = null;
+    subtitleRef.current = [];
     setLoadedVersion(-1);
     setHelper(null);
     // The file list belongs to the torrent, not the selection: keep it across a file switch so the picker stays mounted.
-    if (sourceRef.current !== source) { sourceRef.current = source; setFiles([]); }
+    if (sourceRef.current !== source) { sourceRef.current = source; setFiles([]); setSubtitles([]); }
     setError('');
     setStats({ speed: 0, peers: 0, progress: 0, filename: '', size: 0 });
     setStatus(source ? 'Finding your movie…' : '');
@@ -164,6 +193,9 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           if (bridge) value.addWebSeed(bridge.seedUrl);
           const videos = videoFiles(value.files);
           setFiles(videos.map(file => ({ name: file.name, path: file.path, size: file.length })));
+          // Naming the subtitles costs nothing; their bytes are only read once somebody picks one.
+          subtitleRef.current = subtitleFiles(value.files);
+          setSubtitles(subtitleRef.current.map(file => ({ name: file.name, path: file.path })));
           const file = videos[fileIndex];
           if (!videos.length) { fail('No video found. Choose a torrent containing an MKV, MP4, WebM, M4V, or OGV video.'); return; }
           if (!file) { fail(`The host chose video #${fileIndex + 1}, but this torrent has ${videos.length}. Ask the host to pick again.`); return; }
@@ -274,6 +306,58 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- session identity is covered by roomId/token
   }, [source, fileIndex, mediaVersion, videoRef, session?.roomId, session?.token, attempt]);
 
+  // This choice is the participant's own and never reaches room state. The MKV engine only ever touches the
+  // <track> elements it created itself, so the one below is attached, shown and removed here alone. Once the
+  // cues are a blob the torrent is no longer involved, which is why a helper reconnect leaves it alone.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    let disposed = false, expired = false, url = '';
+    let track: HTMLTrackElement | undefined;
+    let stream: TorrentFileStream | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    void (async () => {
+      setSubtitleError('');
+      // Set on the way in, so abandoning a slow read for another subtitle or for Off cannot latch it true.
+      setSubtitleBusy(subtitle !== null);
+      if (subtitle === null) return;
+      // A sidecar nobody is seeding never arrives, and the swarm cannot say how long it would take.
+      timer = setTimeout(() => { expired = true; stream?.destroy(); }, 30_000);
+      try {
+        const file = typeof subtitle === 'number' ? subtitleRef.current[subtitle] : subtitle;
+        if (!file) throw new Error('That subtitle is no longer part of this torrent.');
+        const bytes = file instanceof File ? await file.arrayBuffer() : await readFile(file, value => { stream = value; });
+        if (disposed) return;
+        const vtt = toWebVTT(decodeSubtitle(bytes), file.name);
+        // A file the picker could not parse would otherwise attach an empty track and show nothing at all.
+        if (!vtt.includes(' --> ')) throw new Error('No subtitles could be read out of that file.');
+        url = URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }));
+        track = document.createElement('track');
+        track.kind = 'subtitles';
+        track.label = file.name.replace(/\.[^.]+$/, '');
+        track.src = url;
+        video.appendChild(track);
+        // A track added after the element has loaded is not honoured through its default attribute.
+        const show = () => { if (track?.track) track.track.mode = 'showing'; };
+        track.addEventListener('load', show, { once: true });
+        queueMicrotask(show);
+        setSubtitleBusy(false);
+      } catch (err) {
+        if (disposed) return;
+        setSubtitleBusy(false);
+        setSubtitleError(expired ? 'That subtitle has not arrived from the swarm. Try another, or upload your own.'
+          : err instanceof Error ? err.message : 'That subtitle could not be loaded.');
+      } finally { clearTimeout(timer); }
+    })();
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+      stream?.destroy();
+      track?.remove();
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [subtitle, videoRef]);
+
   const reconnect = useCallback(() => { retriedHelper.current = 0; retriedUpgrade.current = false; setAttempt(value => value + 1); }, []);
-  return { status, error, files, stats, loadedVersion, helper, reconnect };
+  return { status, error, files, stats, loadedVersion, helper, reconnect, subtitles, subtitle, setSubtitle, subtitleError, subtitleBusy };
 }
