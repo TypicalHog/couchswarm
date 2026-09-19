@@ -341,6 +341,10 @@ class CouchSwarmHelper : Form {
     void Say(string text, Color dot) { status.Text = text; statusCard.Dot = dot; statusCard.Invalidate(); }
     void SetRunning(bool value) {
         running = value;
+        // Nothing a user-mode process sends over the network resets the idle timer, so a helper PC
+        // nobody watches on sleeps mid-movie and every viewer stalls. The request is per thread and
+        // SetRunning only runs on the UI thread; Stop, a helper error and process exit all release it.
+        SetThreadExecutionState(value ? ES_CONTINUOUS | ES_SYSTEM_REQUIRED : ES_CONTINUOUS);
         // Enable the successor before disabling the focused button: WinForms moves focus off a control it disables.
         if (value) { stop.Enabled = true; pair.Enabled = false; } else { pair.Enabled = true; stop.Enabled = false; }
         browse.Enabled = !value; keep.Enabled = !value; folder.ReadOnly = value;
@@ -422,6 +426,8 @@ class CouchSwarmHelper : Form {
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessage(IntPtr window, int message, IntPtr flag, string text);
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetDefaultDllDirectories(int flags);
+    [DllImport("kernel32.dll")] static extern uint SetThreadExecutionState(uint flags);
+    const uint ES_CONTINUOUS = 0x80000000, ES_SYSTEM_REQUIRED = 0x00000001;
     [STAThread]
     static void Main() {
         // LOAD_LIBRARY_SEARCH_SYSTEM32: dwmapi.dll is not a KnownDLL, so keep it off the extraction folder.
