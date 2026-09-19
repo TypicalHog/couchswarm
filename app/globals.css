@@ -18,7 +18,7 @@
 * { box-sizing:border-box; border-color:var(--border); }
 body { margin:0; background:var(--background); color:var(--foreground); font-family:var(--font-geist-sans),Arial,sans-serif; font-size:16px; }
 button,input,select { font:inherit; } button { cursor:pointer; transition:background .2s,border-color .2s; } button:disabled,button[aria-disabled=true] { cursor:not-allowed; opacity:.4; }
-button:focus-visible,a:focus-visible,input:focus-visible { outline:2px solid var(--primary); outline-offset:4px; } [data-slot=slider-thumb]:has(input:focus-visible) { outline:2px solid var(--primary); outline-offset:4px; }
+button:focus-visible,a:focus-visible,input:focus-visible { outline:2px solid var(--primary); outline-offset:4px; } [data-slot=slider-thumb]:has(input:focus-visible) { outline:2px solid var(--primary); outline-offset:4px; } [data-slot=select-item]:focus-visible { outline:2px solid var(--primary); outline-offset:-2px; }
 svg { flex-shrink:0; } a { color:inherit; }
 .shell { max-width:1600px; margin:auto; padding:0 48px; }
 .topbar { height:96px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--border); }
