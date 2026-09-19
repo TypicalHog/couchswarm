@@ -24,7 +24,11 @@ export async function hash(value: string) {
 }
 
 export function cleanName(value: unknown, max = 24) {
-  const text = String(typeof value === 'string' || typeof value === 'number' ? value : '').normalize('NFC').replace(/[\p{Cc}\p{Cf}]/gu, '').trim();
+  // ZWNJ and ZWJ spell Persian and Sinhala names and hold an emoji sequence together, so they are letters here;
+  // every other control and format character, bidi overrides included, still goes. They cannot stand alone either,
+  // so the trim takes them at the edges and a name made only of joiners stays empty.
+  const text = String(typeof value === 'string' || typeof value === 'number' ? value : '').normalize('NFC')
+    .replace(/(?![‌‍])[\p{Cc}\p{Cf}]/gu, '').replace(/^[\s‌‍]+|[\s‌‍]+$/gu, '');
   return Array.from(text).slice(0, max).join('');
 }
 
