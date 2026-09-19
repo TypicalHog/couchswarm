@@ -17,7 +17,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
   iceOverride }) {
   let grant, origin, client, torrent, directory, mediaVersion = -1, timer, closed = false, loading, loadedSource = '', swept = false;
   let status = 'Waiting for a pairing link.', lastContact = 0, previousStatus;
-  let desiredVersion = -2, loadAbort, attemptedVersion = -2, attempts = 0, readyAt = 0, misses = 0;
+  let desiredVersion = -2, loadAbort, attemptedVersion = -2, attempts = 0, readyAt = 0, misses = 0, generation = 0;
   let servedPieces = { from: 0, to: -1 };
   const peers = new Map();
   const root = path.resolve(cacheRoot);
@@ -66,7 +66,9 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     value.select(window.from, window.to, 0);
   }
   async function load(room, signal) {
-    if (torrent && room.source === loadedSource) { mediaVersion = room.mediaVersion; return; }
+    // A destroyed torrent serves nobody, so a same-source switch reloads it instead of keeping it.
+    if (torrent && !torrent.destroyed && room.source === loadedSource) { mediaVersion = room.mediaVersion; return; }
+    const own = ++generation;
     await clearTorrent();
     if (closed || signal.aborted) return;
     mediaVersion = room.mediaVersion;
@@ -108,14 +110,15 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     const value = client.add(source, { path: directory, strategy: 'sequential', deselect: true, destroyStoreOnDestroy: !keepDownloads });
     let cause;
     // A torrent that already served the room is reloaded rather than abandoned: disk and swarm errors are usually transient.
+    // Identity, not this load's signal: a same-source version bump aborts the controller while its torrent keeps serving.
     const failed = error => {
-      if (closed || signal.aborted || client !== currentClient || torrent !== value) return;
+      if (closed || client !== currentClient || torrent !== value) return;
       console.error('Torrent failed:', error?.stack || error || 'closed without an error');
       if (Date.now() - readyAt > 300000) attempts = 0;
       void clearTorrent().then(() => {
-        if (closed || signal.aborted) return;
+        if (closed || generation !== own) return; // a newer load owns the status now
         if (attempts < 3) { notify(`${describe(error)} Reconnecting…`); scheduleRetry(); } else notify(`${describe(error)} Choose the movie again in the room to retry.`);
-      }).catch(() => { if (!closed && !signal.aborted) notify('Torrent stopped. Close the helper before clearing its temporary cache.'); });
+      }).catch(() => { if (!closed && generation === own) notify('Torrent stopped. Close the helper before clearing its temporary cache.'); });
     };
     client.on('error', error => { cause = error; failed(error); });
     value.on('error', error => { cause = error; failed(error); });

@@ -232,6 +232,15 @@ test('a failed native torrent stops advertising readiness, then reloads', { time
     await sleep(100);
   }
   assert.equal(state.ready, true, 'the helper loaded the seeded torrent');
+  // Picking another file bumps the media version without changing the source, so the helper keeps the torrent it
+  // already loaded and the load that created it is aborted. A failure after that must still be noticed.
+  await post(room, { action: 'file', fileIndex: 1, revision: 0 }, host.token);
+  for (let i = 0; i < 100; i++) {
+    state = await post(route, { action: 'status' }, host.token);
+    if (state.ready) break;
+    await sleep(100);
+  }
+  assert.equal(state.ready, true, 'the helper serves the same torrent across a file switch');
   await new Promise(resolve => nativeClient.torrents[0].destroy(resolve));
   for (let i = 0; i < 30; i++) {
     state = await post(route, { action: 'status' }, host.token);
