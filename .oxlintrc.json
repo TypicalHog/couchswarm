@@ -40,7 +40,9 @@
     {
       "files": ["tests/**"],
       "rules": {
-        "typescript/no-floating-promises": "off"
+        "typescript/no-floating-promises": ["error", {
+          "allowForKnownSafeCalls": [{ "from": "package", "package": "node:test", "name": ["test"] }]
+        }]
       }
     }
   ]
