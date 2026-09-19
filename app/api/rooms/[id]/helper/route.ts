@@ -11,6 +11,20 @@ async function handler(request: Request, context: { params: Promise<{ id: string
   const { db, room, memberId, present } = access;
   let body;
   try { body = await readBody(request, 40000); } catch { return json({ error: 'Invalid helper request.' }, 400); }
+  // Keeping a connection alive needs none of the helper selection below, and it repeats every five seconds, so answer it first.
+  if (body.action === 'peer' || body.action === 'close') {
+    if (typeof body.peerId !== 'string') return json({ error: 'Invalid connection.' }, 400);
+    // An open connection outlives helper selection: a guest keeps the host's helper until their own is ready.
+    const peer = await db.prepare('SELECT helper_peers.answer FROM helper_peers JOIN helpers ON helpers.id = helper_peers.helper_id WHERE helper_peers.id = ? AND helper_peers.member_id = ? AND helpers.room_id = ? AND helper_peers.media_version = ?')
+      .bind(body.peerId, memberId, room.id, room.media_version).first<{ answer: string | null }>();
+    if (!peer) return json({ error: 'The helper connection has expired.' }, 410);
+    if (body.action === 'close') {
+      await db.prepare('DELETE FROM helper_peers WHERE id = ?').bind(body.peerId).run();
+      return json({ ok: true });
+    }
+    await db.prepare('UPDATE helper_peers SET last_seen = ? WHERE id = ?').bind(Date.now(), body.peerId).run();
+    return json({ answer: peer.answer ? JSON.parse(peer.answer) : null });
+  }
   const { results } = await db.prepare('SELECT * FROM helpers WHERE room_id = ? AND member_id IN (?, ?)').bind(room.id, memberId, room.host_id).all<HelperRow>();
   const mine = results.find(row => row.member_id === memberId);
   const hosts = results.find(row => row.member_id === room.host_id);
@@ -58,18 +72,7 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     ]);
     return json({ peerId }, 201);
   }
-  if (typeof body.peerId !== 'string') return json({ error: 'Invalid connection.' }, 400);
-  // An open connection outlives helper selection: a guest keeps the host's helper until their own is ready.
-  const peer = await db.prepare('SELECT helper_peers.answer FROM helper_peers JOIN helpers ON helpers.id = helper_peers.helper_id WHERE helper_peers.id = ? AND helper_peers.member_id = ? AND helpers.room_id = ? AND helper_peers.media_version = ?')
-    .bind(body.peerId, memberId, room.id, room.media_version).first<{ answer: string | null }>();
-  if (!peer) return json({ error: 'The helper connection has expired.' }, 410);
-  if (body.action === 'close') {
-    await db.prepare('DELETE FROM helper_peers WHERE id = ?').bind(body.peerId).run();
-    return json({ ok: true });
-  }
-  if (body.action !== 'peer') return json({ error: 'Unknown helper action.' }, 400);
-  await db.prepare('UPDATE helper_peers SET last_seen = ? WHERE id = ?').bind(Date.now(), body.peerId).run();
-  return json({ answer: peer.answer ? JSON.parse(peer.answer) : null });
+  return json({ error: 'Unknown helper action.' }, 400);
 }
 
 export const POST = withDb(handler);
