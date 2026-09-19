@@ -9,6 +9,10 @@ const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
 // WebTorrent only repeats an outstanding request when a reservation is hotswapped back to this wire; a
 // viewer that stacks more than this is flooding, not streaming.
 const MAX_DUPLICATES = 8;
+// An answered block waits in the wire's readable side until the congested channel takes it, and queuedBytes is
+// released the moment it is pushed, so the reply backlog is what actually grows. A viewer reading its channel
+// never stacks more than the 4 MiB it may have in flight; 16 MiB unsent is a client requesting faster than it reads.
+const MAX_UNSENT_BYTES = 16 * 1024 * 1024;
 
 // Advertise availability to our authenticated room only. Each requested block
 // is fetched and verified by the native torrent before the browser receives it.
@@ -56,6 +60,8 @@ export function serveTorrentPeer(peer, torrent, readAhead = () => {}, pieces = n
     if (!read.callbacks.length) { read.cancelled = true; read.stream?.destroy(); }
   });
   wire.on('request', (piece, offset, length, callback) => {
+    // A refusal would leave the backlog in place, so a peer that stopped draining its replies has to go.
+    if (wire._readableState.buffered + queuedBytes > MAX_UNSENT_BYTES) { peer.destroy(); return; }
     const start = piece * torrent.pieceLength + offset;
     const pieceSize = Math.min(torrent.pieceLength, torrent.length - piece * torrent.pieceLength);
     // A piece outside the video span belongs to a file nothing validated or marked sparse, and reading it here is
@@ -105,5 +111,8 @@ export function serveTorrentPeer(peer, torrent, readAhead = () => {}, pieces = n
   // A browser peer only sends control messages (handshake, interested, request, cancel, have, bitfield);
   // anything that cannot be framed inside 256 KiB is a flood, not a message.
   peer.on('data', () => { if (wire._bufferSize > 256 * 1024) peer.destroy(); });
+  // ut_metadata answers each request with up to 16 KiB through the same readable buffer and keeps no byte account
+  // of its own; the event fires once the extension has queued its reply, so the backlog is caught there too.
+  wire.on('extended', () => { if (wire._readableState.buffered > MAX_UNSENT_BYTES) peer.destroy(); });
   return wire;
 }
