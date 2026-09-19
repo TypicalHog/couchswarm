@@ -53,7 +53,7 @@
     "tailwind-merge": "3.6.0",
     "tw-animate-css": "1.4.0",
     "ut_metadata": "5.0.1",
-    "webtorrent": "^3.0.21"
+    "webtorrent": "3.0.21"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.2.1",
