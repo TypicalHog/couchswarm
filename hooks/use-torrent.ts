@@ -236,6 +236,11 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
               mkvPlayer.loadUrl(new URL(file.streamURL, location.href).href);
             }).catch(() => fail('The MKV player could not load. Reload the room and try again.'));
           } else {
+            // A codec the browser cannot decode is dropped at demux and the audio plays on: no media error,
+            // just a picture that never arrives. Metadata is the first moment a missing track shows.
+            video.addEventListener('loadedmetadata', () => {
+              if (!disposed && !video.videoWidth) fail('Your browser cannot decode this video’s picture. Ask the host for a version with H.264 video, or watch on a device that supports this codec.');
+            }, { once: true, signal: abort.signal });
             file.streamTo(video);
             setLoadedVersion(mediaVersion);
           }
