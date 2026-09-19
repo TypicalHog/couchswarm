@@ -182,6 +182,8 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
 
   const join = async (name: string) => {
     if (!invitation) return;
+    // A tab that cannot hold the seat must not spend the host's re-claim key: the server would crown a tab that never heartbeats.
+    if (!await claimSeat(invitation.roomId)) { setError('This room is already open in another CouchSwarm tab.'); return; }
     setBusy(true); setError('');
     let hostKey: string | undefined;
     try { hostKey = localStorage.getItem(`couchswarm:host:${invitation.roomId}`) || undefined; } catch { /* Blocked storage only costs the host their re-claim. */ }
