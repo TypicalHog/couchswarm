@@ -42,6 +42,15 @@ docker compose up -d
 docker compose logs --tail=50
 ```
 
+The relay’s own public address has to stay an allowed peer so that two relayed clients can reach each other, and coturn’s peer list matches addresses, not ports; relayed UDP therefore reaches every other UDP port on this host over loopback, past the provider firewall, coturn’s own 3478 included. Either run no other UDP service on the relay host, or drop that traffic on the host itself:
+
+```sh
+sudo sysctl -w net.ipv4.ip_local_reserved_ports=49160-49359
+sudo iptables -t raw -I OUTPUT -p udp -m addrtype --dst-type LOCAL --sport 49160:49359 ! --dport 49160:49359 -j DROP
+```
+
+The sysctl stops the kernel handing a relay port to an unrelated outbound socket, and the rule sits in the `raw` table so Docker’s NAT cannot route around it. Neither survives a reboot; persist both the way your distribution does.
+
 If the provider uses NAT, bind the server’s local IP in `--listening-ip` and `--relay-ip` and add `--external-ip=PUBLIC_IP/LOCAL_IP`. Do not leave documentation example addresses in the running configuration.
 
 Set these on Vercel:
