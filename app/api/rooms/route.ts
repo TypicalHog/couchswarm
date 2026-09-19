@@ -25,6 +25,8 @@ async function handler(request: Request) {
     db.prepare(`DELETE FROM helpers WHERE room_id IN (${expiredRooms})`).bind(cutoff, seen),
     db.prepare(`DELETE FROM members WHERE room_id IN (${expiredRooms})`).bind(cutoff, seen),
     db.prepare(`DELETE FROM rooms WHERE id IN (${expiredRooms})`).bind(cutoff, seen),
+    // A pairing link nobody used can no longer be claimed, so its row only waits out the room's day.
+    db.prepare('DELETE FROM helpers WHERE token_hash IS NULL AND pair_expires < ?').bind(now),
     db.prepare('INSERT INTO rooms (id, name, host_id, invite_hash, host_key_hash, source, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(id, 'The living room', memberId, inviteHash, hostKeyHash, source, source ? 'Buffering a new movie.' : 'Waiting for a movie.', now),
     db.prepare('INSERT INTO members (id, room_id, token_hash, name, last_seen) VALUES (?, ?, ?, ?, ?)')

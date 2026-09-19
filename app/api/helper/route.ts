@@ -5,6 +5,10 @@ import { HELPER_PEER_TTL_MS, MAX_HELPER_PEERS, PRESENCE_MS } from '@/lib/sync';
 
 export const maxDuration = 10;
 
+// Far longer than PRESENCE_MS: a guest reloading the room must not cost them their running helper, but an agent nobody
+// can see any more should not keep polling either.
+const HELPER_OWNER_GRACE_MS = 600_000;
+
 async function handler(request: Request) {
   let body;
   try { body = await readBody(request, 40000); } catch { return json({ error: 'Invalid helper request.' }, 400); }
@@ -26,6 +30,18 @@ async function handler(request: Request) {
   if (!helper) return json({ error: 'The helper was disconnected. Pair it again from your room.' }, 403);
   const room = await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(helper.room_id).first<HelperRoom>();
   if (!room || await roomExpired(db, room.id, room.created_at, Date.now())) return json({ error: 'This room has expired.' }, 410);
+  // A guest who rejoins gets a new member id, so their old helper serves nobody and neither they nor the host can see
+  // it to unpair it. The host is exempt: a re-claiming host inherits the room's helper.
+  if (helper.member_id !== room.host_id) {
+    const owner = await db.prepare('SELECT last_seen FROM members WHERE id = ? AND room_id = ?').bind(helper.member_id, room.id).first<{ last_seen: number }>();
+    if (!owner || owner.last_seen < Date.now() - HELPER_OWNER_GRACE_MS) {
+      await db.batch([
+        db.prepare('DELETE FROM helper_peers WHERE helper_id = ?').bind(helper.id),
+        db.prepare('DELETE FROM helpers WHERE id = ?').bind(helper.id),
+      ]);
+      return json({ error: 'You left the room. Pair the helper again from your room.' }, 410);
+    }
+  }
   if (body.action === 'stop') {
     await db.batch([
       db.prepare("UPDATE helpers SET last_seen = 0, info_hash = '', status = 'Helper stopped.' WHERE id = ?").bind(helper.id),
