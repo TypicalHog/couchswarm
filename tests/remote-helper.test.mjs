@@ -142,12 +142,16 @@ test('remote helper delivers magnet metadata and seekable multi-file bytes from 
   t.after(() => peer.destroy());
   const connected = once(peer, 'connect');
   const [offer] = await once(peer, 'signal');
+  const asked = Date.now();
+  let answered = 0;
   const { peerId } = await post(route, { action: 'offer', mediaVersion: 1, offer }, host.token, 201);
   for (let i = 0; i < 100; i++) {
     const response = await post(route, { action: 'peer', peerId }, host.token);
-    if (response.answer) { peer.signal(response.answer); break; }
+    if (response.answer) { answered = Date.now(); peer.signal(response.answer); break; }
     await sleep(100);
   }
+  // Without the agent's gathering-complete bridge simple-peer sits on the answer for its full 5 s fallback timer.
+  assert.ok(answered - asked < 2000, `the helper answers as soon as it has gathered (${answered - asked} ms)`);
   await connected;
   const received = viewer.add(state.infoHash, { announce: [], store: MemoryStore, deselect: true, strategy: 'sequential' });
   const ready = once(received, 'ready');

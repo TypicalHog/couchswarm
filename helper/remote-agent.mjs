@@ -194,6 +194,15 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
             ...(server.username ? { username: encodeURIComponent(server.username), credential: encodeURIComponent(server.credential) } : {}),
           }));
           const peer = new Peer({ initiator: false, trickle: false, config: { iceServers } });
+          // simple-peer holds a non-trickle answer until it sees the null end-of-candidates event, which the native
+          // polyfill never sends — it reports the end of gathering as a state change — so every viewer would wait out
+          // the library's 5 s fallback timer. Its own handler is assigned to onicegatheringstatechange, hence the
+          // listener; the timer stays as the fallback for gathering that never completes.
+          peer._pc?.addEventListener('icegatheringstatechange', () => {
+            if (peer._pc.iceGatheringState !== 'complete' || peer._iceComplete) return;
+            peer._iceComplete = true;
+            peer.emit('_iceComplete');
+          });
           peers.set(remote.id, peer);
           const timeout = setTimeout(() => peer.destroy(), 45000);
           peer.on('error', () => {});
