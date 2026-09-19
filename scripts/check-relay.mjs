@@ -5,9 +5,11 @@ import Peer from '@thaunknown/simple-peer';
 const urls = (process.env.COUCHSWARM_TURN_URLS || '').split(',').map(url => url.trim()).filter(Boolean);
 const secret = process.env.COUCHSWARM_TURN_SECRET;
 if (!urls.length || !secret) throw new Error('Set COUCHSWARM_TURN_URLS and COUCHSWARM_TURN_SECRET for the running relay.');
+let tested = 0;
 for (const url of urls) {
   // libjuice, the ICE backend behind this Node stack, has no TURN-TCP or TURN-TLS transport; only browsers use these URLs.
   if (url.startsWith('turns:') || /transport=tcp/i.test(url)) { console.log(`SKIP (browser-only; this Node stack relays over UDP): ${url}`); continue; }
+  tested++;
   const username = `${Math.floor(Date.now() / 1000) + 300}:couchswarm-check`;
   const credential = createHmac('sha1', secret).update(username).digest('base64');
   const config = { iceTransportPolicy: 'relay', iceServers: [{ urls: url, username: encodeURIComponent(username), credential: encodeURIComponent(credential) }] };
@@ -34,3 +36,4 @@ for (const url of urls) {
     console.log(`PASS: relay-only transfer and both selected relay candidates (${url})`);
   } finally { sender.destroy(); receiver.destroy(); }
 }
+if (!tested) throw new Error('No UDP TURN URL is configured, so nothing was tested. The Windows helper relays over UDP only: add turn:HOST:3478?transport=udp.');

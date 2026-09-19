@@ -74,7 +74,7 @@ CouchSwarm stores no rate-limit table. The room API guards itself with seat limi
 
 Create a room, choose **Connect your helper**, download/extract/open the Windows app, create a pairing link, and paste it into the app. Load a torrent you can share and invite a second device on a different network. Each participant enables playback; the host starts after everyone buffers.
 
-For a relay-only data test, set the TURN variables in your local terminal and run `npm run test:relay`. It tests every configured TURN URL separately, forces relay candidates, and checks both bytes and selected candidates. It mints a deliberately short five-minute credential, so a relay clock more than a few minutes fast fails this test while live traffic is unaffected. `turns:` and `?transport=tcp` URLs are skipped — the Node test stack cannot open them. A live relay and network access are required; the test fails if either is missing.
+For a relay-only data test, set the TURN variables in your local terminal and run `npm run test:relay`. It tests every configured TURN URL separately, forces relay candidates, and checks both bytes and selected candidates. It mints a deliberately short five-minute credential, so a relay clock more than a few minutes fast fails this test while live traffic is unaffected. `turns:` and `?transport=tcp` URLs are skipped — the Node test stack cannot open them — and the test fails when that leaves no UDP URL to try, since the Windows helper has no relay it can use either. A live relay and network access are required; the test fails if either is missing.
 
 ## Local verification of the production build
 
