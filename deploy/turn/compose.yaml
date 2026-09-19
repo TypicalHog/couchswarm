@@ -3,6 +3,11 @@ services:
     image: coturn/coturn:4.18.0-r0
     network_mode: host
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     entrypoint: ["/usr/bin/turnserver"]
     command:
       - "-n"
