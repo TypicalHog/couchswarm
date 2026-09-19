@@ -18,7 +18,12 @@ async function advance(seconds: number) {
 }
 function stub(t: TestContext, reply: (call: number) => HelperStatus | Error, timers = true) {
   let calls = 0;
-  globalThis.fetch = (async () => {
+  // Every request these tests reach is a readiness poll, so the stub pins the whole request.
+  globalThis.fetch = (async (url: string, init: { method: string; headers: Record<string, string>; body: string }) => {
+    assert.equal(url, `/api/rooms/${session.roomId}/helper`);
+    assert.equal(init.method, 'POST');
+    assert.equal(init.headers.Authorization, `Bearer ${session.token}`);
+    assert.deepEqual(JSON.parse(init.body), { action: 'status' });
     const value = reply(++calls);
     if (value instanceof Error) throw value;
     return { ok: true, json: async () => value };
