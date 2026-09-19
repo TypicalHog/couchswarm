@@ -16,5 +16,8 @@ export function validSignal(value: unknown, type: string): { type: string; sdp: 
   if (!value || typeof value !== 'object') return null;
   const signal = value as Record<string, unknown>;
   if (signal.type !== type || typeof signal.sdp !== 'string' || !signal.sdp.length || signal.sdp.length > 32000) return null;
+  // A helper connection is one data channel and nothing else. An audio or video section aborts the helper's native WebRTC stack outright, which no error handler can catch.
+  const media = signal.sdp.split('\n').filter(line => line.startsWith('m='));
+  if (!media.length || media.some(line => !/^m=application \d+ /.test(line))) return null;
   return { type, sdp: signal.sdp };
 }
