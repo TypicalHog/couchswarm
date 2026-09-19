@@ -24,7 +24,8 @@ export const metadata: Metadata = {
   twitter: { card: 'summary_large_image', title: 'CouchSwarm — Movie night, together', description: 'One room, one play button. Watch browser-compatible torrents in sync with your people.' },
 };
 
-export const viewport: Viewport = { themeColor: '#101411' };
+// resizes-content shrinks the layout viewport when the on-screen keyboard opens, so a centred dialog and its 100dvh cap follow the visible strip.
+export const viewport: Viewport = { themeColor: '#101411', interactiveWidget: 'resizes-content' };
 
 export default function RootLayout({
   children,
