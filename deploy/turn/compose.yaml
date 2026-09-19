@@ -45,6 +45,8 @@ services:
       - "--denied-peer-ip=192.0.0.0-192.0.0.255"
       - "--denied-peer-ip=192.88.99.0-192.88.99.255"
       - "--denied-peer-ip=198.18.0.0-198.19.255.255"
+      # Cloud platform service on a public-looking address (Azure DNS, DHCP and wire server)
+      - "--denied-peer-ip=168.63.129.16"
       - "--denied-peer-ip=::1"
       - "--denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"
       - "--denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff"

@@ -51,7 +51,7 @@ sudo iptables -t raw -I OUTPUT -p udp -m addrtype --dst-type LOCAL --sport 49160
 
 The sysctl stops the kernel handing a relay port to an unrelated outbound socket, and the rule sits in the `raw` table so Docker’s NAT cannot route around it. Neither survives a reboot; persist both the way your distribution does.
 
-If the provider uses NAT, bind the server’s local IP in `--listening-ip` and `--relay-ip` and add `--external-ip=PUBLIC_IP/LOCAL_IP`. Do not leave documentation example addresses in the running configuration.
+If the provider uses NAT, bind the server’s local IP in `--listening-ip` and `--relay-ip` and add `--external-ip=PUBLIC_IP/LOCAL_IP`. Do not leave documentation example addresses in the running configuration. On a cloud VM, also deny the provider’s platform addresses that sit outside the private ranges already listed; Azure’s `168.63.129.16` is in `compose.yaml` already.
 
 Set these on Vercel:
 
