@@ -48,7 +48,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   const mediaPlaying = useRef(false);
   const unlocking = useRef(false);
   const pending = useRef(false);
-  const bridged = useRef({ epoch: -1, until: 0 });
+  const bridged = useRef({ epoch: -1, until: 0, touches: 0 });
   const rtt = useRef(0);
   const best = useRef({ rtt: Infinity, at: 0 });
   const staleControl = useRef(false);
@@ -65,8 +65,10 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     setPlayhead(0);
     setCountdown(0);
     appliedEpoch.current = -1;
-    bridged.current = { epoch: -1, until: 0 };
+    bridged.current = { epoch: -1, until: 0, touches: 0 };
   }, [room?.mediaVersion]);
+  // A rebuilt pipeline (Reconnect, a helper upgrade) starts on an empty buffer, so give the edge touch a fresh budget.
+  useEffect(() => { bridged.current = { epoch: -1, until: 0, touches: 0 }; }, [media.loadedVersion]);
 
   const applyRoomState = useCallback(() => {
     const state = live.current;
@@ -95,11 +97,14 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     } else { video.pause(); video.playbackRate = 1; }
     const ahead = bufferedAhead(video.buffered, target);
     // A paused element never fetches past the edge it stopped at, so a hole or a suspended read leaves the
-    // ready gate unreachable. Touch that edge once per epoch; the drift corrector brings the playhead back.
-    if (!current.playing && bridged.current.epoch !== current.epoch && appliedEpoch.current === current.epoch
+    // ready gate unreachable. One touch only parses about 2.25 s more, which a faststart header's gap
+    // outlasts, so keep touching while the gate is unreachable; the drift corrector brings the playhead back.
+    if (bridged.current.epoch !== current.epoch) bridged.current = { epoch: current.epoch, until: 0, touches: 0 };
+    if (!current.playing && appliedEpoch.current === current.epoch && bridged.current.touches < 8
+      && performance.now() >= bridged.current.until + 900
       && video.readyState >= 3 && !video.seeking && !video.ended && ahead > 0
       && Math.abs(video.currentTime - target) < .12 && !hasBuffer(ahead, target, video.duration, false)) {
-      bridged.current = { epoch: current.epoch, until: performance.now() + 600 };
+      bridged.current = { epoch: current.epoch, until: performance.now() + 600, touches: bridged.current.touches + 1 };
       video.currentTime = target + ahead + 0.05;
     }
     setPlayhead(value => Math.floor(value) === Math.floor(target) ? value : target);
