@@ -33,7 +33,7 @@ The migration runner records checksums and applies each migration once. `drizzle
 
 ## 3. Run the relay
 
-Use a Linux VPS with Docker Compose and a public IPv4 directly assigned to its interface. Copy `deploy/turn/compose.yaml` and `.env.example` there; rename the latter `.env`, enter the real IP and hostname, and generate a random secret, for example `openssl rand -hex 32`. Keep `.env` private.
+Use a Linux VPS with Docker Compose and a public IPv4 directly assigned to its interface. Copy `deploy/turn/compose.yaml` and `deploy/turn/.env.example` there; rename the latter `.env`, enter the real IP and hostname, and generate a random secret, for example `openssl rand -hex 32`. Keep `.env` private.
 
 Allow inbound TCP/UDP 3478 and UDP 49160–49359 through the provider firewall, then run:
 
