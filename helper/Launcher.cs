@@ -366,7 +366,9 @@ class CouchSwarmHelper : Form {
     void StartHelper() {
         if (helper != null && !helper.HasExited) return;
         string root = AppDomain.CurrentDomain.BaseDirectory;
-        var start = new ProcessStartInfo(Path.Combine(root, "runtime", "node.exe"), "helper/desktop.mjs") {
+        // Antivirus HTTPS scanning and company TLS inspection put their root in the Windows store only,
+        // so without --use-system-ca every pairing fetch fails with a bare "fetch failed".
+        var start = new ProcessStartInfo(Path.Combine(root, "runtime", "node.exe"), "--use-system-ca helper/desktop.mjs") {
             WorkingDirectory = Path.Combine(root, "app"), UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
