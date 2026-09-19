@@ -59,7 +59,7 @@ export function HelperConnection({ session, isHost, reconnect, needed, open, onO
       : 'Waiting for your host’s helper. You can run your own instead.'
     : isHost ? 'Start your helper so this room can reach ordinary torrent peers. Your friends only need the room link.'
     : 'Nobody is running a helper yet. Run your own to reach ordinary torrent peers.';
-  return <>
+  return <div className="helper-connection">
     <button className={`helper-button ${needed && !running ? 'primary-button' : 'outline-button'}`} onClick={() => onOpenChange(true)}><MonitorPlay size={16}/>{running ? 'Helper connected' : 'Connect your helper'}</button>
     {hint && <p className="helper-note">{hint}</p>}
     <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="modal"><DialogHeader><DialogTitle>Your movie-night helper</DialogTitle><DialogDescription>{isHost ? 'Run the helper on your Windows computer and keep it open while you watch. Your friends only need the room link.' : 'Run the helper on your Windows computer to download from torrent peers yourself instead of through your host. Keep it open while you watch.'}</DialogDescription></DialogHeader>
@@ -71,5 +71,5 @@ export function HelperConnection({ session, isHost, reconnect, needed, open, onO
       {status?.mine && <button className="quiet-button" aria-busy={busy} onClick={() => { if (!busy) void unpair(); }}>Disconnect helper</button>}
       {error && <p className="error" role="alert">{error}</p>}
     </DialogContent></Dialog>
-  </>;
+  </div>;
 }
