@@ -98,6 +98,8 @@ async function handler(request: Request, context: { params: Promise<{ id: string
         actor.id, body.sequence, now - 2000, now - PRESENCE_MS, actor.id, stored.host_id, id, now - PRESENCE_MS, MAX_SEATS).run();
     if (!report.meta.changes) {
       const me = await db.prepare('SELECT last_seen FROM members WHERE id = ?').bind(actor.id).first<{ last_seen: number }>();
+      // A member who left can never report again, so tell a tab still holding that token to rejoin instead of answering it with someone else's room.
+      if (me && me.last_seen === 0) return json({ error: 'Your seat has expired. Join the room again.' }, 401);
       if (me && me.last_seen > 0 && me.last_seen <= now - PRESENCE_MS) return json({ error: `This couch is full (${MAX_SEATS} people). Try again when a seat opens.` }, 409);
     }
     if (report.meta.changes && actor.id === stored.host_id && duration > 0 && body.mediaVersion === stored.media_version)

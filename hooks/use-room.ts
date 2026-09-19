@@ -30,6 +30,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   const [unsupported, setUnsupported] = useState(false);
   const [busy, setBusy] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [refused, setRefused] = useState(false);
   const [armed, setArmed] = useState(false);
   const [playhead, setPlayhead] = useState(0);
   const [buffered, setBuffered] = useState(0);
@@ -236,7 +237,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
       const period = failures ? Math.min(8000, 1000 * 2 ** failures) * (.8 + Math.random() * .4) : live.current.snapshot?.room.source ? 1000 : 2000;
       if (!stopped && !leaving.current) timer = setTimeout(heartbeat, Math.max(0, period - (performance.now() - sent)));
     };
-    void claimSeat(session.roomId).then(ok => { if (!ok) setError('This room is already open in another CouchSwarm tab.'); else if (!stopped) void heartbeat(); });
+    void claimSeat(session.roomId).then(ok => { if (stopped) return; setRefused(!ok); if (!ok) setError('This room is already open in another CouchSwarm tab.'); else void heartbeat(); });
     return () => { stopped = true; clearTimeout(timer); };
   }, [session, request, accept, videoRef, localNow]);
 
@@ -282,7 +283,8 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   }, []);
 
   const leave = () => {
-    if (session) {
+    // A tab that lost the seat lock shares its token with the tab that holds it: leaving here would take that tab's seat away.
+    if (session && !refused) {
       leaving.current = true;
       sendLeave(session);
       try { sessionStorage.removeItem(`couchswarm:${session.roomId}`); } catch { /* Storage blocked: nothing to clear. */ }
