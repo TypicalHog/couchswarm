@@ -46,6 +46,8 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
   const fileRef = useRef<TorrentFile | null>(null);
   const retriedHelper = useRef(0);
   const retriedUpgrade = useRef(false);
+  // A restart that lost its helper may adopt the returning one even though the kept store already holds bytes.
+  const lostHelper = useRef(false);
   const movieRef = useRef('');
   const sourceRef = useRef('');
   const teardownRef = useRef<Promise<void>>(Promise.resolve());
@@ -66,7 +68,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     // Helper retry budgets are per movie, not per hook mount.
     const movie = `${source}|${mediaVersion}|${fileIndex}`;
     // A subtitle chosen for the last movie would index a file list this one does not have.
-    if (movieRef.current !== movie) { movieRef.current = movie; retriedHelper.current = 0; retriedUpgrade.current = false; setSubtitle(null); }
+    if (movieRef.current !== movie) { movieRef.current = movie; retriedHelper.current = 0; retriedUpgrade.current = false; lostHelper.current = false; setSubtitle(null); }
     fileRef.current = null;
     subtitleRef.current = [];
     setLoadedVersion(-1);
@@ -139,6 +141,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           own => {
             if (fileRef.current?.progress === 1) return;
             setHelper(null);
+            lostHelper.current = true;
             // Selection has already re-pointed at the host's helper, and a helper reloads a torrent that failed
             // after serving, so allow a few reconnects before giving up.
             if (retriedHelper.current < 3) { retriedHelper.current++; setAttempt(value => value + 1); return; }
@@ -164,16 +167,18 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           };
           helperTimer = setTimeout(() => void heartbeat(), 5000);
         }
+        if (remote || bridge) lostHelper.current = false;
         if (session && !bridge && !helperFailed && !remote?.own) {
           // A helper that becomes ready later upgrades this browser-only stream, and a guest on the host's
           // helper remounts onto their own once it is ready. The restart interrupts playback, so adopt one
-          // only before any video bytes land.
+          // only before any video bytes land — unless this stream lost its helper, where the kept store's
+          // bytes say nothing about the swarm and the stall is worse than the interruption.
           // A helper that was offered and could not be reached is upgraded to once per movie, never in a loop.
           const watch = async () => {
             try {
               const { ready, own } = await helperStatus(session, abort.signal);
               if (disposed) return;
-              if (ready && (!remote || own)) { if (!fileRef.current?.downloaded) setAttempt(value => value + 1); return; }
+              if (ready && (!remote || own)) { if (!fileRef.current?.downloaded || lostHelper.current) setAttempt(value => value + 1); return; }
             }
             catch { /* The room connection already reports connectivity failures. */ }
             if (!disposed) helperTimer = setTimeout(() => void watch(), document.hidden ? 30000 : 15000);
