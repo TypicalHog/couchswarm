@@ -202,8 +202,6 @@ class CouchSwarmHelper : Form {
 
     CouchSwarmHelper() {
         Text = "CouchSwarm Helper";
-        AutoScaleDimensions = new SizeF(96F, 96F);
-        AutoScaleMode = AutoScaleMode.Dpi;
         ClientSize = new Size(560, 628);
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
@@ -256,6 +254,10 @@ class CouchSwarmHelper : Form {
         statusCard.Controls.AddRange(new Control[] { status, meta });
 
         Controls.AddRange(new Control[] { mark, wordmark, tagline, rule, linkCard, diskCard, statusCard });
+        // Scale only once every control and its bounds exist: asking for it on an empty form spends the
+        // DPI factor on nothing, and the layout then keeps its 96-DPI pixels while the fonts grow.
+        AutoScaleDimensions = new SizeF(96F, 96F);
+        AutoScaleMode = AutoScaleMode.Dpi;
         link.TabIndex = 0; pair.TabIndex = 1; stop.TabIndex = 2; folder.TabIndex = 3; browse.TabIndex = 4; keep.TabIndex = 5;
         AcceptButton = pair;
 
