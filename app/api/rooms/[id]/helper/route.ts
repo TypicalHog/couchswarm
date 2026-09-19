@@ -8,7 +8,7 @@ export const maxDuration = 10;
 async function handler(request: Request, context: { params: Promise<{ id: string }> }) {
   const access = await roomAccess(request, (await context.params).id);
   if (!access) return json({ error: 'This room session has expired.' }, 403);
-  const { db, room, memberId } = access;
+  const { db, room, memberId, present } = access;
   let body;
   try { body = await readBody(request, 40000); } catch { return json({ error: 'Invalid helper request.' }, 400); }
   const { results } = await db.prepare('SELECT * FROM helpers WHERE room_id = ? AND member_id IN (?, ?)').bind(room.id, memberId, room.host_id).all<HelperRow>();
@@ -43,6 +43,8 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     return json(body.action === 'pair' ? { pairingUrl: `${origin}/#helper=${code}`, expiresIn: PAIR_TTL_MS / 1000 } : { ok: true });
   }
   if (body.action === 'offer') {
+    // A seat that has lapsed holds no helper connection either; 409 rather than 403, because the session is still valid and should retry once its seat is back.
+    if (!present) return json({ error: 'Rejoin the room to use the helper.' }, 409);
     if (!helper || !ready) return json({ error: `${own ? 'Your' : 'The host’s'} helper is not ready yet.` }, 409);
     const offer = validSignal(body.offer, 'offer');
     if (body.mediaVersion !== room.media_version || !offer) return json({ error: 'This connection request is stale or invalid.' }, 409);

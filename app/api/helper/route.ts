@@ -1,7 +1,7 @@
 import { cleanName, getDb, hash, json, notAllowed, readBody, roomExpired, secret, withDb } from '@/lib/db';
 import { validSignal, type HelperRoom, type HelperRow } from '@/lib/helper-auth';
 import { iceConfiguration } from '@/lib/ice';
-import { HELPER_PEER_TTL_MS, MAX_HELPER_PEERS } from '@/lib/sync';
+import { HELPER_PEER_TTL_MS, MAX_HELPER_PEERS, PRESENCE_MS } from '@/lib/sync';
 
 export const maxDuration = 10;
 
@@ -48,7 +48,9 @@ async function handler(request: Request) {
       .bind(Date.now(), cleanName(body.status, 160) || 'Helper connected.', current ? room.media_version : -1, infoHash, helper.id),
     db.prepare('DELETE FROM helper_peers WHERE helper_id = ? AND (last_seen < ? OR media_version != ?)').bind(helper.id, Date.now() - HELPER_PEER_TTL_MS, room.media_version),
   ]);
-  const peers = await db.prepare('SELECT id, offer, answer FROM helper_peers WHERE helper_id = ? ORDER BY last_seen DESC LIMIT ?').bind(helper.id, MAX_HELPER_PEERS).all<{ id: string; offer: string; answer: string | null }>();
+  // Present members take the slots first: a row left behind by someone who is no longer on the couch must never push a live viewer out of the list, since the agent destroys every peer missing from it.
+  const peers = await db.prepare('SELECT helper_peers.id, helper_peers.offer, helper_peers.answer FROM helper_peers LEFT JOIN members ON members.id = helper_peers.member_id WHERE helper_peers.helper_id = ? ORDER BY (members.last_seen > ?) DESC, helper_peers.last_seen DESC LIMIT ?')
+    .bind(helper.id, Date.now() - PRESENCE_MS, MAX_HELPER_PEERS).all<{ id: string; offer: string; answer: string | null }>();
   return json({ room: { id: room.id, source: room.source, mediaVersion: room.media_version, fileIndex: room.file_index },
     peers: peers.results.map(peer => ({ id: peer.id, offer: peer.answer ? null : JSON.parse(peer.offer), answered: !!peer.answer })), ...await iceConfiguration(helper.id) });
 }
