@@ -267,6 +267,17 @@ class CouchSwarmHelper : Form {
             // an unparseable path is simply not rooted, and lands on the same status line instead of a crash dialog.
             bool rooted; try { rooted = Path.IsPathRooted(chosen); } catch (ArgumentException) { rooted = false; }
             if (chosen.Length > 0 && !rooted) { folder.Focus(); Say("Choose the download folder with Browse.", Skin.Alarm); return; }
+            // Only NTFS and ReFS can mark a file sparse. Elsewhere the first tail write an MKV needs
+            // zero-fills and reserves the whole movie, and FAT32 cannot hold 4 GB at all, so refuse the
+            // folder here rather than stall or report a full drive once the movie is already chosen.
+            if (chosen.Length > 0) {
+                string format = null;
+                // A UNC share, a removable slot with no media and a drive the user cannot read all throw: let those through.
+                try { format = new DriveInfo(Path.GetPathRoot(chosen)).DriveFormat; } catch {}
+                if (format != null && format != "NTFS" && format != "ReFS") {
+                    folder.Focus(); Say("That drive is " + format + " and cannot store a movie in pieces. Choose a folder on an NTFS drive.", Skin.Alarm); return;
+                }
+            }
             SetRunning(true);
             lastLink = link.Text.Trim();
             SaveSettings();
