@@ -3,17 +3,21 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import { allReady, bufferedAhead, estimateServerNow, hasBuffer, timelinePosition, validSource, type Session, type Snapshot } from '@/lib/sync';
 import { useTorrent } from '@/hooks/use-torrent';
 
-let seat: Promise<boolean> | null = null;
+const seats = new Map<string, Promise<boolean>>();
 // One seat per browser profile: a duplicated tab shares this session's token and would fight it for the seat.
-// Memoised per document, so a remount or a rotated session never re-requests a lock this tab already holds.
+// Memoised per document and room, so a remount or a rotated session never re-requests a lock this tab already holds.
 function claimSeat(roomId: string) {
-  if (!seat) seat = new Promise<boolean>(resolve => {
-    if (typeof navigator.locks === 'undefined') { resolve(true); return; }
-    void navigator.locks.request(`couchswarm:seat:${roomId}`, { ifAvailable: true }, lock => {
-      resolve(!!lock);
-      return lock ? new Promise<void>(() => { /* Held until this document goes away. */ }) : undefined;
-    }).catch(() => resolve(true));
-  });
+  let seat = seats.get(roomId);
+  if (!seat) {
+    seat = new Promise<boolean>(resolve => {
+      if (typeof navigator.locks === 'undefined') { resolve(true); return; }
+      void navigator.locks.request(`couchswarm:seat:${roomId}`, { ifAvailable: true }, lock => {
+        resolve(!!lock);
+        return lock ? new Promise<void>(() => { /* Held until this document goes away. */ }) : undefined;
+      }).catch(() => resolve(true));
+    });
+    seats.set(roomId, seat);
+  }
   return seat;
 }
 
