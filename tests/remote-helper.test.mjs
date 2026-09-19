@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -20,6 +20,13 @@ if (packaged) {
   for (const file of ['constants.mjs', 'desktop.mjs', 'remote-agent.mjs', 'remote-wire.mjs', 'torrent-helper.mjs'])
     if (await readFile(new URL(`../work/helper-package/app/helper/${file}`, import.meta.url), 'utf8').catch(() => null)
       !== await readFile(new URL(`../helper/${file}`, import.meta.url), 'utf8')) stale.push(file);
+  // Byte equality only covers those scripts: a build that failed after copying them leaves a stage whose imports
+  // resolve from the repo's own node_modules, beside a ZIP that is not the file people download.
+  for (const name of ['webtorrent', '@thaunknown/simple-peer', 'bittorrent-protocol', 'ut_metadata', 'parse-torrent', 'range-parser'])
+    if (!await stat(new URL(`../work/helper-package/app/node_modules/${name}/package.json`, import.meta.url)).catch(() => null)) stale.push(name);
+  const zip = await stat(new URL('../public/downloads/CouchSwarm-Helper-win-x64.zip', import.meta.url)).catch(() => null);
+  const staged = await stat(new URL('../work/helper-package/app/helper/remote-agent.mjs', import.meta.url)).catch(() => null);
+  if (!zip || !staged || zip.mtimeMs < staged.mtimeMs) stale.push('CouchSwarm-Helper-win-x64.zip');
   if (stale.length) throw new Error(`work/helper-package is missing or stale (${stale.join(', ')}). Run npm run build:helper.`);
 }
 const { createRemoteAgent } = await import(packaged ? '../work/helper-package/app/helper/remote-agent.mjs' : '../helper/remote-agent.mjs');
