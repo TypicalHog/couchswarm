@@ -48,7 +48,7 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     if (!helper || !ready) return json({ error: `${own ? 'Your' : 'The host’s'} helper is not ready yet.` }, 409);
     const offer = validSignal(body.offer, 'offer');
     if (body.mediaVersion !== room.media_version || !offer) return json({ error: 'This connection request is stale or invalid.' }, 409);
-    const active = await db.prepare('SELECT COUNT(*) AS count FROM helper_peers WHERE helper_id = ? AND member_id != ? AND last_seen > ? AND member_id IN (SELECT id FROM members WHERE last_seen > ?)').bind(helper.id, memberId, Date.now() - HELPER_PEER_TTL_MS, Date.now() - PRESENCE_MS).first<{ count: number }>();
+    const active = await db.prepare('SELECT COUNT(*) AS count FROM helper_peers WHERE helper_id = ? AND member_id != ? AND last_seen > ? AND EXISTS (SELECT 1 FROM members WHERE members.id = helper_peers.member_id AND members.last_seen > ?)').bind(helper.id, memberId, Date.now() - HELPER_PEER_TTL_MS, Date.now() - PRESENCE_MS).first<{ count: number }>();
     if ((active?.count || 0) >= MAX_HELPER_PEERS) return json({ error: 'All helper connections are in use.' }, 429);
     const peerId = crypto.randomUUID();
     await db.batch([
