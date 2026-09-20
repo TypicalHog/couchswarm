@@ -62,12 +62,15 @@ async function handler(request: Request, context: { params: Promise<{ id: string
         .bind(memberId, id, await hash(token), name, now, id, now - PRESENCE_MS, MAX_SEATS).run();
       if (!result.meta.changes) return json({ error: `This couch is full (${MAX_SEATS} people). Try again when a seat opens.` }, 409);
     }
-    const pausedAt = host && host.last_seen <= now - PRESENCE_MS ? host.last_seen + PRESENCE_MS : now;
+    // Nobody is waiting on the new arrival's buffer if the host is already gone: the room stopped at the lease,
+    // and only this join is here to say so, because the lease check never runs for a room that is paused.
+    const away = !host || host.last_seen <= now - PRESENCE_MS;
+    const pausedAt = host && away ? host.last_seen + PRESENCE_MS : now;
     // The room was read several round trips ago, so pause only the timeline this position was worked out from:
     // a pause and a restart in between would put the movie back where it never was, and the joiner's own first
     // report pauses the room anyway.
     await db.prepare('UPDATE rooms SET playing = 0, position = ?, reason = ?, revision = revision + 1 WHERE id = ? AND playing = 1 AND revision = ?')
-      .bind(timelinePosition(publicRoom(stored), pausedAt), 'A friend joined. Waiting for their buffer.', id, stored.revision).run();
+      .bind(timelinePosition(publicRoom(stored), pausedAt), away && !reclaim ? 'The host disconnected. Waiting for them to return.' : 'A friend joined. Waiting for their buffer.', id, stored.revision).run();
     return json({ roomId: id, memberId, token, invite: body.invite }, 201);
   }
   const token = request.headers.get('Authorization')?.replace(/^Bearer /, '') || '';

@@ -165,7 +165,17 @@ test('rejects malformed requests, rewinds at the end, and gates seats, moderatio
   quietState = await post(quietPath, { action: 'play', revision: quietState.room.revision }, quiet.token);
   assert.equal(quietState.room.playing, true, quietState.room.reason);
   await beatQuiet(watcher.token, 2, false);
+  const deserted = await post('/api/rooms', { source: magnet }, undefined, 201);
+  const desertedPath = `/api/rooms/${deserted.roomId}`;
+  t.after(() => post(desertedPath, { action: 'leave' }, deserted.token).catch(() => {}));
+  let desertedState = await post(desertedPath, { action: 'heartbeat', ready: true, buffered: 15, epoch: 0, mediaVersion: 0, duration: 120, sequence: 1 }, deserted.token);
+  desertedState = await post(desertedPath, { action: 'play', revision: desertedState.room.revision }, deserted.token);
+  assert.equal(desertedState.room.playing, true, desertedState.room.reason);
   await new Promise(resolve => setTimeout(resolve, 12500));
+  const friend = await post(desertedPath, { action: 'join', invite: deserted.invite, name: 'Friend' }, undefined, 201);
+  desertedState = await post(desertedPath, { action: 'snapshot' }, friend.token);
+  assert.equal(desertedState.room.playing, false, 'a join stops a room the host has walked out of');
+  assert.match(desertedState.room.reason, /host disconnected/, 'the friend is told the host is gone, not that everyone is waiting on them');
   for (let i = 0; i < 11; i++) await post(fullPath, { action: 'join', invite: full.invite, name: `Guest ${i}` }, undefined, 201);
   await post(fullPath, { action: 'heartbeat', ready: true, buffered: 15, progress: .1, epoch: 0, mediaVersion: 0, duration: 120, sequence: 1 }, full.token);
   await post(fullPath, { action: 'join', invite: full.invite, name: 'One too many' }, undefined, 409);
