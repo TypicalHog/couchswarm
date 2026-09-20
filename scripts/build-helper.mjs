@@ -12,17 +12,24 @@ const app = path.join(stage, 'app');
 const output = path.join(root, 'public', 'downloads', 'CouchSwarm-Helper-win-x64.zip');
 const inside = (base, target) => { const relative = path.relative(base, target); return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative); };
 if (!inside(path.join(root, 'work'), stage) || !inside(path.join(root, 'public', 'downloads'), output)) throw new Error('Invalid output directory.');
+const node = process.env.COUCHSWARM_NODE_BINARY || process.execPath;
+const version = execFileSync(node, ['--version'], { encoding: 'utf8', windowsHide: true }).trim();
+if (!/^v(2[4-9]|[3-9]\d)\./.test(version)) throw new Error('Package with Node 24 LTS or newer. Set COUCHSWARM_NODE_BINARY to its node.exe.');
+const csc = path.join(process.env.WINDIR, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe');
+const tar = path.join(process.env.WINDIR, 'System32', 'tar.exe');
+// The wipe below throws away the last package that ran, so everything that can fail without touching a file happens
+// first: an owner on Node 22, a missing compiler or an unreachable license would otherwise leave an empty stage
+// sitting beside the previous ZIP, which still looks like a finished build.
+await Promise.all([csc, tar].map(file => fs.access(file)));
+const license = await fetch(`https://raw.githubusercontent.com/nodejs/node/${version}/LICENSE`);
+if (!license.ok) throw new Error('Could not fetch the exact Node runtime license.');
+const licenseText = await license.text();
 await fs.rm(stage, { recursive: true, force: true });
 await fs.mkdir(path.join(stage, 'runtime'), { recursive: true });
 await fs.mkdir(path.join(app, 'helper'), { recursive: true });
 await fs.mkdir(path.dirname(output), { recursive: true });
-const node = process.env.COUCHSWARM_NODE_BINARY || process.execPath;
-const version = execFileSync(node, ['--version'], { encoding: 'utf8', windowsHide: true }).trim();
-if (!/^v(2[4-9]|[3-9]\d)\./.test(version)) throw new Error('Package with Node 24 LTS or newer. Set COUCHSWARM_NODE_BINARY to its node.exe.');
 await fs.copyFile(node, path.join(stage, 'runtime', 'node.exe'));
-const license = await fetch(`https://raw.githubusercontent.com/nodejs/node/${version}/LICENSE`);
-if (!license.ok) throw new Error('Could not fetch the exact Node runtime license.');
-await fs.writeFile(path.join(stage, 'runtime', 'LICENSE'), await license.text());
+await fs.writeFile(path.join(stage, 'runtime', 'LICENSE'), licenseText);
 for (const file of ['constants.mjs', 'desktop.mjs', 'remote-agent.mjs', 'remote-wire.mjs', 'torrent-helper.mjs']) await fs.copyFile(path.join(root, 'helper', file), path.join(app, 'helper', file));
 await fs.writeFile(path.join(app, 'package.json'), JSON.stringify({ name: 'couchswarm-helper', private: true, type: 'module' }));
 const visited = new Set();
@@ -82,7 +89,7 @@ if (unlicensed.length) console.warn(`No license text for ${unlicensed.length} pa
 const { version: appVersion } = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
 const info = path.join(root, 'work', 'AssemblyInfo.cs');
 await fs.writeFile(info, `using System.Reflection;\n[assembly: AssemblyTitle("CouchSwarm Helper")]\n[assembly: AssemblyProduct("CouchSwarm")]\n[assembly: AssemblyVersion("${appVersion}.0")]\n[assembly: AssemblyFileVersion("${appVersion}.0")]\n`);
-execFileSync(path.join(process.env.WINDIR, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe'), [
+execFileSync(csc, [
   '/nologo', '/target:winexe', '/platform:x64', `/out:${path.join(stage, 'CouchSwarm Helper.exe')}`,
   '/reference:System.Windows.Forms.dll', '/reference:System.Drawing.dll', '/reference:System.Web.Extensions.dll', path.join(root, 'helper', 'Launcher.cs'), info,
 ], { stdio: 'inherit', windowsHide: true });
@@ -104,9 +111,15 @@ registerHooks({ resolve(specifier, context, next) {
 execFileSync(path.join(stage, 'runtime', 'node.exe'), ['--use-system-ca', '--import', pathToFileURL(confine).href, '--input-type=module', '-e', "import WebTorrent from 'webtorrent'; import Peer from '@thaunknown/simple-peer'; import './helper/remote-agent.mjs'; const client = new WebTorrent({dht:false,tracker:false,lsd:false,natUpnp:false,natPmp:false,utp:false}); client.destroy(); console.log('Packaged native runtime OK');"], { cwd: app, stdio: 'inherit', windowsHide: true });
 const desktop = execFileSync(path.join(stage, 'runtime', 'node.exe'), ['--use-system-ca', '--import', pathToFileURL(confine).href, 'helper/desktop.mjs'], { cwd: app, input: '{"action":"stop"}\n', encoding: 'utf8', timeout: 20000, windowsHide: true });
 if (!desktop.split('\n').filter(Boolean).map(line => JSON.parse(line)).some(value => value.stopped)) throw new Error('Packaged desktop IPC did not stop cleanly.');
-await fs.rm(output, { force: true });
+// tar writes in place, and the checksum is written after it, so a run that dies in between leaves a truncated ZIP
+// beside a checksum for the one before it. Build alongside and swap the pair together; the .zip suffix is what tells
+// tar -a which format to write.
+const partial = output.replace(/\.zip$/, '.partial.zip');
 // Compress-Archive stores '\' separators, which Info-ZIP reads as filenames; inbox bsdtar writes the '/' the ZIP format requires.
-execFileSync(path.join(process.env.WINDIR, 'System32', 'tar.exe'), ['-a', '-c', '-f', output, '-C', path.dirname(stage), path.basename(stage)], { stdio: 'inherit', windowsHide: true });
+execFileSync(tar, ['-a', '-c', '-f', partial, '-C', path.dirname(stage), path.basename(stage)], { stdio: 'inherit', windowsHide: true });
+await fs.rm(`${output}.sha256`, { force: true });
+await fs.rm(output, { force: true });
+await fs.rename(partial, output);
 const digest = createHash('sha256').update(await fs.readFile(output)).digest('hex');
 await fs.writeFile(`${output}.sha256`, `${digest}  ${path.basename(output)}\n`);
 console.log(`Created ${output} (${visited.size} packages, Node ${version})\nSHA256 ${digest}`);
