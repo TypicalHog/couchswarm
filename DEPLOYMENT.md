@@ -21,7 +21,7 @@ Each build stamps its version into `CouchSwarm Helper.exe` (right-click, Propert
 
 ## 2. Create the database
 
-Create a Turso database in the region your Vercel functions run in, and set that region in the Vercel project; each room request makes five or six sequential libSQL round trips and every member sends one per second, so a database on another continent adds roughly half a second to every heartbeat. When the primary must live elsewhere, put a Turso replica in the function region. Obtain its libSQL URL and auth token, and put them in your local environment:
+Create a Turso database in the region your Vercel functions run in, and set that region in the Vercel project; each room request makes five or six sequential libSQL round trips and every member sends one per second, so a database on another continent adds roughly half a second to every heartbeat. Keep the primary itself in that region: a read replica beside the functions does not substitute for it, because every heartbeat writes to the primary anyway, and a room request re-reads the row it has just written as a separate statement, which a replica that is behind can answer with the older row — a new host's first heartbeat can then be told the room does not exist, and the tab drops its session. Obtain its libSQL URL and auth token, and put them in your local environment:
 
 ```powershell
 $env:TURSO_DATABASE_URL = 'libsql://YOUR-DATABASE.turso.io'
