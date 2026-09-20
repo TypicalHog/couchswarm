@@ -218,9 +218,10 @@ test('a magnet cannot point the helper at the private network', { timeout: 5000 
 test('torrentPathIssue rejects only the paths Windows cannot store', { timeout: 5000 }, async () => {
   const torrentOf = (...paths) => ({ pieceLength: 16384,
     files: paths.map((value, index) => ({ name: value.split('/').pop(), path: value, length: 100, offset: index * 100 })) });
-  for (const entry of ['Pack/NUL.mkv', 'Pack./Movie.mkv'])
+  for (const entry of ['Pack/NUL.mkv', 'Pack./Movie.mkv', 'Pack/nul?.mkv', 'Pack/nu:l.mkv', 'Pack/nul .mkv', 'Pack/CONOUT$.mkv', 'Pack/COM¹.mkv'])
     assert.match(torrentPathIssue(torrentOf(entry)), /Windows cannot create/, entry);
   assert.match(torrentPathIssue(torrentOf('Movie.mkv', '<>')), /Windows cannot create/, 'a name that sanitises to nothing');
+  assert.match(torrentPathIssue(torrentOf('Movie.mkv', 'Pack/Movie.mkv.<')), /Windows cannot create/, 'a name that sanitises to a trailing dot');
   assert.match(torrentPathIssue(torrentOf('Movie.mkv'), 'x'.repeat(250)), /too deep for your download folder/);
   const subtitles = { pieceLength: 16384, files: [
     { name: 'Movie.mkv', path: 'Pack/Movie.mkv', length: 16384, offset: 0 },

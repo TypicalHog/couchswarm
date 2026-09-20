@@ -99,6 +99,10 @@ export async function markSparse(value, signal) {
   }
 }
 
+// Win32 reads a device name up to the first '.' and ignores trailing spaces, so 'nul .mkv' is the NUL
+// device as well, and CONIN$, CONOUT$ and the superscript COM¹ forms are devices an ASCII list misses.
+const deviceName = part => /^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lpt[0-9¹²³])$/i.test(part.split('.')[0].replace(/ +$/, ''));
+
 // fs-chunk-store sanitises only the file name, Windows folds case and treats a
 // backslash inside a name as a separator, and WebTorrent puts the raw path in
 // web seed URLs.
@@ -107,16 +111,19 @@ export function torrentPathIssue(torrent, root = '') {
   for (const file of servedFiles(torrent)) {
     const parts = file.path.replaceAll('\\', '/').split('/');
     if (parts.slice(0, -1).some(part => /[<>:"|?*\p{Cc}]/u.test(part))) return 'This torrent has a folder name Windows cannot create. Choose another torrent.';
-    // Win32 reroutes NUL.mkv as well as NUL, and folds away a trailing dot or space, so Node writes an
-    // entry through \\?\ that nothing else on the machine can open, list or delete.
-    if (parts.some(part => /^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(part) || /[. ]$/.test(part))) return 'This torrent has a folder name Windows cannot create. Choose another torrent.';
-    // fsutil and every Win32 tool still stop at MAX_PATH, so a deep torrent in a deep folder is not writable sparse.
-    if (root && path.join(root, file.path).length > 250) return 'This torrent stores its files too deep for your download folder. Choose another torrent or a shorter folder.';
-    if (torrent.files.length > 1 && (/[#?%\p{Cc}]/u.test(file.path) || file.path.endsWith(' ')))
-      return 'This multi-file torrent has a filename WebTorrent cannot request as a web seed path. Choose another torrent.';
+    // fs-chunk-store strips these characters from the file name, so 'nul?.mkv' reaches the disk as
+    // 'nul.mkv': every check below reads the name that is stored, not the one the torrent declares.
     const name = parts[parts.length - 1].replace(/[<>:"/\\|?*\p{Cc}]/gu, '');
     if (!name) return 'This torrent has a folder name Windows cannot create. Choose another torrent.';
-    const key = [...parts.slice(0, -1), name].join('/').toLowerCase();
+    const stored = [...parts.slice(0, -1), name];
+    // Win32 reroutes NUL.mkv as well as NUL, and folds away a trailing dot or space, so Node writes an
+    // entry through \\?\ that nothing else on the machine can open, list or delete.
+    if (stored.some(part => deviceName(part) || /[. ]$/.test(part))) return 'This torrent has a folder name Windows cannot create. Choose another torrent.';
+    // fsutil and every Win32 tool still stop at MAX_PATH, so a deep torrent in a deep folder is not writable sparse.
+    if (root && path.join(root, ...stored).length > 250) return 'This torrent stores its files too deep for your download folder. Choose another torrent or a shorter folder.';
+    if (torrent.files.length > 1 && (/[#?%\p{Cc}]/u.test(file.path) || file.path.endsWith(' ')))
+      return 'This multi-file torrent has a filename WebTorrent cannot request as a web seed path. Choose another torrent.';
+    const key = stored.join('/').toLowerCase();
     if (seen.has(key)) return 'This torrent has two files that Windows would store under the same name. Choose another torrent.';
     seen.add(key);
   }
