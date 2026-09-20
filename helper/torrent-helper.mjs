@@ -79,8 +79,11 @@ async function fetchTorrent(url, signal) {
   });
 }
 // The room shares one fileIndex, so the tie-break compares code units rather than the viewer's locale.
+// parse-torrent joins a nested path with the platform separator, so compare the shape the site sees or
+// 'Pack\A.mkv' and 'Pack/A.mkv' sort to opposite sides of 'PackA.mkv'.
+const slashed = file => file.path.replaceAll('\\', '/');
 export const videoFiles = files => files.filter(file => /\.(mkv|mp4|webm|m4v|ogv)$/i.test(file.name))
-  .sort((a, b) => b.length - a.length || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  .sort((a, b) => b.length - a.length || (slashed(a) < slashed(b) ? -1 : slashed(a) > slashed(b) ? 1 : 0));
 
 // The files sharing a piece with a video.
 export function videoSpanFiles(torrent) {

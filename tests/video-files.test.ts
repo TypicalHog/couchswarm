@@ -30,6 +30,11 @@ test('the packaged helper and the site select the same video files', () => {
   const ties = ['A.mkv', 'Zebra.mkv', 'Ärger.mkv'].map(name => ({ name, path: name, length: 40 }));
   assert.deepEqual(videoFiles(ties).map(file => file.name), ['A.mkv', 'Zebra.mkv', 'Ärger.mkv'], 'equal lengths tie-break on code units, not on the runner locale');
   assert.deepEqual(helperVideoFiles(ties), videoFiles(ties));
+  // The helper reads the same torrent through parse-torrent, which joins nested paths with the Windows separator.
+  const nested = [{ name: 'A.mkv', path: 'Pack/A.mkv', length: 40 }, { name: 'PackA.mkv', path: 'PackA.mkv', length: 40 }];
+  const windows = nested.map(file => ({ ...file, path: file.path.replaceAll('/', '\\') }));
+  assert.deepEqual(helperVideoFiles(windows).map(file => file.name), videoFiles(nested).map(file => file.name),
+    'a backslash path ties the same way the browser ties the forward-slash one');
 });
 
 test('the packaged helper and the site agree on the seat count', () => assert.equal(helperSeats, MAX_SEATS));
