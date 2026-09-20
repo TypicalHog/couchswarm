@@ -417,17 +417,19 @@ class CouchSwarmHelper : Form {
         helper = new Process { StartInfo = start, EnableRaisingEvents = true };
         helper.OutputDataReceived += (s, e) => {
             if (e.Data == null) return;
-            try {
-                var data = json.Deserialize<Dictionary<string, object>>(e.Data);
-                OnUi(() => {
-                    bool failed = data.ContainsKey("error");
-                    bool ended = failed || data.ContainsKey("stopped");
-                    if (data.ContainsKey("status")) Say(Convert.ToString(data["status"]), failed ? Skin.Alarm : ended || !running ? Skin.Muted : Skin.Lime);
-                    meta.Text = data.ContainsKey("peers") ? "Viewers connected: " + data["peers"] + "     Torrent peers: " + data["torrentPeers"] : "";
-                    if (ended) SetRunning(false);
-                    if (failed && link.Text.Length == 0) link.Text = lastLink;
-                });
-            } catch (ArgumentException) {}
+            // Only a JSON object is a report. A blank line, 'null', an array or a number is something else
+            // printed to stdout, and reading it as one either returns null or throws: drop the line instead.
+            Dictionary<string, object> data;
+            try { data = json.Deserialize<Dictionary<string, object>>(e.Data); } catch { return; }
+            if (data == null) return;
+            OnUi(() => {
+                bool failed = data.ContainsKey("error");
+                bool ended = failed || data.ContainsKey("stopped");
+                if (data.ContainsKey("status")) Say(Convert.ToString(data["status"]), failed ? Skin.Alarm : ended || !running ? Skin.Muted : Skin.Lime);
+                meta.Text = data.ContainsKey("peers") && data.ContainsKey("torrentPeers") ? "Viewers connected: " + data["peers"] + "     Torrent peers: " + data["torrentPeers"] : "";
+                if (ended) SetRunning(false);
+                if (failed && link.Text.Length == 0) link.Text = lastLink;
+            });
         };
         // No console window or torrent identifiers in the interface. Crashes go to a capped local log.
         helper.ErrorDataReceived += (s, e) => { if (e.Data == null) return; try { string log = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CouchSwarm", "helper.log"); Directory.CreateDirectory(Path.GetDirectoryName(log)); if (File.Exists(log) && new FileInfo(log).Length > 262144) File.Delete(log); File.AppendAllText(log, DateTime.Now.ToString("s") + " " + e.Data + Environment.NewLine); } catch {} };
