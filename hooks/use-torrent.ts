@@ -61,6 +61,9 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
   const [subtitles, setSubtitles] = useState<{ name: string; path: string }[]>([]);
   // null is subtitles off; a number indexes the torrent's own list; a File is this participant's upload.
   const [subtitle, setSubtitle] = useState<number | File | null>(null);
+  // A pick that fails leaves its own entry selected, and React drops a state update that changes nothing, so
+  // choosing it again would do nothing at all. Every pick is counted, and the read runs again on the count.
+  const [picked, setPicked] = useState(0);
   const [subtitleError, setSubtitleError] = useState('');
   const [subtitleBusy, setSubtitleBusy] = useState(false);
   const subtitleRef = useRef<TorrentFile[]>([]);
@@ -569,8 +572,9 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
       track?.remove();
       if (url) URL.revokeObjectURL(url);
     };
-  }, [subtitle, videoRef, listed]);
+  }, [subtitle, picked, videoRef, listed]);
 
   const reconnect = useCallback(() => { retriedHelper.current = 0; retriedUpgrade.current = false; setAttempt(value => value + 1); }, []);
-  return { status, error, files, stats, loadedVersion, helper, helperPending, reconnect, subtitles, subtitle, setSubtitle, subtitleError, subtitleBusy };
+  const chooseSubtitle = useCallback((next: number | File | null) => { setSubtitle(next); setPicked(count => count + 1); }, []);
+  return { status, error, files, stats, loadedVersion, helper, helperPending, reconnect, subtitles, subtitle, setSubtitle: chooseSubtitle, subtitleError, subtitleBusy };
 }
