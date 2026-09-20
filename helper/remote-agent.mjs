@@ -30,8 +30,8 @@ export const nativeIceServers = servers => servers.map(server => ({ ...server,
 // Private addresses stay: a guest on the same LAN needs them when no relay is configured.
 const MAX_OFFER_CANDIDATES = 20;
 const unreachable = new BlockList();
-for (const [address, prefix] of [['0.0.0.0', 8], ['127.0.0.0', 8], ['169.254.0.0', 16]]) unreachable.addSubnet(address, prefix);
-for (const [address, prefix] of [['::', 128], ['::1', 128], ['fe80::', 10]]) unreachable.addSubnet(address, prefix, 'ipv6');
+for (const [address, prefix] of /** @type {[string, number][]} */ ([['0.0.0.0', 8], ['127.0.0.0', 8], ['169.254.0.0', 16]])) unreachable.addSubnet(address, prefix);
+for (const [address, prefix] of /** @type {[string, number][]} */ ([['::', 128], ['::1', 128], ['fe80::', 10]])) unreachable.addSubnet(address, prefix, 'ipv6');
 const cleanOffer = offer => {
   let kept = 0;
   return { ...offer, sdp: offer.sdp.split(/\r?\n/).filter(line => {
@@ -43,6 +43,8 @@ const cleanOffer = offer => {
   }).join('\r\n') };
 };
 
+/** @param {{ cacheRoot: string, keepDownloads?: boolean, report?: (status: object) => void, pollMs?: number, readAheadBytes?: number,
+ * retryMs?: number, createClient?: () => any, iceOverride?: RTCIceServer[] }} options */
 export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = () => {}, pollMs = 2000, readAheadBytes = READ_AHEAD_BYTES, retryMs = 15000,
   createClient = () => new WebTorrent({ natUpnp: false, natPmp: false, lsd: false, utp: false, ...(process.env.COUCHSWARM_HELPER_OFFLINE === '1' ? { dht: false, tracker: false } : {}) }),
   iceOverride }) {
@@ -85,12 +87,10 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       // The launcher window renders this verbatim, so a hostile origin gets neither a multi-line alarm block nor a
       // sentence that reads as the app speaking.
       const said = typeof data.error === 'string' ? data.error.replace(/\s+/g, ' ').trim().slice(0, 160) : '';
-      const error = new Error(said ? `The room website says: ${said}` : 'The website could not be reached.');
-      error.status = response.status;
       // The room API explains every refusal it sends, so a 403 or 410 with no message came from a firewall or proxy
       // in front of it and must not retire the pairing.
-      error.revoked = !!said && (response.status === 403 || response.status === 410);
-      throw error;
+      throw Object.assign(new Error(said ? `The room website says: ${said}` : 'The website could not be reached.'),
+        { status: response.status, revoked: !!said && (response.status === 403 || response.status === 410) });
     }
     return data;
   }
@@ -308,11 +308,13 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
           // simple-peer holds a non-trickle answer until it sees the null end-of-candidates event, which the native
           // polyfill never sends — it reports the end of gathering as a state change — so every viewer would wait out
           // the library's 5 s fallback timer. Its own handler is assigned to onicegatheringstatechange, hence the
-          // listener; the timer stays as the fallback for gathering that never completes.
-          peer._pc?.addEventListener('icegatheringstatechange', () => {
-            if (peer._pc.iceGatheringState !== 'complete' || peer._iceComplete) return;
-            peer._iceComplete = true;
-            peer.emit('_iceComplete');
+          // listener; the timer stays as the fallback for gathering that never completes. None of this is on the
+          // library's published surface, so it is reached through a cast rather than described in the type shim.
+          const internals = /** @type {any} */ (peer);
+          internals._pc?.addEventListener('icegatheringstatechange', () => {
+            if (internals._pc.iceGatheringState !== 'complete' || internals._iceComplete) return;
+            internals._iceComplete = true;
+            internals.emit('_iceComplete');
           });
           peers.set(remote.id, peer);
           const timeout = setTimeout(() => peer.destroy(), 45000);

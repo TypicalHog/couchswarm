@@ -24,16 +24,16 @@ const MAX_TORRENT_FILES = 20000;
 // helper/server.mjs builds a single helper, so the stale-session sweep below runs once for the process.
 let swept = false;
 const blocked = new BlockList();
-for (const [address, prefix] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['192.0.0.0', 24],
-  ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 4], ['240.0.0.0', 4]]) blocked.addSubnet(address, prefix);
-for (const [address, prefix] of [['::', 96], ['::1', 128], ['2002::', 16], ['2001::', 32],
-  ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8]]) blocked.addSubnet(address, prefix, 'ipv6');
+for (const [address, prefix] of /** @type {[string, number][]} */ ([['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['192.0.0.0', 24],
+  ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 4], ['240.0.0.0', 4]])) blocked.addSubnet(address, prefix);
+for (const [address, prefix] of /** @type {[string, number][]} */ ([['::', 96], ['::1', 128], ['2002::', 16], ['2001::', 32],
+  ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8]])) blocked.addSubnet(address, prefix, 'ipv6');
 // A translating prefix carries a real IPv4 in the low 32 bits, and says nothing itself about where that
 // address lives: judging the carrier refuses every public host a DNS64 resolver synthesises, and still
 // lets 10.0.0.5 through a local-use translator. So decode these and judge what they carry.
 const translating = new BlockList();
 // RFC 6052 well-known, RFC 8215 local-use, and the RFC 2765 IPv4-translated form.
-for (const [address, prefix] of [['64:ff9b::', 96], ['64:ff9b:1::', 48], ['::ffff:0:0:0', 96]]) translating.addSubnet(address, prefix, 'ipv6');
+for (const [address, prefix] of /** @type {[string, number][]} */ ([['64:ff9b::', 96], ['64:ff9b:1::', 48], ['::ffff:0:0:0', 96]])) translating.addSubnet(address, prefix, 'ipv6');
 const embeddedAddress = value => {
   if (!translating.check(value, 'ipv6')) return '';
   const tail = value.slice(value.lastIndexOf(':') + 1);
@@ -71,7 +71,7 @@ async function fetchTorrent(url, signal) {
           // Pin the checked addresses into this connection to prevent DNS rebinding.
           if (options.all) callback(null, addresses);
           else callback(null, addresses[0].address, addresses[0].family);
-        }).catch(callback);
+        }).catch(/** @type {(error: unknown) => void} */ (callback));
       },
     }, async response => {
       try {
@@ -254,7 +254,7 @@ export async function torrentSource(source, signal) {
         if (!url || !['udp:', 'wss:'].includes(url.protocol)) return;
         if (url.protocol === 'wss:') { if (await publicHost(url.hostname)) allowed[index] = tracker; return; }
         // dgram resolves the name at announce too, so pin the address checked here into the URL itself.
-        const { address, family } = await lookup(url.hostname.replace(/^\[|\]$/g, '')).catch(() => ({}));
+        const { address, family } = await lookup(url.hostname.replace(/^\[|\]$/g, '')).catch(() => ({ address: '', family: 0 }));
         if (address && publicAddress(address))
           allowed[index] = `udp://${family === 6 ? `[${address}]` : address}${url.port ? `:${url.port}` : ''}${url.pathname}${url.search}`;
       }));
@@ -498,7 +498,7 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
       // than refused — so an unsatisfiable range must reach the 416 below only once it is known to be in bytes.
       let ranges = /^\s*bytes\s*=/i.test(header || '') ? rangeParser(file.length, header.replace(/^\s*bytes/i, 'bytes')) : null;
       if (ranges === -1) { res.writeHead(416, { 'Content-Range': `bytes */${file.length}` }); res.end(); return; }
-      if (ranges && (!Array.isArray(ranges) || ranges.length !== 1 || ranges.type !== 'bytes')) ranges = null;
+      if (ranges && (ranges.type !== 'bytes' || !Array.isArray(ranges) || ranges.length !== 1)) ranges = null;
       const { start, end } = ranges?.[0] || { start: 0, end: file.length - 1 };
       res.writeHead(ranges ? 206 : 200, { 'Content-Type': 'application/octet-stream', 'Accept-Ranges': 'bytes',
         'Content-Length': end - start + 1, 'Cache-Control': 'no-store',

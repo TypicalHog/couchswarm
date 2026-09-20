@@ -4,7 +4,7 @@ import os from 'node:os';
 import { createRemoteAgent } from './remote-agent.mjs';
 
 let agent, keepDownloads = false;
-const report = data => process.stdout.write(`${JSON.stringify(data)}\n`);
+const report = data => { process.stdout.write(`${JSON.stringify(data)}\n`); };
 // The launcher is the only reader, so its death breaks these pipes; stdin's 'close' below already runs the shutdown,
 // and a status line written after that has nowhere to go. Unhandled, EPIPE would exit the process before cleanup.
 for (const stream of [process.stdout, process.stderr]) stream.on('error', () => {});

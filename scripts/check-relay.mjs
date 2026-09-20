@@ -23,11 +23,13 @@ for (const url of urls) {
       const fail = error => { clearTimeout(timeout); reject(error); };
       sender.once('error', fail); receiver.once('error', fail);
       sender.on('signal', data => receiver.signal(data)); receiver.on('signal', data => sender.signal(data));
-      sender.once('connect', () => sender.send(payload));
-      receiver.once('data', bytes => { clearTimeout(timeout); try { assert.ok(Buffer.from(bytes).equals(payload)); resolve(); } catch (error) { reject(error); } });
+      // types/simple-peer.d.ts describes the surface the app uses; the data channel and the stats callback are
+      // this script's alone, so they are reached through a cast.
+      sender.once('connect', () => /** @type {any} */ (sender).send(payload));
+      receiver.once('data', bytes => { clearTimeout(timeout); try { assert.ok(Buffer.from(/** @type {Uint8Array} */ (bytes)).equals(payload)); resolve(); } catch (error) { reject(error); } });
     });
     for (const peer of [sender, receiver]) {
-      const stats = await new Promise((resolve, reject) => peer.getStats((error, values) => error ? reject(error) : resolve(values)));
+      const stats = await new Promise((resolve, reject) => /** @type {any} */ (peer).getStats((error, values) => error ? reject(error) : resolve(values)));
       const transport = stats.find(value => value.type === 'transport');
       const pair = stats.find(value => value.id === transport?.selectedCandidatePairId);
       const candidate = stats.find(value => value.id === pair?.localCandidateId);

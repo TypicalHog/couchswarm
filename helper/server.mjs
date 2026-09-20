@@ -13,13 +13,13 @@ const server = http.createServer((req, res) => {
   helper.handle(req, res).catch(() => { if (!res.headersSent) res.writeHead(500); res.end(); });
 });
 server.requestTimeout = 15000;
-server.on('error', error => {
+server.on('error', /** @param {NodeJS.ErrnoException} error */ error => {
   console.error(error.code === 'EADDRINUSE'
     ? `Port ${port} is already in use. Another CouchSwarm helper may be running; set COUCHSWARM_HELPER_PORT to use a different port.`
     : `The helper could not start: ${error.message}`);
   process.exit(1);
 });
-server.listen(port, '127.0.0.1', () => { bound = server.address().port; console.log(`CouchSwarm helper: http://127.0.0.1:${bound}\nSite: ${new URL(siteOrigin).origin}\nKeep this process running while watching.`); });
+server.listen(port, '127.0.0.1', () => { bound = /** @type {import('node:net').AddressInfo} */ (server.address()).port; console.log(`CouchSwarm helper: http://127.0.0.1:${bound}\nSite: ${new URL(siteOrigin).origin}\nKeep this process running while watching.`); });
 async function stop() {
   server.close(); server.closeAllConnections();
   await helper.close();

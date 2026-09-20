@@ -48,6 +48,7 @@ function whenVerified(torrent, piece, stopped) {
 
 // Advertise availability to our authenticated room only. Each requested block
 // is fetched and verified by the native torrent before the browser receives it.
+/** @param {(piece: number) => void} [readAhead] */
 export function serveTorrentPeer(peer, torrent, readAhead = () => {}, pieces = null) {
   const wire = new Wire();
   const reads = new Map();

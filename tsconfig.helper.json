@@ -1,0 +1,17 @@
+{
+  // tsconfig.json puts every .mjs in the program with allowJs but no checkJs, so the helper the launcher ships is
+  // only ever parsed: a misspelled identifier or a call that lost an argument passes both typecheck and lint and
+  // throws on the user's PC. This second program checks that JavaScript half for real. Its flags are loose because
+  // nothing here is annotated - what it is here to catch is the name that does not exist, not a missing null check.
+  // tests/*.mjs are still outside it: they reach scripts/playsvideo-loader.cjs, whose `this` webpack supplies is
+  // nothing TypeScript can infer from a CommonJS export.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "checkJs": true,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "useUnknownInCatchVariables": false,
+    "incremental": false
+  },
+  "include": ["helper/**/*.mjs", "scripts/**/*.mjs", "types/**/*.d.ts"]
+}

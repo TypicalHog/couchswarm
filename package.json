@@ -32,7 +32,7 @@
     "build": "node scripts/migrate-database.mjs && next build --webpack",
     "start": "next start",
     "db:migrate": "node scripts/migrate-database.mjs",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.helper.json",
     "lint": "oxlint",
     "db:generate": "drizzle-kit generate"
   },
