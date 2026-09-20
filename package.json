@@ -18,7 +18,7 @@
     "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test tests/ice.test.ts tests/remote-helper-client.test.ts tests/subtitles.test.ts tests/sync.test.ts tests/video-files.test.ts",
     "test:rooms": "node --test tests/rooms.test.mjs tests/host-presence.test.mjs",
     "test:mkv": "node --test tests/mkv.test.mjs",
-    "test:helper": "node --test tests/helper.test.mjs",
+    "test:helper": "node --test tests/helper.test.mjs tests/remote-wire.test.mjs",
     "test:migrate": "node --test tests/migrate.test.mjs",
     "test:remote": "node --test tests/remote-helper.test.mjs",
     "test:relay": "node scripts/check-relay.mjs",

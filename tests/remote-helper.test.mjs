@@ -7,12 +7,10 @@ import { execFile } from 'node:child_process';
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { PassThrough } from 'node:stream';
 import { promisify } from 'node:util';
 import WebTorrent from 'webtorrent';
 import MemoryStore from 'memory-chunk-store';
 import Peer from '@thaunknown/simple-peer';
-import Wire from 'bittorrent-protocol';
 process.env.COUCHSWARM_HELPER_OFFLINE = '1';
 const packaged = process.env.COUCHSWARM_PACKAGED_TEST === '1';
 // build-helper copies helper/*.mjs verbatim, so byte equality is the freshness test; a stale package
@@ -32,8 +30,6 @@ if (packaged) {
   if (stale.length) throw new Error(`work/helper-package is missing or stale (${stale.join(', ')}). Run npm run build:helper.`);
 }
 const { createRemoteAgent, nativeIceServers } = await import(packaged ? '../work/helper-package/app/helper/remote-agent.mjs' : '../helper/remote-agent.mjs');
-const { serveTorrentPeer } = await import(packaged ? '../work/helper-package/app/helper/remote-wire.mjs' : '../helper/remote-wire.mjs');
-const { servedRanges } = await import(packaged ? '../work/helper-package/app/helper/torrent-helper.mjs' : '../helper/torrent-helper.mjs');
 
 const origin = process.env.TEST_ORIGIN || 'http://localhost:3001';
 const offline = { dht: false, tracker: false, lsd: false, utp: false, natUpnp: false, natPmp: false };
@@ -193,7 +189,7 @@ test('remote helper delivers magnet metadata and seekable multi-file bytes from 
   assert.ok(received.downloaded < seeded.length, 'the helper does not download the whole torrent before a seek');
   const native = nativeClient.torrents[0];
   assert.ok(native.downloaded < seeded.length / 2, `the helper fetched only the pieces the viewer asked for (${native.downloaded} of ${seeded.length})`);
-  // These two repeats are sequential; the simultaneous case is the unit test below.
+  // These two repeats are sequential; the simultaneous case is a unit test in tests/remote-wire.test.mjs.
   const block = () => new Promise((resolve, reject) => received.wires[0].request(6, 0, 16384, (error, data) => error ? reject(error) : resolve(Buffer.from(data))));
   const twins = await Promise.all([block(), block()]);
   assert.deepEqual(twins, [second.subarray(81921, 98305), second.subarray(81921, 98305)], 'both copies of a repeated block request are answered');
@@ -213,72 +209,6 @@ test('remote helper delivers magnet metadata and seekable multi-file bytes from 
   await closed;
   assert.deepEqual(await readdir(cacheRoot), []);
   assert.equal((await post(route, { action: 'status' }, host.token)).online, false);
-});
-
-test('a repeated block request joins the read already in flight', { timeout: 5000 }, async () => {
-  const infoHash = 'a'.repeat(40), payload = Buffer.alloc(16384, 7);
-  let release, opened = 0;
-  const gate = new Promise(resolve => { release = resolve; });
-  const torrent = { infoHash, torrentFile: null, pieceLength: 16384, length: 16384, pieces: ['x'],
-    files: [{ offset: 0, length: 16384, createReadStream() { opened++; const stream = new PassThrough(); void gate.then(() => stream.end(payload)); return stream; } }] };
-  const client = new Wire();
-  serveTorrentPeer(client, torrent);
-  client.handshake(infoHash, Buffer.concat([Buffer.from('-TE0001-'), Buffer.alloc(12, 1)]), { fast: true });
-  await new Promise(resolve => { client.once('unchoke', resolve); client.interested(); });
-  const ask = () => new Promise((resolve, reject) => client.request(0, 0, 16384, (error, data) => error ? reject(error) : resolve(Buffer.from(data))));
-  const first = ask(), second = ask();
-  await sleep(100);
-  assert.equal(opened, 1, 'the repeat joined the first read instead of starting another');
-  release();
-  assert.deepEqual(await Promise.all([first, second]), [payload, payload]);
-});
-
-test('a repeated block request queued behind another one is answered twice', { timeout: 5000 }, async () => {
-  const infoHash = 'b'.repeat(40), payload = Buffer.alloc(16384, 11);
-  const release = [];
-  const gates = [0, 1].map(piece => new Promise(resolve => { release[piece] = resolve; }));
-  const torrent = { infoHash, torrentFile: null, pieceLength: 16384, length: 32768, pieces: ['x', 'y'],
-    files: [{ offset: 0, length: 32768, createReadStream({ start }) { const stream = new PassThrough(); void gates[start / 16384].then(() => stream.end(payload)); return stream; } }] };
-  const client = new Wire();
-  serveTorrentPeer(client, torrent);
-  client.handshake(infoHash, Buffer.concat([Buffer.from('-TE0001-'), Buffer.alloc(12, 1)]), { fast: true });
-  await new Promise(resolve => { client.once('unchoke', resolve); client.interested(); });
-  const ask = piece => new Promise((resolve, reject) => client.request(piece, 0, 16384, (error, data) => error ? reject(error) : resolve(Buffer.from(data))));
-  const ahead = ask(0), first = ask(1), second = ask(1);
-  await sleep(100);
-  // Answering the request in front swaps the last queued one into its slot, so the two copies now sit in the
-  // wire's queue in the opposite order to their callbacks: the reply path has to look its entry up, not assume it.
-  release[0]();
-  await ahead;
-  release[1]();
-  assert.deepEqual(await Promise.all([first, second]), [payload, payload]);
-});
-
-test('cancelling one copy of a repeated block request still answers the other', { timeout: 5000 }, async () => {
-  const infoHash = 'c'.repeat(40), payload = Buffer.alloc(16384, 13);
-  const release = [];
-  const gates = [0, 1, 2].map(piece => new Promise(resolve => { release[piece] = resolve; }));
-  const torrent = { infoHash, torrentFile: null, pieceLength: 16384, length: 49152, pieces: ['x', 'y', 'z'],
-    files: [{ offset: 0, length: 49152, createReadStream({ start }) { const stream = new PassThrough(); void gates[start / 16384].then(() => stream.end(payload)); return stream; } }] };
-  const client = new Wire();
-  const wire = serveTorrentPeer(client, torrent);
-  client.handshake(infoHash, Buffer.concat([Buffer.from('-TE0001-'), Buffer.alloc(12, 1)]), { fast: true });
-  await new Promise(resolve => { client.once('unchoke', resolve); client.interested(); });
-  const ask = piece => new Promise((resolve, reject) => client.request(piece, 0, 16384, (error, data) => error ? reject(error) : resolve(Buffer.from(data))));
-  const copies = [ask(0), ask(0)].map(copy => copy.catch(error => error.message));
-  const middle = ask(1), last = ask(2);
-  await sleep(100);
-  // Answering the third request moves the fourth into its slot, so the two copies of the first block are now
-  // behind it in the reverse order and the cancel below takes the entry of the copy that was asked for second.
-  release[1]();
-  await middle;
-  client.cancel(0, 0, 16384);
-  await sleep(50);
-  release[0](); release[2]();
-  await last;
-  await sleep(50);
-  assert.deepEqual(wire.peerRequests, [], 'the cancel leaves no request sitting in the queue owed a reply');
-  assert.deepEqual((await Promise.all(copies)).filter(copy => Buffer.isBuffer(copy)), [payload], 'the copy the client kept is still answered');
 });
 
 // Nothing else drives the encoding at remote-agent.mjs: every other agent test passes an empty iceOverride, and
@@ -333,24 +263,6 @@ test('the helper hands the native ICE stack TURN credentials it can put on the w
   const authenticated = await allocate;
   assert.equal(authenticated.username, username, 'the whole TURN REST username reaches the relay, colon and all');
   assert.ok(authenticated.verified, 'the relay can verify the credential against the one the room issued');
-});
-
-test('a subtitle past the video is advertised and served, and nothing between them is', { timeout: 5000 }, async () => {
-  const infoHash = 'd'.repeat(40), subtitle = Buffer.alloc(16384, 17);
-  const file = (name, offset, body) => ({ name, path: `Pack/${name}`, offset, length: body.length,
-    createReadStream({ start, end }) { const stream = new PassThrough(); stream.end(body.subarray(start, end + 1)); return stream; } });
-  const torrent = { infoHash, torrentFile: null, pieceLength: 16384, length: 49152, pieces: ['x', 'y', 'z'],
-    files: [file('movie.mkv', 0, Buffer.alloc(16384, 1)), file('extras.bin', 16384, Buffer.alloc(16384, 2)), file('en.srt', 32768, subtitle)] };
-  const client = new Wire();
-  serveTorrentPeer(client, torrent, () => {}, servedRanges(torrent));
-  const advertised = new Promise(resolve => client.once('bitfield', resolve));
-  client.handshake(infoHash, Buffer.concat([Buffer.from('-TE0001-'), Buffer.alloc(12, 1)]), { fast: true });
-  const bitfield = await advertised;
-  assert.deepEqual([0, 1, 2].map(piece => bitfield.get(piece)), [true, false, true], 'only the pieces the helper will answer are advertised');
-  await new Promise(resolve => { client.once('unchoke', resolve); client.interested(); });
-  const ask = piece => new Promise((resolve, reject) => client.request(piece, 0, 16384, (error, data) => error ? reject(error) : resolve(Buffer.from(data))));
-  assert.deepEqual(await ask(2), subtitle, 'a subtitle past the video arrives instead of being refused for the whole timeout');
-  await assert.rejects(ask(1), /rejected/, 'the file between them is still one the helper refuses, so it is never written');
 });
 
 test('a failed native torrent stops advertising readiness, then reloads', { timeout: 60000 }, async t => {
