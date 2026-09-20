@@ -72,7 +72,11 @@ export async function connectRemoteHelper(session: Session, mediaVersion: number
       peer.once('connect', () => { clearTimeout(timeout); resolve(); });
       peer.once('close', () => { clearTimeout(timeout); reject(new Error('The helper connection closed.')); });
       peer.once('disconnect', () => { clearTimeout(timeout); reject(new Error('The helper disconnected.')); });
-      peer.once('error', error => { clearTimeout(timeout); reject(error); });
+      // simple-peer's own ICE text says nothing a viewer can act on, and the thing they can act on is the
+      // same as the timeout's: with no relay configured, these two networks were never going to meet.
+      peer.once('error', () => { clearTimeout(timeout); reject(new Error(status.relayAvailable
+        ? `Could not connect to ${label}. Reconnect to try again.`
+        : 'A connection relay is not configured. These networks could not connect directly.')); });
       peer.once('signal', async offer => {
         try {
           const result = await helperRequest<{ peerId: string }>(session, { action: 'offer', mediaVersion, offer }, signal);

@@ -182,6 +182,20 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         document.addEventListener('visibilitychange', probe, { signal: abort.signal });
         document.addEventListener('resume', probe, { signal: abort.signal });
         let helperFailed = false;
+        // The helper says why it could not serve this movie — not ready, no relay configured, no seeders —
+        // and 'using browser peers' is the consequence, not the reason. Keep the reason on screen, and let
+        // the no-data message below repeat it instead of telling the viewer to start a helper that is
+        // already running.
+        let helperReason = '';
+        const fallBack = (err: unknown) => {
+          // An expired room or a lost seat belongs to the room connection, which reports it already.
+          const code = (err as { status?: number }).status;
+          if (err instanceof Error && code !== 403 && code !== 410) helperReason = err.message;
+          // The loopback leg has been reporting peer counts, so the side panel still claims a helper.
+          setHelper(null);
+          setStatus(`${helperReason || 'The helper could not be reached.'} Using browser peers…`);
+          return null;
+        };
         const remote = session ? await connectRemoteHelper(session, mediaVersion, abort.signal, setStatus,
           own => {
             if (fileRef.current?.progress === 1) return;
@@ -193,7 +207,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
             fail(`${own ? 'Your' : 'The host’s'} helper disconnected. Reconnect to the movie to try again.`);
           // A stale chunk is not a helper that could not be reached: it tells the viewer to reload instead of
           // spending this movie's one upgrade attempt on a browser-only stream.
-          }).catch(err => { if (abort.signal.aborted || (err as { stale?: boolean }).stale) throw err; helperFailed = retriedUpgrade.current; retriedUpgrade.current = true; setStatus('Helper unavailable, using browser peers…'); return null; }) : null;
+          }).catch(err => { if (abort.signal.aborted || (err as { stale?: boolean }).stale) throw err; helperFailed = retriedUpgrade.current; retriedUpgrade.current = true; return fallBack(err); }) : null;
         if (remote) setHelper({ host: !remote.own });
         const bridge = session && !remote ? await connectHelper(session, source, mediaVersion, abort.signal, value => {
           if (disposed) return;
@@ -203,7 +217,10 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           if (!value.ready) setStatus('Your helper is finding torrent peers…');
         // Same budget as the paired helper: a refused lease — the room's own superseded torrent still
         // holding a laggard guest, or a helper not started yet — is retried once, then offered.
-        }).catch(err => { if (abort.signal.aborted) throw err; helperFailed = retriedUpgrade.current; retriedUpgrade.current = true; setStatus('Helper unavailable, using browser peers…'); return null; }) : null;
+        // A refusal the helper reported itself — no video file, a name it cannot store, no metadata after
+        // 90 seconds — comes back with HTTP 200 and is about this torrent, not about reaching the helper,
+        // so it goes to the error overlay where Reconnect and Try another torrent are.
+        }).catch(err => { if (abort.signal.aborted || (err as { status?: number }).status === 200) throw err; helperFailed = retriedUpgrade.current; retriedUpgrade.current = true; return fallBack(err); }) : null;
         if (disposed) return;
         if (bridge) {
           const heartbeat = async () => {
@@ -393,11 +410,13 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           if (!file) {
             setStatus(gotMetadata ? 'Checking the part of this movie already saved on this device…'
               : bridge || remote ? 'Your helper is connected, but no video pieces have arrived yet. The torrent needs reachable seeders.'
+              : helperReason ? `No video data yet. ${helperReason}`
               : 'No video data yet. Start CouchSwarm with the torrent helper to reach ordinary torrent peers, or use a torrent with a WebRTC seeder or HTTPS web seed.');
             return;
           }
           if (file.downloaded === 0) {
             setStatus(bridge || remote ? 'Your helper is connected, but no video pieces have arrived yet. The torrent needs reachable seeders.'
+              : helperReason ? `No video data yet. ${helperReason}`
               : 'No video data yet. Start CouchSwarm with the torrent helper to reach ordinary torrent peers, or use a torrent with a WebRTC seeder or HTTPS web seed.');
             return;
           }
