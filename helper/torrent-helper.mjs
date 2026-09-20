@@ -193,18 +193,24 @@ export async function torrentSource(source, signal) {
     // Whatever has not answered by then drops, the same fail-closed answer publicHost gives a lookup error.
     const trackers = (parsed.announce || []).slice(0, 64);
     const deadline = signal ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000);
-    const allowed = deadline.aborted ? [] : await Promise.race([Promise.all(trackers.map(async tracker => {
-      const url = URL.parse(tracker);
-      // ws: is dropped outright: the socket carries the announce URL's own path and Host as a plain HTTP
-      // request, and bittorrent-tracker resolves the name again at announce, so a rebinding answer aims
-      // that request at whatever it then points to. wss: survives because TLS fails before the rebind lands.
-      if (!url || !['udp:', 'wss:'].includes(url.protocol)) return '';
-      if (url.protocol === 'wss:') return await publicHost(url.hostname) ? tracker : '';
-      // dgram resolves the name at announce too, so pin the address checked here into the URL itself.
-      const { address, family } = await lookup(url.hostname.replace(/^\[|\]$/g, '')).catch(() => ({}));
-      if (!address || !publicAddress(address)) return '';
-      return `udp://${family === 6 ? `[${address}]` : address}${url.port ? `:${url.port}` : ''}${url.pathname}${url.search}`;
-    })), new Promise(resolve => deadline.addEventListener('abort', () => resolve([]), { once: true }))]);
+    // Each answer lands where it belongs as it arrives, so one name whose nameservers never reply takes
+    // only itself down; waiting on the whole list would throw away the trackers that already passed.
+    const allowed = trackers.map(() => '');
+    if (!deadline.aborted) {
+      const checks = Promise.all(trackers.map(async (tracker, index) => {
+        const url = URL.parse(tracker);
+        // ws: is dropped outright: the socket carries the announce URL's own path and Host as a plain HTTP
+        // request, and bittorrent-tracker resolves the name again at announce, so a rebinding answer aims
+        // that request at whatever it then points to. wss: survives because TLS fails before the rebind lands.
+        if (!url || !['udp:', 'wss:'].includes(url.protocol)) return;
+        if (url.protocol === 'wss:') { if (await publicHost(url.hostname)) allowed[index] = tracker; return; }
+        // dgram resolves the name at announce too, so pin the address checked here into the URL itself.
+        const { address, family } = await lookup(url.hostname.replace(/^\[|\]$/g, '')).catch(() => ({}));
+        if (address && publicAddress(address))
+          allowed[index] = `udp://${family === 6 ? `[${address}]` : address}${url.port ? `:${url.port}` : ''}${url.pathname}${url.search}`;
+      }));
+      await Promise.race([checks, new Promise(resolve => deadline.addEventListener('abort', resolve, { once: true }))]);
+    }
     parsed.announce = allowed.filter(Boolean);
   }
   return parsed;
