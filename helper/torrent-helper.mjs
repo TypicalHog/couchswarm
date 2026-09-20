@@ -61,7 +61,7 @@ async function fetchTorrent(url, signal) {
 export const videoFiles = files => files.filter(file => /\.(mkv|mp4|webm|m4v|ogv)$/i.test(file.name))
   .sort((a, b) => b.length - a.length || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 
-// Only files sharing a piece with a video are ever written.
+// The files sharing a piece with a video.
 export function videoSpanFiles(torrent) {
   const videos = videoFiles(torrent.files);
   if (!videos.length) return [];
@@ -70,13 +70,23 @@ export function videoSpanFiles(torrent) {
   return torrent.files.filter(file => file.offset + file.length > from && file.offset < to);
 }
 
+// Keep this list in step with lib/subtitles.ts, which offers the same extensions in the picker.
+const subtitleName = /\.(srt|ass|ssa|vtt)$/i;
+// Every file the helper is ever allowed to write: the video span, plus the subtitles a viewer can choose.
+// torrentPathIssue and markSparse cover exactly this set, so a route that resolves outside it would write
+// a name nothing validated into a file nothing flagged sparse.
+export function servedFiles(torrent) {
+  const span = new Set(videoSpanFiles(torrent));
+  return torrent.files.filter(file => span.has(file) || subtitleName.test(file.name));
+}
+
 // NTFS zero-fills everything below a write, so the tail pieces an MKV player reads first would allocate the
 // whole movie at once and can fill the drive. A sparse file only allocates the pieces that arrive.
 export async function markSparse(value, signal) {
   if (process.platform !== 'win32') return;
   let store = value.store;
   while (store && !Array.isArray(store.files)) store = store.store;
-  const wanted = new Set(videoSpanFiles(value));
+  const wanted = new Set(servedFiles(value));
   for (const [index, file] of value.files.entries()) {
     if (signal?.aborted) return;
     const target = store?.files[index];
@@ -94,7 +104,7 @@ export async function markSparse(value, signal) {
 // web seed URLs.
 export function torrentPathIssue(torrent, root = '') {
   const seen = new Set();
-  for (const file of videoSpanFiles(torrent)) {
+  for (const file of servedFiles(torrent)) {
     const parts = file.path.replaceAll('\\', '/').split('/');
     if (parts.slice(0, -1).some(part => /[<>:"|?*\p{Cc}]/u.test(part))) return 'This torrent has a folder name Windows cannot create. Choose another torrent.';
     // Win32 reroutes NUL.mkv as well as NUL, and folds away a trailing dot or space, so Node writes an
@@ -337,8 +347,9 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
         res.writeHead(200, { 'Content-Type': 'application/x-bittorrent', 'Content-Length': torrent.torrentFile.length, 'Cache-Control': 'no-store' });
         res.end(req.method === 'HEAD' ? undefined : torrent.torrentFile); return;
       }
-      const file = torrent.files.length === 1 && !suffix ? torrent.files[0]
-        : torrent.files.find(file => file.path.replaceAll('\\', '/') === decodeURIComponent(suffix));
+      const served = servedFiles(torrent);
+      const file = torrent.files.length === 1 && !suffix ? served[0]
+        : served.find(file => file.path.replaceAll('\\', '/') === decodeURIComponent(suffix));
       if (!file) { json(res, 404, { error: 'This file is not in the torrent.' }); return; }
       if (!file.length) {
         // WebTorrent asks for the whole piece an empty file sits in and cannot use a 416 here.

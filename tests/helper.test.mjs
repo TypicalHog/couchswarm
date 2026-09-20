@@ -162,6 +162,20 @@ test('multi-file webseed handles spaces, unicode, and pieces spanning file bound
   assert.equal((await readdir(env.cacheRoot)).includes(cached), false, 'a new torrent evicts the session-less download the grace window held');
 });
 
+test('the helper serves the video span and the subtitles beside it, and nothing else', { timeout: 20000 }, async t => {
+  const files = [Object.assign(Buffer.alloc(16384, 7), { name: 'movie.mp4' }),
+    Object.assign(Buffer.alloc(20000, 9), { name: 'extras.bin' }),
+    Object.assign(Buffer.from('1\n00:00:01,000 --> 00:00:02,000\nHello\n'), { name: 'en.srt' })];
+  const env = await setup(t, files);
+  const lease = await env.open();
+  assert.equal((await env.ready(lease.id)).ready, true);
+  const extras = await env.call(`/seed/${lease.id}/Test%20room/extras.bin`);
+  assert.equal(extras.status, 404, 'a file outside the video span is never validated or flagged sparse, so it is never served');
+  const subtitle = await env.call(`/seed/${lease.id}/Test%20room/en.srt`);
+  assert.equal(subtitle.status, 200);
+  assert.deepEqual(Buffer.from(await subtitle.arrayBuffer()), Buffer.from(files[2]), 'a subtitle past the span still loads');
+});
+
 test('helper rejects private-network metadata URLs and expires inactive viewers', { timeout: 15000 }, async t => {
   const payload = Object.assign(Buffer.alloc(32768, 1), { name: 'movie.mp4' });
   const env = await setup(t, payload, { idleMs: 1000 });
@@ -208,6 +222,11 @@ test('torrentPathIssue rejects only the paths Windows cannot store', { timeout: 
     assert.match(torrentPathIssue(torrentOf(entry)), /Windows cannot create/, entry);
   assert.match(torrentPathIssue(torrentOf('Movie.mkv', '<>')), /Windows cannot create/, 'a name that sanitises to nothing');
   assert.match(torrentPathIssue(torrentOf('Movie.mkv'), 'x'.repeat(250)), /too deep for your download folder/);
+  const subtitles = { pieceLength: 16384, files: [
+    { name: 'Movie.mkv', path: 'Pack/Movie.mkv', length: 16384, offset: 0 },
+    { name: 'c sub.srt', path: 'Pack/c sub.srt', length: 100, offset: 16384 },
+    { name: 'C SUB.srt', path: 'Pack/C SUB.srt', length: 100, offset: 16484 }] };
+  assert.match(torrentPathIssue(subtitles), /under the same name/, 'subtitles past the video span are checked too');
   for (const entry of ['com.mkv', 'Contact.mkv', 'nullify.mkv', 'console/x.mkv'])
     assert.equal(torrentPathIssue(torrentOf(entry)), '', entry);
 });
