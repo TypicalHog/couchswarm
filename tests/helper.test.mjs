@@ -7,7 +7,7 @@ import path from 'node:path';
 import { once } from 'node:events';
 import WebTorrent from 'webtorrent';
 import MemoryStore from 'memory-chunk-store';
-import { createTorrentHelper, torrentPathIssue, torrentSource } from '../helper/torrent-helper.mjs';
+import { createTorrentHelper, filterPeers, torrentPathIssue, torrentSource } from '../helper/torrent-helper.mjs';
 
 // Offline by default, so a helper built without the createClient below still cannot reach the DHT or a public tracker.
 process.env.COUCHSWARM_HELPER_OFFLINE ??= '1';
@@ -198,6 +198,7 @@ test('a magnet cannot point the helper at the private network', { timeout: 5000 
     + '&x.pe=127.0.0.1:6881&x.pe=10.0.0.5:6881&x.pe=' + encodeURIComponent('[::1]:6881') + '&x.pe=203.0.113.7:6881'
     + '&tr=' + encodeURIComponent('udp://127.0.0.1:1337') + '&tr=' + encodeURIComponent('http://203.0.113.9/announce')
     + '&tr=' + encodeURIComponent('file:///etc/passwd') + '&tr=' + encodeURIComponent('udp://203.0.113.7:1337')
+    + '&tr=' + encodeURIComponent('ws://203.0.113.8:1337') + '&tr=' + encodeURIComponent('wss://203.0.113.10:1337')
     + '&ws=' + encodeURIComponent('https://127.0.0.1/f')
     + '&xs=' + encodeURIComponent('https://127.0.0.1/f.torrent')
     + '&as=' + encodeURIComponent('https://127.0.0.1/g.torrent');
@@ -206,13 +207,18 @@ test('a magnet cannot point the helper at the private network', { timeout: 5000 
   try {
     const parsed = await torrentSource(magnet);
     assert.deepEqual(parsed.peerAddresses, ['203.0.113.7:6881'], 'only public IP-literal peer hints survive');
-    assert.deepEqual(parsed.announce, ['udp://203.0.113.7:1337'], 'only public udp, ws and wss trackers survive');
+    assert.deepEqual(parsed.announce, ['udp://203.0.113.7:1337', 'wss://203.0.113.10:1337'],
+      'only public udp and wss trackers survive, and udp keeps the address that was checked');
     assert.deepEqual(parsed.urlList, []);
     assert.deepEqual([parsed.xs, parsed.as], [undefined, undefined]);
+    const client = filterPeers({});
+    assert.equal(client.blocked.contains('192.168.1.1'), true, 'a LAN peer learned from a tracker, the DHT or ut_pex is never dialled');
+    assert.equal(client.blocked.contains('203.0.113.7'), false);
   } finally { process.env.COUCHSWARM_HELPER_OFFLINE = '1'; }
   const offlineParsed = await torrentSource(magnet);
   assert.equal(offlineParsed.peerAddresses.length, 4, 'offline mode keeps loopback hints so the suites can seed locally');
-  assert.equal(offlineParsed.announce.length, 4);
+  assert.equal(offlineParsed.announce.length, 6);
+  assert.deepEqual(filterPeers({}), {}, 'offline mode leaves the suites free to seed from loopback');
 });
 
 test('torrentPathIssue rejects only the paths Windows cannot store', { timeout: 5000 }, async () => {

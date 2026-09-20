@@ -175,19 +175,36 @@ export async function torrentSource(source, signal) {
     // Whatever has not answered by then drops, the same fail-closed answer publicHost gives a lookup error.
     const trackers = (parsed.announce || []).slice(0, 64);
     const deadline = signal ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000);
-    const allowed = deadline.aborted ? [] : await Promise.race([Promise.all(trackers.map(tracker => {
+    const allowed = deadline.aborted ? [] : await Promise.race([Promise.all(trackers.map(async tracker => {
       const url = URL.parse(tracker);
-      return url && ['udp:', 'ws:', 'wss:'].includes(url.protocol) ? publicHost(url.hostname) : false;
+      // ws: is dropped outright: the socket carries the announce URL's own path and Host as a plain HTTP
+      // request, and bittorrent-tracker resolves the name again at announce, so a rebinding answer aims
+      // that request at whatever it then points to. wss: survives because TLS fails before the rebind lands.
+      if (!url || !['udp:', 'wss:'].includes(url.protocol)) return '';
+      if (url.protocol === 'wss:') return await publicHost(url.hostname) ? tracker : '';
+      // dgram resolves the name at announce too, so pin the address checked here into the URL itself.
+      const { address, family } = await lookup(url.hostname.replace(/^\[|\]$/g, '')).catch(() => ({}));
+      if (!address || !publicAddress(address)) return '';
+      return `udp://${family === 6 ? `[${address}]` : address}${url.port ? `:${url.port}` : ''}${url.pathname}${url.search}`;
     })), new Promise(resolve => deadline.addEventListener('abort', () => resolve([]), { once: true }))]);
-    parsed.announce = trackers.filter((_, index) => allowed[index]);
+    parsed.announce = allowed.filter(Boolean);
   }
   return parsed;
 }
 
+// The source filter above only sees the addresses the source names. Trackers, the DHT and ut_pex hand
+// WebTorrent peers of their own, and its one connect-time filter reads client.blocked, which stays unset
+// unless a blocklist is passed. The suites seed from 127.0.0.1, so offline mode keeps every address.
+export function filterPeers(client) {
+  if (process.env.COUCHSWARM_HELPER_OFFLINE !== '1')
+    client.blocked = { contains: host => !isIP(host) || !publicAddress(host) };
+  return client;
+}
+
 export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, graceMs = 60000,
-  createClient = () => new WebTorrent({ natUpnp: false, natPmp: false, lsd: false, utp: false,
+  createClient = () => filterPeers(new WebTorrent({ natUpnp: false, natPmp: false, lsd: false, utp: false,
     ...(process.env.COUCHSWARM_HELPER_OFFLINE === '1' ? { dht: false, tracker: false }
-      : { tracker: { announce: ['wss://tracker.openwebtorrent.com', 'wss://tracker.webtorrent.dev'] } }) }) }) {
+      : { tracker: { announce: ['wss://tracker.openwebtorrent.com', 'wss://tracker.webtorrent.dev'] } }) })) }) {
   const origin = new URL(siteOrigin).origin;
   const root = path.resolve(cacheRoot);
   const entries = new Map();
