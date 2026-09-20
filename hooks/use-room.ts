@@ -265,7 +265,10 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
         setNetworkError((err as Error).message);
       } finally { pending.current = false; }
       // Back off a failing room instead of pinning it at 1 Hz, and hold an idle lobby at the watchdog's floor.
-      const period = failures ? Math.min(8000, 1000 * 2 ** failures) * (.8 + Math.random() * .4) : live.current.snapshot?.room.source ? 1000 : 2000;
+      // Only once the presence lease has lapsed, though: backing off sooner puts the retry that would have kept
+      // the seat alive on the far side of the lease, which pauses the room for everyone with a reason that the
+      // host - already back by then - has to clear by hand.
+      const period = failures && performance.now() - lastContact.current > PRESENCE_MS ? Math.min(8000, 1000 * 2 ** failures) * (.8 + Math.random() * .4) : live.current.snapshot?.room.source ? 1000 : 2000;
       if (!stopped && !leaving.current) timer = setTimeout(heartbeat, Math.max(0, period - (performance.now() - sent)));
     };
     void claimSeat(session.roomId).then(ok => { if (stopped) return; setRefused(!ok); if (!ok) setError('This room is already open in another CouchSwarm tab.'); else void heartbeat(); });
