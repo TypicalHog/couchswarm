@@ -21,8 +21,13 @@ const tar = path.join(process.env.WINDIR, 'System32', 'tar.exe');
 // first: an owner on Node 22, a missing compiler or an unreachable license would otherwise leave an empty stage
 // sitting beside the previous ZIP, which still looks like a finished build.
 await Promise.all([csc, tar].map(file => fs.access(file)));
-const license = await fetch(`https://raw.githubusercontent.com/nodejs/node/${version}/LICENSE`);
-if (!license.ok) throw new Error('Could not fetch the exact Node runtime license.');
+// Offline or behind a firewall this is where the build dies, and a bare 'fetch failed' names neither the host it
+// wanted nor what to do about it; a link that accepts and then says nothing would otherwise wait out undici's
+// five-minute default.
+const licenseUrl = `https://raw.githubusercontent.com/nodejs/node/${version}/LICENSE`;
+const license = await fetch(licenseUrl, { signal: AbortSignal.timeout(30000) })
+  .catch(error => { throw new Error(`Could not reach ${licenseUrl} for the Node runtime license (${error.cause?.code || error.cause?.message || error.name}). Packaging needs internet access.`); });
+if (!license.ok) throw new Error(`Could not fetch the exact Node runtime license (${license.status} from ${licenseUrl}).`);
 const licenseText = await license.text();
 await fs.rm(stage, { recursive: true, force: true });
 await fs.mkdir(path.join(stage, 'runtime'), { recursive: true });
