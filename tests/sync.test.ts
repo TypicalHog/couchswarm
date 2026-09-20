@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { allReady, bufferedAhead, estimateServerNow, hasBuffer, PRESENCE_MS, SPECTATOR_EPOCH, timelinePosition, validSource, type Room } from '../lib/sync.ts';
+import { allReady, bufferedAhead, estimateServerNow, EXPIRY_GRACE_MS, hasBuffer, PRESENCE_MS, SPECTATOR_EPOCH, timelinePosition, validSource, type Room } from '../lib/sync.ts';
 import { PRESENCE_MS as sharedPresence } from '../helper/constants.mjs';
 
 const room: Room = { id: 'room', hostId: 'host', source: '', fileIndex: 0, mediaVersion: 0, epoch: 3,
@@ -65,6 +65,10 @@ test('a stale epoch, absent host, or unready guest closes the shared play gate',
 });
 
 test('the .mjs suites and the site agree on the presence lease', () => assert.equal(sharedPresence, PRESENCE_MS));
+
+// A blip at the provider silences every member at once, and the backoff that follows stretches the silence
+// further; deleting an occupied room over that is what the grace exists to prevent.
+test('a room past its day is swept only long after presence lapses', () => assert.ok(EXPIRY_GRACE_MS > 10 * PRESENCE_MS));
 
 test('rejects malformed torrent input and unsafe URL schemes', () => {
   assert.equal(validSource('magnet:?xt=urn:btih:' + 'a'.repeat(40)), true);

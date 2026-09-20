@@ -1,5 +1,5 @@
 import { getDatabase } from '@/lib/database-node';
-import { PRESENCE_MS, ROOM_TTL_MS } from '@/lib/sync';
+import { EXPIRY_GRACE_MS, ROOM_TTL_MS } from '@/lib/sync';
 
 export type RunResult = { meta: { changes: number } };
 export type Stmt = { bind(...values: unknown[]): Stmt; first<T>(): Promise<T | null>; all<T>(): Promise<{ results: T[] }>; run(): Promise<RunResult> };
@@ -11,7 +11,7 @@ export function getDb(): Db {
 
 // A room outlives its 24 hours while anyone is still on the couch.
 export async function roomExpired(db: Db, roomId: string, createdAt: number, now: number) {
-  return now - createdAt > ROOM_TTL_MS && !await db.prepare('SELECT 1 AS n FROM members WHERE room_id = ? AND last_seen > ?').bind(roomId, now - PRESENCE_MS).first<{ n: number }>();
+  return now - createdAt > ROOM_TTL_MS && !await db.prepare('SELECT 1 AS n FROM members WHERE room_id = ? AND last_seen > ?').bind(roomId, now - EXPIRY_GRACE_MS).first<{ n: number }>();
 }
 
 export function secret() {

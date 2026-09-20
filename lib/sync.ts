@@ -1,6 +1,10 @@
 export const BUFFER_SECONDS = 8;
 export const PRESENCE_MS = 12_000;
 export const ROOM_TTL_MS = 86_400_000;
+// How long a room past its day must go unheard-from before it is swept away. Far more than the presence lease:
+// a provider blip or the backoff that follows one leaves every member silent for a while, and a room with people
+// still on the couch must not be deleted out from under them for that.
+export const EXPIRY_GRACE_MS = 600_000;
 export const MAX_SEATS = 12;
 export const HELPER_ONLINE_MS = 15_000;
 export const HELPER_PEER_TTL_MS = 60_000;

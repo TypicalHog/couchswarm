@@ -1,5 +1,5 @@
 import { cleanName, getDb, hash, json, notAllowed, readBody, secret, withDb } from '@/lib/db';
-import { HELPER_PEER_TTL_MS, PRESENCE_MS, ROOM_TTL_MS, validSource } from '@/lib/sync';
+import { EXPIRY_GRACE_MS, HELPER_PEER_TTL_MS, ROOM_TTL_MS, validSource } from '@/lib/sync';
 
 export const maxDuration = 10;
 
@@ -19,7 +19,7 @@ async function handler(request: Request) {
   const [tokenHash, inviteHash, hostKeyHash] = await Promise.all([hash(token), hash(invite), hash(hostKey)]);
   const db = getDb();
   const now = Date.now();
-  const cutoff = now - ROOM_TTL_MS, seen = now - PRESENCE_MS;
+  const cutoff = now - ROOM_TTL_MS, seen = now - EXPIRY_GRACE_MS;
   await db.batch([
     // A helper killed without saying goodbye leaves its viewers' leases behind, and the only other prune runs inside
     // that helper's own poll, so nothing would drop them until the whole room expired.
