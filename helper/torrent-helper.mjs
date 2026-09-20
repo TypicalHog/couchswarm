@@ -282,7 +282,7 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
 
   async function initialize(entry, source) {
     try {
-      const parsed = await torrentSource(source);
+      const parsed = await torrentSource(source, entry.abort.signal);
       if (entry.disposed) return;
       await mkdir(root, { recursive: true });
       if (!swept) {
