@@ -312,6 +312,12 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
       const now = current ? localNow() : 0;
       const target = current ? timelinePosition(current, now) : 0;
       const ahead = video ? bufferedAhead(video.buffered, target) : 0;
+      // A browser sizes the element's forward buffer for itself, and on a progressive file it can settle a second
+      // short of the paused gate with a third of the movie already saved: a seat pinned there could never be
+      // called ready again, and the room it stopped had nothing left to press. What keeps a seat from stalling is
+      // the run of pieces after its playhead, so either one reaching the gate is enough. The number the room is
+      // told stays the player's own, because that is the buffer the readout names.
+      const reach = Math.max(ahead, video ? state.media.readStoredAhead(target, video.duration) : 0);
       // A viewer whose presence lapsed comes back as a spectator, and the first ready beat seats them back in the
       // room's epoch. The in-playback threshold is 3 s, so they would join with none of the margin everyone else
       // started with and their next beat could pause the room for all of them: buffer like the rest of the couch.
@@ -327,7 +333,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
         // reply to this very request seeks it back, so buffer at the target still counts as ready. One sitting
         // at its own end has nowhere further to go, which is all the room asks of it at the wrap.
         && (Math.abs(video.currentTime - target) < 1.5 || (outOfContact() && ahead > 0) || (video.ended && target >= video.duration - 0.2))
-        && hasBuffer(ahead, target, video.duration, current.playing && !spectating));
+        && hasBuffer(reach, target, video.duration, current.playing && !spectating));
       const sent = performance.now();
       pending.current = true;
       try {

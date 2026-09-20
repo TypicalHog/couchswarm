@@ -5,7 +5,7 @@ import type { Torrent, TorrentFile, TorrentFileStream } from 'webtorrent/dist/we
 import type { PlaysVideoEngine } from 'playsvideo';
 import { isMkv, videoFiles } from '@/lib/video-files';
 import { followReads } from '@/lib/follow-reads';
-import { pieceStates } from '@/lib/piece-state';
+import { pieceStates, storedAhead } from '@/lib/piece-state';
 import { decodeSubtitle, subtitleFiles, toWebVTT } from '@/lib/subtitles';
 import { connectHelper } from '@/lib/torrent-helper';
 import { connectRemoteHelper, helperStatus } from '@/lib/remote-helper';
@@ -656,6 +656,12 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     const held = piecesRef.current;
     return held ? pieceStates(held.torrent, held.file) : null;
   }, []);
+  // What the room asks when the player's own buffer has stopped short: how much of the movie after this position
+  // is already saved, and therefore playable whatever the browser has decided to hold in the element.
+  const readStoredAhead = useCallback((position: number, duration: number) => {
+    const held = piecesRef.current;
+    return held ? storedAhead(pieceStates(held.torrent, held.file), held.file, held.torrent.pieceLength, position, duration) : 0;
+  }, []);
 
   const reconnect = useCallback(() => { retriedHelper.current = 0; retriedUpgrade.current = false; setAttempt(value => value + 1); }, []);
   // Unpairing only changes what this tab streams from if it was streaming from that helper. Rebuilding the
@@ -685,5 +691,5 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     return true;
   }, [chooseSubtitle]);
 
-  return { status, error, files, stats, loadedVersion, helper, helperPending, reconnect, reconnectIfOwnHelper, adoptOwnHelper, readPieces, subtitles, subtitle, setSubtitle: chooseSubtitle, uploadSubtitle, subtitleError, subtitleBusy };
+  return { status, error, files, stats, loadedVersion, helper, helperPending, reconnect, reconnectIfOwnHelper, adoptOwnHelper, readPieces, readStoredAhead, subtitles, subtitle, setSubtitle: chooseSubtitle, uploadSubtitle, subtitleError, subtitleBusy };
 }
