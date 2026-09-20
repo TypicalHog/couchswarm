@@ -1,8 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { PRESENCE_MS } from '../helper/constants.mjs';
 const origin = process.env.TEST_ORIGIN || 'http://localhost:3001';
-// Mirrors PRESENCE_MS in lib/sync.ts; an .mjs suite cannot import the .ts module. Keep them equal.
-const PRESENCE_MS = 12_000;
 
 test('an expired host lease cannot silently restart a deserted playing room', { timeout: 30000 }, async t => {
   const send = async (path, body, token) => {

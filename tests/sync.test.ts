@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { allReady, bufferedAhead, estimateServerNow, hasBuffer, SPECTATOR_EPOCH, timelinePosition, validSource, type Room } from '../lib/sync.ts';
+import { allReady, bufferedAhead, estimateServerNow, hasBuffer, PRESENCE_MS, SPECTATOR_EPOCH, timelinePosition, validSource, type Room } from '../lib/sync.ts';
+import { PRESENCE_MS as sharedPresence } from '../helper/constants.mjs';
 
 const room: Room = { id: 'room', hostId: 'host', source: '', fileIndex: 0, mediaVersion: 0, epoch: 3,
   revision: 1, playing: true, position: 20, startsAt: 10000, duration: 100, reason: '' };
@@ -62,6 +63,8 @@ test('a stale epoch, absent host, or unready guest closes the shared play gate',
   assert.equal(allReady([guest], room, 20000), false);
   assert.equal(allReady([host, guest], room, 33000), false);
 });
+
+test('the .mjs suites and the site agree on the presence lease', () => assert.equal(sharedPresence, PRESENCE_MS));
 
 test('rejects malformed torrent input and unsafe URL schemes', () => {
   assert.equal(validSource('magnet:?xt=urn:btih:' + 'a'.repeat(40)), true);
