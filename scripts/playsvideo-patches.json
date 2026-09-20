@@ -28,6 +28,13 @@
       "count": 1
     }
   ],
+  "pipeline/segment-plan.js": [
+    {
+      "find": "let segmentStartSec = 0;",
+      "replace": "let segmentStartSec = boundaries[0];",
+      "count": 1
+    }
+  ],
   "adapters/wasm-ffmpeg.js": [
     {
       "find": "/* @vite-ignore */",

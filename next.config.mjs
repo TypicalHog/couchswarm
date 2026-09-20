@@ -25,7 +25,7 @@ const nextConfig = {
   },
   webpack(config) {
     config.module.rules.push({
-      test: /playsvideo[\\/]dist[\\/](engine|worker|adapters[\\/]wasm-ffmpeg)\.js$/,
+      test: /playsvideo[\\/]dist[\\/](engine|worker|adapters[\\/]wasm-ffmpeg|pipeline[\\/]segment-plan)\.js$/,
       use: path.join(here, 'scripts/playsvideo-loader.cjs'),
     });
     return config;

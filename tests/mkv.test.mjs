@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 const playsvideo = import.meta.resolve('playsvideo');
 const { default: createFFmpegCore } = await import(new URL('./vendor/ffmpeg-core-audio/ffmpeg-core.js', playsvideo).href);
-const { demuxFile, demuxUrl, collectPacketsInRange } = await import(new URL('./pipeline/demux.js', playsvideo).href);
+const { demuxBlob, demuxFile, demuxUrl, collectPacketsInRange, getKeyframeIndex } = await import(new URL('./pipeline/demux.js', playsvideo).href);
 const { buildMkvKeyframeIndexFromUrl } = await import(new URL('./pipeline/mkv-keyframe-index.js', playsvideo).href);
 const { buildSegmentPlan } = await import(new URL('./pipeline/segment-plan.js', playsvideo).href);
 const { processSegmentWithAbort } = await import(new URL('./pipeline/segment-processor.js', playsvideo).href);
@@ -86,6 +86,66 @@ test('MKV range streaming indexes metadata, remuxes video and audio, and seeks t
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
   }
+});
+
+test('a movie whose video starts seconds in still fills its first segment', { timeout: 60000 }, async () => {
+  // The webpack loader applies scripts/playsvideo-patches.json to the module the browser runs, so apply it
+  // the same way here: this is the only place a playsvideo upgrade that moved the patched line is caught
+  // outside a production build.
+  const patches = JSON.parse(await readFile(new URL('../scripts/playsvideo-patches.json', import.meta.url), 'utf8'));
+  let code = await readFile(new URL('./pipeline/segment-plan.js', playsvideo), 'utf8');
+  for (const { find, replace, count } of patches['pipeline/segment-plan.js']) {
+    assert.equal(code.split(find).length - 1, count, 'the patched segment-plan source moved');
+    code = code.replaceAll(find, replace);
+  }
+  const { buildSegmentPlan: buildPatchedPlan } = await import(`data:text/javascript,${encodeURIComponent(code)}`);
+  // An ordinary movie keyframes at zero and is planned exactly as before.
+  assert.equal(buildPatchedPlan({ keyframeTimestampsSec: [0, 4, 8], durationSec: 12, targetSegmentDurationSec: 4 })[0].startSec, 0);
+
+  // A copyts-style remux or a cut recording keeps container time, so its first keyframe can be seconds in.
+  const clip = await demuxFile(fileURLToPath(new URL('./fixtures/h264-aac.mp4', import.meta.url)));
+  const videoPackets = await collectPacketsInRange(clip.videoSink, 0, 2, { startFromKeyframe: true });
+  const audioPackets = await collectPacketsInRange(clip.audioSink, 0, 2);
+  const target = new BufferTarget();
+  const output = new Output({ format: new MkvOutputFormat(), target });
+  const video = new EncodedVideoPacketSource(clip.videoCodec);
+  const audio = new EncodedAudioPacketSource(clip.audioCodec);
+  output.addVideoTrack(video);
+  output.addAudioTrack(audio);
+  await output.start();
+  const packets = [
+    ...videoPackets.map(packet => ({ packet, source: video, config: clip.videoDecoderConfig })),
+    ...audioPackets.map(packet => ({ packet, source: audio, config: clip.audioDecoderConfig })),
+  ].sort((a, b) => a.packet.timestamp - b.packet.timestamp);
+  for (let repeat = 0; repeat < 4; repeat++) {
+    for (const { packet, source, config } of packets) {
+      await source.add(packet.clone({ timestamp: packet.timestamp + 5 + repeat * 2 }), { decoderConfig: config });
+    }
+  }
+  video.close(); audio.close();
+  await output.finalize();
+  clip.dispose();
+
+  const demux = await demuxBlob(new Blob([target.buffer]));
+  try {
+    const index = await getKeyframeIndex(demux.videoSink, demux.duration);
+    assert.ok(Math.abs(index.keyframes[0].timestamp - 5) < .05, 'the fixture must keep its container time');
+    const options = { keyframeTimestampsSec: index.keyframes.map(k => k.timestamp), durationSec: index.duration, targetSegmentDurationSec: 4 };
+    const config = plan => ({ videoSink: demux.videoSink, audioSink: demux.audioSink, videoCodec: demux.videoCodec,
+      audioCodec: demux.audioCodec, videoDecoderConfig: demux.videoDecoderConfig, audioDecoderConfig: demux.audioDecoderConfig,
+      plan, doTranscode: false, transcodeAudio: () => { throw new Error('AAC should not need conversion'); } });
+    // Planned from zero, segment 0 spans [0, 5) and carries nothing but an empty fragment, which hls.js
+    // reports to the whole room as a fatal fragParsingError.
+    const bare = await processSegmentWithAbort(config(buildSegmentPlan(options)), 0);
+    const plan = buildPatchedPlan(options);
+    assert.ok(Math.abs(plan[0].startSec - 5) < .05);
+    const segment = await processSegmentWithAbort(config(plan), 0);
+    assert.ok(segment.mediaData.length > bare.mediaData.length * 10, 'the first segment must carry media');
+    const playable = new Input({ source: new BufferSource(Buffer.concat([segment.initSegment, segment.mediaData])), formats: [MP4] });
+    const videoTrack = await playable.getPrimaryVideoTrack();
+    assert.ok(Math.abs(await videoTrack.getFirstTimestamp() - 5) < .05);
+    playable.dispose();
+  } finally { demux.dispose(); }
 });
 
 test('the bundled audio WASM actually decodes MP3 and produces AAC', { timeout: 30000 }, async () => {
