@@ -244,6 +244,33 @@ test('a repeated block request queued behind another one is answered twice', { t
   assert.deepEqual(await Promise.all([first, second]), [payload, payload]);
 });
 
+test('cancelling one copy of a repeated block request still answers the other', { timeout: 5000 }, async () => {
+  const infoHash = 'c'.repeat(40), payload = Buffer.alloc(16384, 13);
+  const release = [];
+  const gates = [0, 1, 2].map(piece => new Promise(resolve => { release[piece] = resolve; }));
+  const torrent = { infoHash, torrentFile: null, pieceLength: 16384, length: 49152, pieces: ['x', 'y', 'z'],
+    files: [{ offset: 0, length: 49152, createReadStream({ start }) { const stream = new PassThrough(); void gates[start / 16384].then(() => stream.end(payload)); return stream; } }] };
+  const client = new Wire();
+  const wire = serveTorrentPeer(client, torrent);
+  client.handshake(infoHash, Buffer.concat([Buffer.from('-TE0001-'), Buffer.alloc(12, 1)]), { fast: true });
+  await new Promise(resolve => { client.once('unchoke', resolve); client.interested(); });
+  const ask = piece => new Promise((resolve, reject) => client.request(piece, 0, 16384, (error, data) => error ? reject(error) : resolve(Buffer.from(data))));
+  const copies = [ask(0), ask(0)].map(copy => copy.catch(error => error.message));
+  const middle = ask(1), last = ask(2);
+  await sleep(100);
+  // Answering the third request moves the fourth into its slot, so the two copies of the first block are now
+  // behind it in the reverse order and the cancel below takes the entry of the copy that was asked for second.
+  release[1]();
+  await middle;
+  client.cancel(0, 0, 16384);
+  await sleep(50);
+  release[0](); release[2]();
+  await last;
+  await sleep(50);
+  assert.deepEqual(wire.peerRequests, [], 'the cancel leaves no request sitting in the queue owed a reply');
+  assert.deepEqual((await Promise.all(copies)).filter(copy => Buffer.isBuffer(copy)), [payload], 'the copy the client kept is still answered');
+});
+
 test('a failed native torrent stops advertising readiness, then reloads', { timeout: 60000 }, async t => {
   const seed = new WebTorrent(offline);
   t.after(() => destroy(seed));

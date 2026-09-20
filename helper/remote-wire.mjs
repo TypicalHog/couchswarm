@@ -55,8 +55,10 @@ export function serveTorrentPeer(peer, torrent, readAhead = () => {}, pieces = n
   wire.on('cancel', (piece, offset, length) => {
     const read = reads.get(`${piece}:${offset}:${length}`);
     if (!read) return;
-    // bittorrent-protocol drops the first matching request, so one of the queued replies is owed no more.
-    read.callbacks.shift();
+    // bittorrent-protocol has already dropped one matching request, and that removal is unordered, so the reply it
+    // ends is not necessarily the first callback's: forget the callback whose entry is the one that went.
+    const gone = read.callbacks.findIndex(respond => !wire.peerRequests.some(request => request.callback === respond));
+    read.callbacks.splice(gone < 0 ? 0 : gone, 1);
     if (!read.callbacks.length) { read.cancelled = true; read.stream?.destroy(); }
   });
   wire.on('request', (piece, offset, length, callback) => {
