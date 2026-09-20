@@ -534,6 +534,9 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         // new client lists its files: keep the pick on 'Loading…' rather than failing it.
         if (!file && !subtitleRef.current.length) return;
         if (!file) throw new Error('That subtitle is no longer part of this torrent.');
+        // Whatever is picked is read whole, decoded into a string of its own and copied again, so a movie chosen
+        // by mistake in the upload dialog freezes the tab for seconds. No real subtitle comes near this.
+        if ((file instanceof File ? file.size : file.length) > 8_000_000) throw new Error('That file is too large to be a subtitle.');
         const bytes = file instanceof File ? await file.arrayBuffer()
           : await Promise.race([readFile(file, value => { stream = value; }), new Promise<never>((_, reject) => { expire = reject; })]);
         if (disposed) return;
