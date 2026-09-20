@@ -29,7 +29,7 @@ $env:TURSO_AUTH_TOKEN = 'YOUR-DATABASE-TOKEN'
 npm.cmd run db:migrate
 ```
 
-The migration runner records checksums and applies each migration once. `drizzle/0000_init.sql` holds the whole schema, so a new database reaches the current schema in a single migration. Use a separate database for previews. Migration files are immutable once applied: the runner compares a SHA-256 of each file against the checksum it recorded and aborts the build when they differ, so add a new `drizzle/NNNN_*.sql` rather than editing or renaming a deployed one. If a build fails with `Applied migration changed`, revert the edit; to adopt an edit you have verified changes no DDL, run `UPDATE couchswarm_migrations SET checksum = 'NEW_SHA256' WHERE name = 'FILE.sql';` against the database first.
+The migration runner records checksums and applies each migration once, in filename order. `drizzle/0000_init.sql` holds the whole schema as it first shipped, so a new database reaches the current schema by running it and the few files after it. Use a separate database for previews. Migration files are immutable once applied: the runner compares a SHA-256 of each file against the checksum it recorded and aborts the build when they differ, so add a new `drizzle/NNNN_*.sql` rather than editing or renaming a deployed one. If a build fails with `Applied migration changed`, revert the edit; to adopt an edit you have verified changes no DDL, run `UPDATE couchswarm_migrations SET checksum = 'NEW_SHA256' WHERE name = 'FILE.sql';` against the database first.
 
 ## 3. Run the relay
 
