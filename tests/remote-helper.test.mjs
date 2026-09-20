@@ -223,6 +223,27 @@ test('a repeated block request joins the read already in flight', { timeout: 500
   assert.deepEqual(await Promise.all([first, second]), [payload, payload]);
 });
 
+test('a repeated block request queued behind another one is answered twice', { timeout: 5000 }, async () => {
+  const infoHash = 'b'.repeat(40), payload = Buffer.alloc(16384, 11);
+  const release = [];
+  const gates = [0, 1].map(piece => new Promise(resolve => { release[piece] = resolve; }));
+  const torrent = { infoHash, torrentFile: null, pieceLength: 16384, length: 32768, pieces: ['x', 'y'],
+    files: [{ offset: 0, length: 32768, createReadStream({ start }) { const stream = new PassThrough(); void gates[start / 16384].then(() => stream.end(payload)); return stream; } }] };
+  const client = new Wire();
+  serveTorrentPeer(client, torrent);
+  client.handshake(infoHash, Buffer.concat([Buffer.from('-TE0001-'), Buffer.alloc(12, 1)]), { fast: true });
+  await new Promise(resolve => { client.once('unchoke', resolve); client.interested(); });
+  const ask = piece => new Promise((resolve, reject) => client.request(piece, 0, 16384, (error, data) => error ? reject(error) : resolve(Buffer.from(data))));
+  const ahead = ask(0), first = ask(1), second = ask(1);
+  await sleep(100);
+  // Answering the request in front swaps the last queued one into its slot, so the two copies now sit in the
+  // wire's queue in the opposite order to their callbacks: the reply path has to look its entry up, not assume it.
+  release[0]();
+  await ahead;
+  release[1]();
+  assert.deepEqual(await Promise.all([first, second]), [payload, payload]);
+});
+
 test('a failed native torrent stops advertising readiness, then reloads', { timeout: 60000 }, async t => {
   const seed = new WebTorrent(offline);
   t.after(() => destroy(seed));
