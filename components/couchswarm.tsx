@@ -67,9 +67,13 @@ export default function CouchSwarm() {
   const readyCount = members.filter(m => m.ready && m.epoch === room?.epoch).length;
   const seatedCount = members.filter(m => m.epoch !== SPECTATOR_EPOCH).length;
   const displayMembers = session ? members.slice().sort((a, b) => Number(b.id === room?.hostId) - Number(a.id === room?.hostId) || Number(b.id === session.memberId) - Number(a.id === session.memberId)) : [{ id: 'you', name: 'You', ready: false, buffered: 0, epoch: -1, lastSeen: 0 }];
-  const showEnable = hasSource && !media.error && swarm.duration > 0 && !swarm.armed;
-  const waitingOnSource = hasSource && !media.error && swarm.duration === 0;
-  const seekLost = !hasSource || !isHost || !swarm.duration || !swarm.connected;
+  // A rebuilt pipeline (a helper reconnect, 'Reconnect to movie') keeps the room's media version, so the
+  // duration of the video that has just been emptied is still on screen. Treat that wait like any other:
+  // the overlay carrying the status text is the only place it is reported, and the slider means nothing yet.
+  const reloading = hasSource && media.loadedVersion !== room?.mediaVersion;
+  const showEnable = hasSource && !media.error && swarm.duration > 0 && !swarm.armed && !reloading;
+  const waitingOnSource = hasSource && !media.error && (swarm.duration === 0 || reloading);
+  const seekLost = !hasSource || !isHost || !swarm.duration || !swarm.connected || reloading;
   const formVisible = modal === 'source' || (!hasSource && isHost && !swarm.invitation);
   const playHint = !isHost ? 'Your host controls the room' : !swarm.everyoneReady && !isPlaying ? 'Waiting for everyone to buffer' : 'You control the room';
   const announcement = hasSource && swarm.countdown > 0 && swarm.armed ? `Starting in ${swarm.countdown}` : !swarm.connected && session ? (room ? 'Connection lost, reconnecting' : 'Connecting to the room') : swarm.error || room?.reason || '';
