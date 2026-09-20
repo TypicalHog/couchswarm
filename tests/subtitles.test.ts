@@ -43,6 +43,13 @@ test('a cue keeps the tags a browser renders and escapes every other angle brack
   assert.match(toWebVTT('[Events]\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,I <3 you too', 'a.ass'), /^I &lt;3 you too$/m);
 });
 
+test('an SRT converted from an ASS shows no override tags', () => {
+  const cue = (text: string) => toWebVTT(`1\n00:00:01,000 --> 00:00:02,000\n${text}\n`, 'a.srt');
+  assert.match(cue('{\\an8}Sign on top'), /^Sign on top$/m);
+  assert.match(cue('{\\i1}Italic{\\i0} line'), /^Italic line$/m);
+  assert.match(cue('He said {this} out loud'), /^He said \{this\} out loud$/m, 'a brace that opens no override tag is dialogue');
+});
+
 test('an ASS dialogue becomes a plain-text cue', () => {
   const out = toWebVTT([
     '[Events]',

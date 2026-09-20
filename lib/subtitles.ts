@@ -17,6 +17,10 @@ export function decodeSubtitle(bytes: AllowSharedBufferSource) {
 }
 
 const TIMING = /^(\d+):(\d{1,2}):(\d{1,2})[.,](\d{1,3}) *--> *(\d+):(\d{1,2}):(\d{1,2})[.,](\d{1,3})/;
+// An SRT converted from an ASS keeps override tags such as {\an8} or {\i1}, and WebVTT has no syntax for them,
+// so a browser prints them. Only a brace block that opens with a backslash goes, which leaves a brace someone
+// actually said alone; stopping the class at the next brace keeps the scan linear on a hostile line.
+const SRT_OVERRIDE = /\{\\[^{}]*\}/g;
 // Layer, Start, End, then the six fields before Text, which keeps every comma of its own. A \s* in front of
 // [^,]* would let the two split a run of spaces every possible way, which a crafted line stretches into
 // minutes; Text matches every character rather than '.', which alone never crosses a U+2028 or U+2029.
@@ -73,7 +77,7 @@ export function toWebVTT(text: string, filename: string) {
     const timing = TIMING.exec(line);
     return timing
       ? `${clock(timing[1], timing[2], timing[3], timing[4])} --> ${clock(timing[5], timing[6], timing[7], timing[8])}`
-      : escapeCue(line);
+      : escapeCue(line.replace(SRT_OVERRIDE, ''));
   });
   return `WEBVTT\n\n${lines.join('\n')}\n`;
 }
