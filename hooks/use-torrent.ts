@@ -430,7 +430,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           setStats(s => ({ ...s, filename: file.name, size: file.length }));
           setStatus('Buffering your seat…');
           if (isMkv(file.name) && (typeof MediaSource === 'undefined' || !MediaSource.canConstructInDedicatedWorker)) {
-            fail('This browser cannot play MKV video. Ask the host for an MP4 or WebM version, or watch in Chrome, Edge, or Safari 17.1+ on a computer or iPad.'); return;
+            fail('This browser cannot play MKV video. Ask the host for an MP4 or WebM version, or watch in Chrome, Edge, or Safari on a computer or iPad.'); return;
           }
           // Selecting the file, and the open-ended ranges the video element asks for, pull the whole video into
           // this browser's store. A private window's allowance is fixed and far smaller than the disk, so a
