@@ -38,7 +38,7 @@ async function handler(request: Request) {
     const claim = await db.prepare("UPDATE helpers SET token_hash = ?, last_seen = ?, status = 'Helper connected.' WHERE id = ? AND token_hash IS NULL AND pair_expires > ?")
       .bind(await hash(token), Date.now(), helper.id, Date.now()).run();
     if (!claim.meta.changes) return json({ error: 'That pairing link was already used.' }, 409);
-    return json({ id: helper.id, roomId: helper.room_id, token, siteVersion: newerSite(body.version), ...await iceConfiguration(helper.id) });
+    return json({ id: helper.id, token, siteVersion: newerSite(body.version) });
   }
   const token = request.headers.get('authorization')?.replace(/^Bearer /, '') || '';
   if (!/^[a-f0-9]{64}$/.test(token) || typeof body.id !== 'string') return json({ error: 'Pair the helper from your room first.' }, 403);
@@ -90,7 +90,7 @@ async function handler(request: Request) {
   // Present members take the slots first: a row left behind by someone who is no longer on the couch must never push a live viewer out of the list, since the agent destroys every peer missing from it.
   const peers = await db.prepare('SELECT helper_peers.id, helper_peers.offer, helper_peers.answer FROM helper_peers LEFT JOIN members ON members.id = helper_peers.member_id WHERE helper_peers.helper_id = ? ORDER BY (members.last_seen > ?) DESC, helper_peers.last_seen DESC LIMIT ?')
     .bind(helper.id, Date.now() - PRESENCE_MS, MAX_HELPER_PEERS).all<{ id: string; offer: string; answer: string | null }>();
-  return json({ room: { id: room.id, source: room.source, mediaVersion: room.media_version, fileIndex: room.file_index },
+  return json({ room: { source: room.source, mediaVersion: room.media_version },
     peers: peers.results.map(peer => ({ id: peer.id, offer: peer.answer ? null : JSON.parse(peer.offer), answered: !!peer.answer })), ...await iceConfiguration(helper.id) });
 }
 

@@ -338,7 +338,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       // it all back when nobody is.
       const serving = connectedPeers() > 0;
       if (client && serving !== throttled) { client.throttleUpload(serving ? SWARM_UPLOAD_WHILE_SERVING : -1); throttled = serving; }
-      report({ status, peers: connectedPeers(), torrentPeers: torrent?.numPeers || 0, ...(problem ? { problem } : {}), relayAvailable: data.relayAvailable });
+      report({ status, peers: connectedPeers(), torrentPeers: torrent?.numPeers || 0, ...(problem ? { problem } : {}) });
     } catch (error) {
       if (closed) return;
       if (error.revoked) { notify(error.message); await stop(false); report({ status: error.message, stopped: true }); return; }
@@ -395,7 +395,6 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       const shipped = /^\d+(\.\d+){0,3}$/.test(grant.siteVersion || '') ? grant.siteVersion : '';
       notify(shipped ? `Helper paired. A newer helper (${shipped}) is available in your room; download it and replace this folder.` : 'Helper paired.');
       poll().catch(() => {});
-      return { roomId: grant.roomId };
     }, stop,
   };
 }

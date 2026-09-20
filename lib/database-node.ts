@@ -13,7 +13,7 @@ function connection() {
   return client = createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN, timeout: 2000,
     fetch: (request: Request) => fetch(request, { signal: AbortSignal.timeout(3000) }) });
 }
-function result(value: ResultSet) { return { results: value.rows, success: true, meta: { changes: value.rowsAffected } }; }
+function result(value: ResultSet) { return { results: value.rows, meta: { changes: value.rowsAffected } }; }
 class Statement {
   // Parameter properties cannot be erased, and the tests run this file through Node's type stripping.
   readonly sql: string; readonly args: InValue[];
