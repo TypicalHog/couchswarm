@@ -30,6 +30,11 @@ function readFile(file: TorrentFile, hold: (stream: TorrentFileStream) => void) 
   });
 }
 
+// Adding a torrent against a kept store re-hashes every saved piece before the movie can start again, which
+// holds the whole room in buffering. Only one movie's store survives an add, so one remembered bitfield covers
+// every restart this tab can make; a reload starts without one and verifies as before.
+let verified: { source: string; bitfield: Uint8Array } | undefined;
+
 export function useTorrent(source: string, fileIndex: number, mediaVersion: number, videoRef: RefObject<HTMLVideoElement | null>, session: Session | null) {
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
@@ -197,7 +202,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           };
           helperTimer = setTimeout(() => void watch(), document.hidden ? 30000 : 15000);
         }
-        torrent = client.add(remote?.infoHash || bridge?.metadata || source, { strategy: 'sequential', deselect: true, destroyStoreOnDestroy: false, storeCacheSlots: 8 }, value => {
+        torrent = client.add(remote?.infoHash || bridge?.metadata || source, { strategy: 'sequential', deselect: true, destroyStoreOnDestroy: false, storeCacheSlots: 8, bitfield: verified?.source === source ? verified.bitfield : undefined }, value => {
           if (disposed) return;
           // The store survives teardown so a reconnect resumes; nothing else holds one while this tab
           // owns the media lock, so reclaim every other movie here.
@@ -334,6 +339,8 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
       video.pause();
       video.removeAttribute('src');
       video.load();
+      // What this client verified is what the kept store holds, so the replacement need not hash it again.
+      if (torrent?.bitfield) verified = { source, bitfield: torrent.bitfield.buffer.slice() };
       if (client) teardownRef.current = new Promise<void>(resolve => client!.destroy(() => { releaseLock?.(); resolve(); }));
       else releaseLock?.();
     };

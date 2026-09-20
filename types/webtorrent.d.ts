@@ -17,6 +17,8 @@ declare module 'webtorrent/dist/webtorrent.min.js' {
   }
   export interface Torrent {
     infoHash?: string;
+    // Present once metadata has arrived: one bit per piece, marking what this client verified in the store.
+    bitfield?: { buffer: Uint8Array };
     once(event: string, listener: (...args: unknown[]) => void): Torrent;
     addPeer(peer: unknown): boolean;
     name: string; files: TorrentFile[]; downloadSpeed: number; numPeers: number;
@@ -26,7 +28,7 @@ declare module 'webtorrent/dist/webtorrent.min.js' {
   export default class WebTorrent {
     constructor(options?: { tracker?: { announce?: string[] } });
     on(event: string, listener: (...args: unknown[]) => void): this;
-    add(source: string | Uint8Array, options: { strategy: string; deselect: boolean; destroyStoreOnDestroy: boolean; storeCacheSlots?: number }, callback: (torrent: Torrent) => void): Torrent;
+    add(source: string | Uint8Array, options: { strategy: string; deselect: boolean; destroyStoreOnDestroy: boolean; storeCacheSlots?: number; bitfield?: Uint8Array }, callback: (torrent: Torrent) => void): Torrent;
     createServer(options: { controller: ServiceWorkerRegistration }): unknown;
     destroy(callback?: () => void): void;
   }
