@@ -202,7 +202,15 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           };
           helperTimer = setTimeout(() => void watch(), document.hidden ? 30000 : 15000);
         }
-        torrent = client.add(remote?.infoHash || bridge?.metadata || source, { strategy: 'sequential', deselect: true, destroyStoreOnDestroy: false, storeCacheSlots: 8, bitfield: verified?.source === source ? verified.bitfield : undefined }, value => {
+        // A magnet's xs and as hints are fetched the moment the torrent is added — no metadata, no peers
+        // needed — so a room's magnet could hand the host's chosen server every viewer's IP and point their
+        // browsers at any URL. The helper strips both for that reason; web seeds and trackers stay. magnet-uri
+        // parses the raw query itself, so they are dropped by filtering it: rebuilding the string through
+        // URLSearchParams would re-encode xt and leave the add without an info hash.
+        const magnet = source.startsWith('magnet:?')
+          ? `magnet:?${source.slice(8).split('&').filter(param => !/^(xs|as)=/i.test(param)).join('&')}`
+          : source;
+        torrent = client.add(remote?.infoHash || bridge?.metadata || magnet, { strategy: 'sequential', deselect: true, destroyStoreOnDestroy: false, storeCacheSlots: 8, bitfield: verified?.source === source ? verified.bitfield : undefined }, value => {
           if (disposed) return;
           // The store survives teardown so a reconnect resumes; nothing else holds one while this tab
           // owns the media lock, so reclaim every other movie here.
