@@ -274,7 +274,9 @@ class CouchSwarmHelper : Form {
             string chosen = Environment.ExpandEnvironmentVariables(folder.Text.Trim());
             // Explorer's "Copy as path" pastes the quotes too, and Path.IsPathRooted throws on those and on '|':
             // an unparseable path is simply not rooted, and lands on the same status line instead of a crash dialog.
-            bool rooted; try { rooted = Path.IsPathRooted(chosen); } catch (ArgumentException) { rooted = false; }
+            // 'C:', 'C:Movies' and '\Movies' count as rooted but follow a drive's current folder, so Node resolves
+            // them inside the helper's own app folder, where an update deletes the movies kept there: want a real root.
+            bool rooted; try { rooted = Path.IsPathRooted(chosen) && Path.GetPathRoot(chosen).Length >= 3; } catch (ArgumentException) { rooted = false; }
             if (chosen.Length > 0 && !rooted) { folder.Focus(); Say("Choose the download folder with Browse.", Skin.Alarm); return; }
             // Only NTFS and ReFS can mark a file sparse. Elsewhere the first tail write an MKV needs
             // zero-fills and reserves the whole movie, and FAT32 cannot hold 4 GB at all, so refuse the
