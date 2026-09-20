@@ -194,7 +194,9 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         const bridge = session && !remote ? await connectHelper(session, source, mediaVersion, abort.signal, value => {
           if (disposed) return;
           setHelper({ peers: value.peers });
-          if (!value.ready) setStatus(`Your helper is finding torrent peers… ${value.peers} connected`);
+          // The overlay's status is an atomic live region, so a count that changes on every one-second poll
+          // reads the whole sentence out again. The count is in 'Your connection', which is read on demand.
+          if (!value.ready) setStatus('Your helper is finding torrent peers…');
         // Same budget as the paired helper: a refused lease — the room's own superseded torrent still
         // holding a laggard guest, or a helper not started yet — is retried once, then offered.
         }).catch(err => { if (abort.signal.aborted) throw err; helperFailed = retriedUpgrade.current; retriedUpgrade.current = true; setStatus('Helper unavailable, using browser peers…'); return null; }) : null;
