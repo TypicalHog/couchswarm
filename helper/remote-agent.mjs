@@ -1,7 +1,8 @@
-import { mkdir, mkdtemp, open, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { BlockList, isIP } from 'node:net';
 import path from 'node:path';
 import WebTorrent from 'webtorrent';
+import parseTorrent from 'parse-torrent';
 import Peer from '@thaunknown/simple-peer';
 import { markSparse, servedRanges, torrentPathIssue, torrentSource } from './torrent-helper.mjs';
 import { serveTorrentPeer } from './remote-wire.mjs';
@@ -149,8 +150,21 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     loadingSource = room.source;
     if (!room.source) { notify('Connected. Choose a movie in your room.'); return; }
     notify('Finding torrent peers…');
-    const source = await torrentSource(room.source, signal);
+    let source = await torrentSource(room.source, signal);
     if (closed || signal.aborted) return;
+    // A magnet carries no info dict, so every re-watch waits for one from peers and a kept copy cannot be served at
+    // all once the swarm is gone. Keep mode already names its folder after the infoHash, so the dict is saved beside
+    // that folder — not inside it, where a torrent could hold a file of the same name.
+    let savedInfo = keepDownloads && !source.info ? path.join(root, `torrent-${source.infoHash}.torrent`) : '';
+    if (savedInfo) {
+      const saved = await readFile(savedInfo).then(parseTorrent).catch(() => null);
+      // The info dict hashes to the infoHash, so a match is this magnet's own torrent. Trackers, peer hints and web
+      // seeds stay the ones this load filtered, so an edited file cannot point the helper anywhere new.
+      if (saved?.infoHash === source.infoHash) {
+        source = Object.assign(saved, { announce: source.announce, peerAddresses: source.peerAddresses, urlList: [] });
+        savedInfo = '';
+      }
+    }
     let created;
     try {
       await mkdir(root, { recursive: true });
@@ -229,6 +243,8 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     await markSparse(value, signal);
     if (closed || signal.aborted) return;
     if (value.destroyed) throw new Error(describe(cause));
+    // The swarm supplied what the magnet left out; keep it so the next watch of this movie starts from the disk.
+    if (savedInfo) await writeFile(savedInfo, value.torrentFile).catch(() => {});
     // Serve and prefetch only the video's own pieces and each subtitle's: torrentPathIssue and markSparse validate
     // every file those pieces carry, so a read outside them would download and write a file nothing checked. A
     // torrent with no video leaves nothing to serve.

@@ -334,7 +334,7 @@ test('picking another video does not restart a load already under way', { timeou
   assert.equal(reports.at(-1).status, 'Finding torrent peers…', 'the helper is still on the load it started');
 });
 
-test('a kept download gets its own subfolder and outlives the helper', { timeout: 30000 }, async t => {
+test('a kept download gets its own subfolder, outlives the helper, and reloads without the swarm', { timeout: 30000 }, async t => {
   const seed = new WebTorrent(offline);
   t.after(() => destroy(seed));
   const payload = Object.assign(Buffer.alloc(16384, 29), { name: 'movie.mp4' });
@@ -345,7 +345,8 @@ test('a kept download gets its own subfolder and outlives the helper', { timeout
   const pair = await post(route, { action: 'pair' }, host.token);
   const cacheRoot = await mkdtemp(path.join(tmpdir(), 'couchswarm-keep-test-'));
   const helper = createRemoteAgent({ cacheRoot, keepDownloads: true, pollMs: 100, iceOverride: [], createClient: () => new WebTorrent(offline) });
-  t.after(async () => { await helper.stop(); if (path.dirname(cacheRoot) === tmpdir()) await rm(cacheRoot, { recursive: true, force: true }); });
+  // Two clients wrote into this folder, and Windows releases their handles a moment after the destroy returns.
+  t.after(async () => { await helper.stop(); if (path.dirname(cacheRoot) === tmpdir()) await rm(cacheRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
   await helper.pair(pair.pairingUrl);
   let state;
   for (let i = 0; i < 200; i++) {
@@ -354,10 +355,26 @@ test('a kept download gets its own subfolder and outlives the helper', { timeout
     await sleep(100);
   }
   assert.equal(state.ready, true, 'the helper loaded the seeded torrent into the folder the user chose');
-  const kept = [`torrent-${seeded.infoHash}`];
-  assert.deepEqual(await readdir(cacheRoot), kept, 'a torrent the user keeps never writes into the chosen folder itself');
+  const kept = [`torrent-${seeded.infoHash}`, `torrent-${seeded.infoHash}.torrent`];
+  assert.deepEqual((await readdir(cacheRoot)).sort(), kept, 'a torrent the user keeps gets its own folder, with only the saved info dict beside it');
   await helper.stop();
-  assert.deepEqual(await readdir(cacheRoot), kept, 'stopping the helper leaves a kept download where the user can find it');
+  assert.deepEqual((await readdir(cacheRoot)).sort(), kept, 'stopping the helper leaves a kept download where the user can find it');
+  // The swarm is gone and the second room's magnet carries no peer hint, so nothing can hand this helper the
+  // metadata: reaching 'ready' at all means the saved info dict was read back off the disk.
+  await new Promise(resolve => seed.torrents[0].destroy(resolve));
+  const again = await post('/api/rooms', { source: seeded.magnetURI }, null, 201);
+  const againRoom = `/api/rooms/${again.roomId}`, againRoute = againRoom + '/helper';
+  t.after(() => post(againRoom, { action: 'leave' }, again.token).catch(() => {}));
+  const reloaded = createRemoteAgent({ cacheRoot, keepDownloads: true, pollMs: 100, iceOverride: [], createClient: () => new WebTorrent(offline) });
+  t.after(() => reloaded.stop());
+  await reloaded.pair((await post(againRoute, { action: 'pair' }, again.token)).pairingUrl);
+  for (let i = 0; i < 100; i++) {
+    state = await post(againRoute, { action: 'status' }, again.token);
+    if (state.ready) break;
+    await sleep(100);
+  }
+  assert.equal(state.ready, true, 'a kept download is served again when no peer is left to send the metadata');
+  await reloaded.stop();
 });
 
 test('a torrent is refused before its folders reach the disk', { timeout: 30000 }, async t => {
