@@ -214,7 +214,7 @@ class CouchSwarmHelper : Form {
     readonly ToolTip tips = new ToolTip();
     readonly JavaScriptSerializer json = new JavaScriptSerializer();
     Process helper;
-    bool quitting, running;
+    bool quitting, running, spoke;
     int viewers;
     string lastLink = "", site = "";
 
@@ -439,6 +439,7 @@ class CouchSwarmHelper : Form {
     void OnUi(Action action) { if (!IsDisposed && IsHandleCreated) { try { BeginInvoke(action); } catch (InvalidOperationException) {} } }
     void StartHelper() {
         if (helper != null && !helper.HasExited) return;
+        spoke = false;
         string root = AppDomain.CurrentDomain.BaseDirectory;
         // Antivirus HTTPS scanning and company TLS inspection put their root in the Windows store only,
         // so without --use-system-ca every pairing fetch fails with a bare "fetch failed".
@@ -456,6 +457,9 @@ class CouchSwarmHelper : Form {
             try { data = json.Deserialize<Dictionary<string, object>>(e.Data); } catch { return; }
             if (data == null) return;
             OnUi(() => {
+                // Set here rather than on the reading thread, so it is written and read on the same one and a
+                // report always lands before the exit that follows it.
+                spoke = true;
                 bool failed = data.ContainsKey("error");
                 bool ended = failed || data.ContainsKey("stopped");
                 // A running session can still hit something only the user can clear: an unwritable folder, a full
@@ -479,7 +483,11 @@ class CouchSwarmHelper : Form {
             int code = ((Process)s).ExitCode;
             OnUi(() => {
                 if (quitting) { Close(); return; }
-                Say("Helper stopped (code " + code + "). Create a fresh pairing link to reconnect.", Skin.Alarm);
+                // A helper that never reported anything did not get far enough for a pairing link to be the
+                // problem: a partial extraction or a quarantined runtime dies here, and the only account of it
+                // is the log this app keeps of its stderr.
+                Say(spoke ? "Helper stopped (code " + code + "). Create a fresh pairing link to reconnect."
+                    : "The helper could not start (code " + code + "). Details are in %LOCALAPPDATA%\\CouchSwarm\\helper.log.", Skin.Alarm);
                 site = "";
                 meta.Text = "";
                 viewers = 0;

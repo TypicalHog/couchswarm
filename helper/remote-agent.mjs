@@ -188,6 +188,9 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       // The sweep above only deletes directories carrying this marker, so a user folder named room-abc123 is safe.
       if (!keepDownloads) await (await open(path.join(created, '.couchswarm'), 'w')).close();
     } catch (error) {
+      // The retry that follows repaints the status before the launcher has drawn this one, so the reason also
+      // goes to the log — by code, since the message names the folder.
+      console.error('Download folder failed:', error?.code ? `${error.code} ${error.syscall ?? ''}`.trim() : 'no reason given');
       // The room must never see a local filesystem path; the launcher window still does.
       report({ status: error.message, peers: connectedPeers(), torrentPeers: 0 });
       throw Object.assign(new Error('The helper cannot write to its download folder. Stop sharing, then choose another folder in the helper.'), { permanent: true });
