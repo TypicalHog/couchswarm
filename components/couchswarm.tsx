@@ -1,7 +1,7 @@
 'use client';
 import { HelperConnection } from '@/components/helper-connection';
 
-import { useEffect, useRef, useState, type SyntheticEvent } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type SyntheticEvent } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { ArrowDown, ArrowRight, Check, CircleHelp, Copy, Crown, Film, Link2, LoaderCircle, LockKeyhole, LogOut, Maximize, MonitorPlay, Pause, Play, Radio, ShieldCheck, Sofa, Users, Volume2, VolumeX, Wifi, Zap } from 'lucide-react';
@@ -29,6 +29,8 @@ function PickerUpdated() {
   return <div className="error" role="alert">CouchSwarm was updated while this room was open. <button className="quiet-button" onClick={() => location.reload()}>Reload this page</button> to choose a video or subtitle. Your seat is kept.</div>;
 }
 const updated = () => PickerUpdated as never;
+// Hydration happens once and never comes undone, so this store has nothing to report.
+const noUpdates = () => () => { /* Nothing to unsubscribe from. */ };
 // Only multi-file torrents need the picker, so its base-ui Select stays out of the first-load bundle.
 const VideoSelection = dynamic(() => import('@/components/video-selection').then(m => m.VideoSelection).catch(updated), { ssr: false });
 const SubtitleSelection = dynamic(() => import('@/components/subtitle-selection').then(m => m.SubtitleSelection).catch(updated), { ssr: false });
@@ -63,6 +65,9 @@ export default function CouchSwarm() {
   const [copyError, setCopyError] = useState('');
   const [rotated, setRotated] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // The prerendered form carries no submit handler, so Enter would navigate to /?torrent=… - losing the magnet
+  // to the address bar and history, and with it the ?room= of an invite link, which leaves a guest in a host lobby.
+  const hydrated = useSyncExternalStore(noUpdates, () => true, () => false);
   const hasSource = !!room?.source;
   const isPlaying = !!room?.playing;
   const canPlay = hasSource && swarm.connected && isHost && !swarm.busy && (isPlaying || swarm.everyoneReady);
@@ -175,7 +180,7 @@ export default function CouchSwarm() {
     hideTimer.current = setTimeout(() => { delete card.dataset.active; }, 2500);
   }
 
-  const torrentForm = <><form className="torrent-form" onSubmit={submitTorrent}><Link2 size={18}/><input name="torrent" ref={magnetRef} id={modal === 'source' ? 'change-torrent' : 'torrent'} aria-label="Torrent magnet link or HTTPS torrent URL" placeholder="Paste a magnet or torrent link…" value={magnet} onChange={e => setMagnet(e.target.value)} required maxLength={8192} autoComplete="off" disabled={swarm.unsupported} aria-invalid={formError && swarm.error ? true : undefined} aria-describedby={formError && swarm.error ? 'torrent-error' : undefined}/><button className="primary-button" disabled={swarm.unsupported} aria-busy={loadingTorrent || swarm.busy}>{loadingTorrent ? <LoaderCircle size={16} className="spin"/> : <>{session ? 'Load torrent' : 'Create room'}<ArrowRight size={16}/></>}</button></form>{swarm.error && <div id="torrent-error" className="error" role="alert">{swarm.error}</div>}</>;
+  const torrentForm = <><form className="torrent-form" onSubmit={submitTorrent}><Link2 size={18}/><input name="torrent" ref={magnetRef} id={modal === 'source' ? 'change-torrent' : 'torrent'} aria-label="Torrent magnet link or HTTPS torrent URL" placeholder="Paste a magnet or torrent link…" value={magnet} onChange={e => setMagnet(e.target.value)} required maxLength={8192} autoComplete="off" disabled={!hydrated || swarm.unsupported} aria-invalid={formError && swarm.error ? true : undefined} aria-describedby={formError && swarm.error ? 'torrent-error' : undefined}/><button className="primary-button" disabled={!hydrated || swarm.unsupported} aria-busy={loadingTorrent || swarm.busy}>{loadingTorrent ? <LoaderCircle size={16} className="spin"/> : <>{session ? 'Load torrent' : 'Create room'}<ArrowRight size={16}/></>}</button></form>{swarm.error && <div id="torrent-error" className="error" role="alert">{swarm.error}</div>}</>;
 
   return <div className="shell">
     <output className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</output>
