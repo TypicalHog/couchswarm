@@ -33,7 +33,7 @@ test('the packaged helper and the site select the same video files', () => {
   // The helper reads the same torrent through parse-torrent, which joins nested paths with the Windows separator.
   const nested = [{ name: 'A.mkv', path: 'Pack/A.mkv', length: 40 }, { name: 'PackA.mkv', path: 'PackA.mkv', length: 40 }];
   const windows = nested.map(file => ({ ...file, path: file.path.replaceAll('/', '\\') }));
-  assert.deepEqual(helperVideoFiles(windows).map(file => file.name), videoFiles(nested).map(file => file.name),
+  assert.deepEqual(helperVideoFiles(windows).map((file: { name: string }) => file.name), videoFiles(nested).map(file => file.name),
     'a backslash path ties the same way the browser ties the forward-slash one');
 });
 
