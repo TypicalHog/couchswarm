@@ -355,7 +355,10 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
         // takes it back, so it stays, but the room must stop reading as 'reconnecting' with this tab still seated.
         setSeatLost(status === 409 && (err as { code?: string }).code === 'seat-lost');
         failures++;
-        setNetworkError((err as Error).message);
+        // Nothing here was asked for by hand and the next attempt is already scheduled below, so a failure with
+        // no reply behind it must not ask for a retry the user cannot make; say what the pill and the live
+        // region on the same screen say. A reply that carried a reason keeps it.
+        setNetworkError(status ? (err as Error).message : 'Connection lost. Reconnecting…');
       } finally { pending.current = false; }
       // Back off a failing room instead of pinning it at 1 Hz, and hold an idle lobby at the watchdog's floor.
       // Only once the presence lease has lapsed, though: backing off sooner puts the retry that would have kept

@@ -496,13 +496,13 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
             setStatus(gotMetadata ? 'Checking the part of this movie already saved on this device…'
               : bridge || remote ? 'Your helper is connected, but no video pieces have arrived yet. The torrent needs reachable seeders.'
               : helperReason ? `No video data yet. ${helperReason}`
-              : 'No video data yet. Start CouchSwarm with the torrent helper to reach ordinary torrent peers, or use a torrent with a WebRTC seeder or HTTPS web seed.');
+              : 'No video data yet. This torrent needs a WebRTC seeder or an HTTPS web seed to reach your browser.');
             return;
           }
           if (file.downloaded === 0) {
             setStatus(bridge || remote ? 'Your helper is connected, but no video pieces have arrived yet. The torrent needs reachable seeders.'
               : helperReason ? `No video data yet. ${helperReason}`
-              : 'No video data yet. Start CouchSwarm with the torrent helper to reach ordinary torrent peers, or use a torrent with a WebRTC seeder or HTTPS web seed.');
+              : 'No video data yet. This torrent needs a WebRTC seeder or an HTTPS web seed to reach your browser.');
             return;
           }
           // An MKV cannot start until its index, which sits at the end of the file, has arrived.
