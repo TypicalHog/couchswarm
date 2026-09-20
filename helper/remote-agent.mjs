@@ -20,6 +20,8 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
   let desiredVersion = -2, loadAbort, attemptedVersion = -2, attempts = 0, readyAt = 0, misses = 0, generation = 0;
   let servedPieces = { from: 0, to: -1 };
   const peers = new Map();
+  // Every serving viewer's read-ahead windows, so a deselect can put back what the others still claim.
+  const viewers = new Set();
   const root = path.resolve(cacheRoot);
   const notify = message => { status = message; report({ status, peers: peers.size, torrentPeers: torrent?.numPeers || 0 }); };
   async function api(body) {
@@ -64,6 +66,13 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     const version = attemptedVersion;
     setTimeout(() => { if (!closed && desiredVersion === version) desiredVersion = -2; }, 15000).unref();
   }
+  // webtorrent merges overlapping non-stream selections into one range, so deselecting a window drops whatever another
+  // viewer's overlapping window claimed too. Re-selecting every live window afterwards is idempotent — the merge
+  // absorbs a range that is already selected — so only the pieces nobody is waiting for are left behind.
+  function reassert(value) {
+    if (value !== torrent || value.destroyed) return;
+    for (const windows of viewers) for (const window of windows) value.select(window.from, window.to, 0);
+  }
   // Keep bounded runs of pieces past recent requests selected, so the swarm fetch pipelines instead of stopping after
   // each piece a browser asks for. A request past the middle of its window slides that window forward; one outside every
   // window opens another, retiring the oldest. The request's own stream selection has higher priority and stays first.
@@ -73,7 +82,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     const index = windows.findIndex(window => piece >= window.from && piece <= window.to);
     if (index >= 0 && piece <= windows[index].from + span / 2) return;
     const stale = index >= 0 ? windows.splice(index, 1)[0] : windows.length >= READ_AHEAD_WINDOWS ? windows.shift() : null;
-    if (stale) value.deselect(stale.from, stale.to);
+    if (stale) { value.deselect(stale.from, stale.to); reassert(value); }
     const window = { from: piece, to: Math.min(servedPieces.to, piece + span) };
     windows.push(window);
     value.select(window.from, window.to, 0);
@@ -222,12 +231,13 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
           // Each viewer keeps its own read-ahead windows; a shared list lets one viewer evict another's prefetch.
           let served; const own = [];
           const disconnected = () => { clearTimeout(timeout); if (peers.get(remote.id) === peer) peers.delete(remote.id);
-            if (served && !served.destroyed) for (const window of own.splice(0)) served.deselect(window.from, window.to); };
+            viewers.delete(own);
+            if (served && !served.destroyed) { for (const window of own.splice(0)) served.deselect(window.from, window.to); reassert(served); } };
           peer.once('close', disconnected); peer.once('disconnect', disconnected);
           peer.once('connect', () => {
             clearTimeout(timeout);
             served = torrent;
-            if (served && !closed) serveTorrentPeer(peer, served, piece => readAhead(served, piece, own), servedPieces); else peer.destroy();
+            if (served && !closed) { viewers.add(own); serveTorrentPeer(peer, served, piece => readAhead(served, piece, own), servedPieces); } else peer.destroy();
           });
           peer.on('signal', answer => { void api({ action: 'answer', peerId: remote.id, answer }).catch(() => peer.destroy()); });
           peer.signal(remote.offer);
