@@ -69,19 +69,21 @@ test('helper pairing is per participant, single-use, scoped, revocable, and reje
   let state = await post(route, { action: 'status' }, guest.token);
   assert.deepEqual([state.ready, state.own, state.mine], [true, false, false]);
   ice(state);
-  const offer = { type: 'offer', sdp: 'test offer' };
+  // A signal must carry a data-channel media section and nothing else, so every fixture below has one.
+  const sdp = name => `${name}\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n`;
+  const offer = { type: 'offer', sdp: sdp('test offer') };
   await post(route, { action: 'offer', mediaVersion: 1, offer }, guest.token, 409);
   assert.match((await post(route, { action: 'offer', mediaVersion: 0, offer: { type: 'offer', sdp: '' } }, guest.token, 409)).error, /stale or invalid/);
   const connection = await post(route, { action: 'offer', mediaVersion: 0, offer }, guest.token, 201);
   await post(route, { action: 'peer', peerId: connection.peerId }, host.token, 410);
-  await post('/api/helper', { action: 'answer', id: grant.id, peerId: connection.peerId, answer: { type: 'answer', sdp: 'test answer' } }, grant.token);
-  await post('/api/helper', { action: 'answer', id: grant.id, peerId: connection.peerId, answer: { type: 'answer', sdp: 'second answer' } }, grant.token, 410);
-  assert.equal((await post(route, { action: 'peer', peerId: connection.peerId }, guest.token)).answer.sdp, 'test answer');
+  await post('/api/helper', { action: 'answer', id: grant.id, peerId: connection.peerId, answer: { type: 'answer', sdp: sdp('test answer') } }, grant.token);
+  await post('/api/helper', { action: 'answer', id: grant.id, peerId: connection.peerId, answer: { type: 'answer', sdp: sdp('second answer') } }, grant.token, 410);
+  assert.equal((await post(route, { action: 'peer', peerId: connection.peerId }, guest.token)).answer.sdp, sdp('test answer'));
   // A guest's own helper takes over once it is ready. Until then the host's ready helper keeps serving them.
   const guestGrant = await claim((await post(route, { action: 'pair' }, guest.token)).pairingUrl);
   state = await post(route, { action: 'status' }, guest.token);
   assert.deepEqual([state.paired, state.online, state.ready, state.own, state.mine], [true, true, true, false, true]);
-  assert.equal((await post(route, { action: 'peer', peerId: connection.peerId }, guest.token)).answer.sdp, 'test answer');
+  assert.equal((await post(route, { action: 'peer', peerId: connection.peerId }, guest.token)).answer.sdp, sdp('test answer'));
   const replaced = await post(route, { action: 'offer', mediaVersion: 0, offer }, guest.token, 201);
   await post(route, { action: 'close', peerId: replaced.peerId }, guest.token);
   await post(route, { action: 'peer', peerId: replaced.peerId }, guest.token, 410);
