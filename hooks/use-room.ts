@@ -262,7 +262,12 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
       const target = current ? timelinePosition(current, now) : 0;
       const ahead = video ? bufferedAhead(video.buffered, target) : 0;
       const ready = !!(current && video && anchor.current.server && state.armed && !state.media.error && state.media.loadedVersion === current.mediaVersion
-        && appliedEpoch.current === current.epoch && video.readyState >= 2 && !video.seeking
+        && appliedEpoch.current === current.epoch
+        // A hard resync into data this element already holds still raises seeking and drops readyState for a few
+        // tens of milliseconds, and a heartbeat that lands inside that window pauses the room for everyone. While
+        // the room plays, buffer at the target is proof enough; a paused member still has to decode the frame it
+        // is being asked to show before a countdown starts.
+        && ((current.playing && ahead > 0) || (video.readyState >= 2 && !video.seeking))
         // An element this tab paused itself is behind the timeline through no fault of its buffer, and the
         // reply to this very request seeks it back, so buffer at the target still counts as ready. One sitting
         // at its own end has nowhere further to go, which is all the room asks of it at the wrap.
