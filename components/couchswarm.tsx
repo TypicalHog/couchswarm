@@ -92,8 +92,10 @@ export default function CouchSwarm() {
   // room only from an idle page. Re-bound each render so it always closes over the current room state.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.code !== 'Space' || event.repeat || event.ctrlKey || event.metaKey || event.altKey || modal || swarm.invitation) return;
-      if ((event.target as HTMLElement | null)?.closest('input, textarea, select, button, [contenteditable], [role=slider], [role=dialog]')) return;
+      // A widget that has already acted on this Space - choosing a track in an open picker, say - calls
+      // preventDefault without stopping the event, so it still arrives here.
+      if (event.defaultPrevented || event.code !== 'Space' || event.repeat || event.ctrlKey || event.metaKey || event.altKey || modal || swarm.invitation) return;
+      if ((event.target as HTMLElement | null)?.closest('input, textarea, select, button, [contenteditable], [role=slider], [role=dialog], [role=option], [role=listbox]')) return;
       if (!canPlay) return;
       event.preventDefault();
       togglePlayback();
