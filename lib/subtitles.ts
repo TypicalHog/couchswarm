@@ -5,15 +5,34 @@ export function subtitleFiles<T extends { name: string; path: string }>(files: T
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
-// Valid UTF-8 always decodes, so a fatal throw means a legacy codepage; Western European covers nearly
-// every torrent subtitle that is not already UTF-8, and guessing further would need a charset picker.
-export function decodeSubtitle(bytes: AllowSharedBufferSource) {
+// Nothing inside an SRT or an ASS names its code page, so a file that is not UTF-8 has to be guessed at. The
+// languages the reader asks the web for are the one hint available, and they are a good one: somebody reading
+// Croatian subtitles has windows-1250 files, not the Western European default that turns 'đ' into 'ð'.
+const LEGACY: [RegExp, string][] = [
+  [/^(cs|hr|bs|hu|pl|ro|sk|sl|sq|sr-latn)\b/i, 'windows-1250'],
+  [/^(be|bg|kk|mk|ru|sr|uk)\b/i, 'windows-1251'],
+  [/^el\b/i, 'windows-1253'],
+  [/^(az|tr)\b/i, 'windows-1254'],
+  [/^(he|iw)\b/i, 'windows-1255'],
+  [/^(ar|fa|ur)\b/i, 'windows-1256'],
+  [/^(et|lt|lv)\b/i, 'windows-1257'],
+];
+
+// Valid UTF-8 always decodes, so a fatal throw means a legacy code page. Western European is what a language
+// list says nothing about falls back to, as every subtitle that is not already UTF-8 did before.
+export function decodeSubtitle(bytes: AllowSharedBufferSource, languages: readonly string[] = []) {
   const view = ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : new Uint8Array(bytes);
   // UTF-16 is not valid UTF-8, so without this every character would arrive separated by a null byte.
   if (view[0] === 0xFF && view[1] === 0xFE) return new TextDecoder('utf-16le').decode(bytes);
   if (view[0] === 0xFE && view[1] === 0xFF) return new TextDecoder('utf-16be').decode(bytes);
   try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
-  catch { return new TextDecoder('windows-1252').decode(bytes); }
+  catch {
+    for (const tag of languages) {
+      const legacy = LEGACY.find(([match]) => match.test(tag));
+      if (legacy) return new TextDecoder(legacy[1]).decode(bytes);
+    }
+    return new TextDecoder('windows-1252').decode(bytes);
+  }
 }
 
 // A leading space and a fourth fraction digit both come out of retiming and OCR tools. A line opening with a
