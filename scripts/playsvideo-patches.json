@@ -9,6 +9,11 @@
       "find": "console.log(`[engine] ${msg}`);",
       "replace": "if (/^(error|WARN)/.test(msg)) console.log(`[engine] ${msg}`);",
       "count": 1
+    },
+    {
+      "find": "enableWorker: false,",
+      "replace": "enableWorker: false,\n            maxBufferLength: 60,\n            maxMaxBufferLength: 60,",
+      "count": 1
     }
   ],
   "worker.js": [
