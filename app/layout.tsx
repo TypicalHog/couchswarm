@@ -18,7 +18,10 @@ export const metadata: Metadata = {
   title: 'CouchSwarm — Movie night, together',
   description: 'One room, one play button. Watch browser-compatible torrents in sync with your people.',
   icons: { icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }, { url: '/favicon.ico', sizes: '32x32' }], apple: '/apple-touch-icon.png' },
-  // Vercel derives the deployment URL itself; elsewhere the social image needs an absolute base, or the build warns and falls back to localhost.
+  // Vercel derives the deployment URL itself; elsewhere the social image needs an absolute base, or the build warns
+  // and falls back to localhost. The home page is prerendered, so this is read when the build runs, not per
+  // request: a host that injects the variable only into the running container still unfurls invites pointing at
+  // localhost. DEPLOYMENT.md section 4 says to pass it to the build too.
   metadataBase: URL.parse(process.env.COUCHSWARM_PUBLIC_ORIGIN || '') ?? undefined,
   openGraph: { title: 'CouchSwarm — Movie night, together', description: 'One room, one play button. Watch browser-compatible torrents in sync with your people.', type: 'website', siteName: 'CouchSwarm' },
   twitter: { card: 'summary_large_image', title: 'CouchSwarm — Movie night, together', description: 'One room, one play button. Watch browser-compatible torrents in sync with your people.' },
