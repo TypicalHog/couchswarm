@@ -2,18 +2,8 @@ import type { Session } from './sync';
 
 type HelperStatus = { ready: boolean; error: string; peers: number; speed: number; downloaded: number };
 
-// AbortSignal.any needs Chrome 116 / Firefox 124 / Safari 17.4.
-function anySignal(signal: AbortSignal, ms: number) {
-  if (typeof AbortSignal.any === 'function') return AbortSignal.any([signal, AbortSignal.timeout(ms)]);
-  const controller = new AbortController();
-  const timeout = AbortSignal.timeout(ms);
-  // Detach from the caller's long-lived signal so repeated calls do not pile listeners on it.
-  const abort = () => { signal.removeEventListener('abort', abort); timeout.removeEventListener('abort', abort); controller.abort(); };
-  signal.addEventListener('abort', abort, { once: true });
-  timeout.addEventListener('abort', abort, { once: true });
-  if (signal.aborted) abort();
-  return controller.signal;
-}
+// A browser without AbortSignal.any never gets a room session, so this path needs no fallback for one.
+const anySignal = (signal: AbortSignal, ms: number) => AbortSignal.any([signal, AbortSignal.timeout(ms)]);
 
 export async function connectHelper(session: Session, source: string, mediaVersion: number,
   signal: AbortSignal, update: (status: HelperStatus) => void) {
