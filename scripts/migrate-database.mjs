@@ -9,6 +9,9 @@ import path from 'node:path';
 nextEnv.loadEnvConfig(process.cwd(), process.env.npm_lifecycle_event === 'predev');
 const url = process.env.TURSO_DATABASE_URL || (process.env.VERCEL || process.env.NODE_ENV === 'production' ? '' : 'file:.local/rooms.db');
 if (!url) throw new Error('Set TURSO_DATABASE_URL to the target database.');
+// The runtime refuses the same URL, so without this a misconfigured deploy migrates a file in the build
+// container, ships green, and then answers 503 to every request.
+if (process.env.VERCEL && url.startsWith('file:')) throw new Error('Vercel requires a remote Turso database.');
 if (url.startsWith('file:')) await mkdir(path.dirname(url.slice(5).replace(/^\/+(?=[A-Za-z]:)/, '')), { recursive: true });
 // Without a busy timeout a runner that meets another's lock fails instantly, before the bookkeeping
 // row's PRIMARY KEY below can turn the race into a skip: a build next to a dev server's predev aborts.
