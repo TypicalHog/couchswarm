@@ -39,6 +39,9 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
   const [subtitleError, setSubtitleError] = useState('');
   const [subtitleBusy, setSubtitleBusy] = useState(false);
   const subtitleRef = useRef<TorrentFile[]>([]);
+  // A pick made while the torrent effect is restarting waits for the new client's list instead of failing.
+  const waitingForList = useRef(false);
+  const [listed, setListed] = useState(0);
   const [stats, setStats] = useState({ speed: 0, peers: 0, progress: 0, filename: '', size: 0 });
   const [loadedVersion, setLoadedVersion] = useState(-1);
   const [helper, setHelper] = useState<{ peers?: number; host?: boolean } | null>(null);
@@ -205,6 +208,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           // Naming the subtitles costs nothing; their bytes are only read once somebody picks one.
           subtitleRef.current = subtitleFiles(value.files);
           setSubtitles(subtitleRef.current.map(file => ({ name: file.name, path: file.path })));
+          if (waitingForList.current) setListed(value => value + 1);
           const file = videos[fileIndex];
           if (!videos.length) { fail('No video found. Choose a torrent containing an MKV, MP4, WebM, M4V, or OGV video.'); return; }
           if (!file) { fail(`The host chose video #${fileIndex + 1}, but this torrent has ${videos.length}. Ask the host to pick again.`); return; }
@@ -339,6 +343,10 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
       timer = setTimeout(() => { expired = true; stream?.destroy(); }, 30_000);
       try {
         const file = typeof subtitle === 'number' ? subtitleRef.current[subtitle] : subtitle;
+        // A restarting torrent empties the list this index points into, and the entry is still there once the
+        // new client lists its files: keep the pick on 'Loading…' rather than failing it.
+        waitingForList.current = !file && !subtitleRef.current.length;
+        if (waitingForList.current) return;
         if (!file) throw new Error('That subtitle is no longer part of this torrent.');
         const bytes = file instanceof File ? await file.arrayBuffer() : await readFile(file, value => { stream = value; });
         if (disposed) return;
@@ -370,7 +378,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
       track?.remove();
       if (url) URL.revokeObjectURL(url);
     };
-  }, [subtitle, videoRef]);
+  }, [subtitle, videoRef, listed]);
 
   const reconnect = useCallback(() => { retriedHelper.current = 0; retriedUpgrade.current = false; setAttempt(value => value + 1); }, []);
   return { status, error, files, stats, loadedVersion, helper, reconnect, subtitles, subtitle, setSubtitle, subtitleError, subtitleBusy };
