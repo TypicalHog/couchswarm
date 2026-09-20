@@ -17,7 +17,7 @@ export function SubtitleSelection({ subtitles, value, busy, error, onChange }:
   return <div className="video-selection subtitle-selection">
     <label id="subtitle-label" htmlFor="subtitle">Subtitles</label>
     <Select value={chosen} onValueChange={next => { if (next !== null) onChange(next === 'upload' ? uploaded : next === 'off' ? null : Number(next)); }}>
-      <SelectTrigger id="subtitle" aria-labelledby="subtitle-label" className="w-full" aria-describedby={error ? 'subtitle-error' : undefined}>
+      <SelectTrigger id="subtitle" aria-labelledby="subtitle-label" className="w-full min-h-8 whitespace-normal wrap-anywhere data-[size=default]:h-auto *:data-[slot=select-value]:line-clamp-none" aria-describedby={error ? 'subtitle-error' : undefined}>
         <SelectValue>{busy ? 'Loading…' : value instanceof File ? value.name : value === null ? 'Off' : subtitles[value]?.name}</SelectValue>
       </SelectTrigger>
       <SelectContent>
