@@ -254,6 +254,11 @@ export async function torrentSource(source, signal) {
       await Promise.race([checks, new Promise(resolve => deadline.addEventListener('abort', resolve, { once: true }))]);
     }
     parsed.announce = allowed.filter(Boolean);
+    // WebTorrent gives a private torrent no DHT, no ut_pex and none of the WebSocket trackers it otherwise adds,
+    // so one that announces over http(s) alone has nothing left to find a peer with once the filter above drops
+    // those announces. Say so now instead of spending 90 seconds waiting for metadata that cannot arrive.
+    if (parsed.private && trackers.length && trackers.every(tracker => /^https?:/i.test(tracker)))
+      throw refusal('This private torrent announces only over HTTP, which the helper cannot use. Choose another torrent.');
   }
   return parsed;
 }
