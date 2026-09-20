@@ -1,5 +1,5 @@
 import { cleanName, getDb, hash, json, notAllowed, readBody, secret, withDb } from '@/lib/db';
-import { PRESENCE_MS, ROOM_TTL_MS, validSource } from '@/lib/sync';
+import { HELPER_PEER_TTL_MS, PRESENCE_MS, ROOM_TTL_MS, validSource } from '@/lib/sync';
 
 export const maxDuration = 10;
 
@@ -21,6 +21,9 @@ async function handler(request: Request) {
   const now = Date.now();
   const cutoff = now - ROOM_TTL_MS, seen = now - PRESENCE_MS;
   await db.batch([
+    // A helper killed without saying goodbye leaves its viewers' leases behind, and the only other prune runs inside
+    // that helper's own poll, so nothing would drop them until the whole room expired.
+    db.prepare('DELETE FROM helper_peers WHERE last_seen < ?').bind(now - HELPER_PEER_TTL_MS),
     db.prepare(`DELETE FROM helper_peers WHERE helper_id IN (SELECT id FROM helpers WHERE room_id IN (${expiredRooms}))`).bind(cutoff, seen),
     db.prepare(`DELETE FROM helpers WHERE room_id IN (${expiredRooms})`).bind(cutoff, seen),
     db.prepare(`DELETE FROM members WHERE room_id IN (${expiredRooms})`).bind(cutoff, seen),

@@ -54,7 +54,9 @@ async function handler(request: Request) {
   if (body.action === 'answer') {
     const answer = validSignal(body.answer, 'answer');
     if (!answer || typeof body.peerId !== 'string') return json({ error: 'Invalid answer.' }, 400);
-    const result = await db.prepare('UPDATE helper_peers SET answer = ? WHERE id = ? AND helper_id = ? AND media_version = ? AND answer IS NULL')
+    // The offer is never read again once an answer exists (the poll below skips it), and it carries the viewer's
+    // own addresses, so it goes with the answer rather than sitting in the row for the whole connection.
+    const result = await db.prepare("UPDATE helper_peers SET answer = ?, offer = '' WHERE id = ? AND helper_id = ? AND media_version = ? AND answer IS NULL")
       .bind(JSON.stringify(answer), body.peerId, helper.id, room.media_version).run();
     return json({ ok: !!result.meta.changes }, result.meta.changes ? 200 : 410);
   }
