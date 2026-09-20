@@ -21,7 +21,7 @@ const MAX_SESSIONS = MAX_ROOM_TORRENTS * MAX_SEATS;
 // A torrent past this is an archive, not a movie: hashing it costs minutes here and freezes every viewer's
 // tab for seconds. Mirrored by the browser's own check in hooks/use-torrent.ts.
 const MAX_TORRENT_FILES = 20000;
-// The dev server builds one helper per loopback origin; they share a cache root.
+// helper/server.mjs builds a single helper, so the stale-session sweep below runs once for the process.
 let swept = false;
 const blocked = new BlockList();
 for (const [address, prefix] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['192.0.0.0', 24],
