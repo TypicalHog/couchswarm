@@ -17,17 +17,29 @@ const packaged = process.env.COUCHSWARM_PACKAGED_TEST === '1';
 // otherwise reports the source suite's failures as code regressions.
 if (packaged) {
   const stale = [];
-  for (const file of ['constants.mjs', 'desktop.mjs', 'remote-agent.mjs', 'remote-wire.mjs', 'torrent-helper.mjs'])
-    if (await readFile(new URL(`../work/helper-package/app/helper/${file}`, import.meta.url), 'utf8').catch(() => null)
-      !== await readFile(new URL(`../helper/${file}`, import.meta.url), 'utf8')) stale.push(file);
-  // Byte equality only covers those scripts: a build that failed after copying them leaves a stage whose imports
-  // resolve from the repo's own node_modules, beside a ZIP that is not the file people download.
-  for (const name of ['webtorrent', '@thaunknown/simple-peer', 'bittorrent-protocol', 'ut_metadata', 'parse-torrent', 'range-parser'])
-    if (!await stat(new URL(`../work/helper-package/app/node_modules/${name}/package.json`, import.meta.url)).catch(() => null)) stale.push(name);
-  const zip = await stat(new URL('../public/downloads/CouchSwarm-Helper-win-x64.zip', import.meta.url)).catch(() => null);
-  const staged = await stat(new URL('../work/helper-package/app/helper/remote-agent.mjs', import.meta.url)).catch(() => null);
-  if (!zip || !staged || zip.mtimeMs < staged.mtimeMs) stale.push('CouchSwarm-Helper-win-x64.zip');
-  if (stale.length) throw new Error(`work/helper-package is missing or stale (${stale.join(', ')}). Run npm run build:helper.`);
+  // Read from helper/ rather than listed here, so a module the helper starts importing cannot be left out of a
+  // package: server.mjs is the standalone dev helper and belongs to neither, and launcher.mjs is the Linux front
+  // end, which has as little place in the Windows package as the GUI has in the Linux one.
+  const sources = (await readdir(new URL('../helper', import.meta.url))).filter(file => file.endsWith('.mjs') && file !== 'server.mjs');
+  for (const [stage, archive, native] of [['helper-package', 'CouchSwarm-Helper-win-x64.zip', 'MZ'], ['helper-package-linux', 'CouchSwarm-Helper-linux-x64.tar.gz', '\x7fELF']]) {
+    const app = new URL(`../work/${stage}/app/`, import.meta.url);
+    for (const file of sources.filter(file => stage.endsWith('linux') || file !== 'launcher.mjs'))
+      if (await readFile(new URL(`helper/${file}`, app), 'utf8').catch(() => null)
+        !== await readFile(new URL(`../helper/${file}`, import.meta.url), 'utf8')) stale.push(`${stage}/${file}`);
+    // Byte equality only covers those scripts: a build that failed after copying them leaves a stage whose imports
+    // resolve from the repo's own node_modules, beside an archive that is not the file people download.
+    for (const name of ['webtorrent', '@thaunknown/simple-peer', 'bittorrent-protocol', 'ut_metadata', 'parse-torrent', 'range-parser'])
+      if (!await stat(new URL(`node_modules/${name}/package.json`, app)).catch(() => null)) stale.push(`${stage}/${name}`);
+    // node-datachannel ships no prebuilds directory, so the build has to put the target's binding there itself.
+    // The Linux package is cross-built on a machine that cannot run it, and a binding for the wrong platform then
+    // has nothing to give it away but its own file header.
+    const binding = await readFile(new URL('node_modules/node-datachannel/build/Release/node_datachannel.node', app)).catch(() => null);
+    if (binding?.toString('latin1', 0, native.length) !== native) stale.push(`${stage}/node_datachannel.node`);
+    const built = await stat(new URL(`../public/downloads/${archive}`, import.meta.url)).catch(() => null);
+    const copied = await stat(new URL('helper/remote-agent.mjs', app)).catch(() => null);
+    if (!built || !copied || built.mtimeMs < copied.mtimeMs) stale.push(archive);
+  }
+  if (stale.length) throw new Error(`The packaged helper is missing or stale (${stale.join(', ')}). Run npm run build:helper and npm run build:helper:linux.`);
 }
 const { createRemoteAgent, nativeIceServers } = await import(packaged ? '../work/helper-package/app/helper/remote-agent.mjs' : '../helper/remote-agent.mjs');
 
