@@ -44,7 +44,12 @@ async function copyPackage(name, parent, optional = false) {
   for (const file of (await fs.readdir(directory)).filter(file => /^(LICEN[CS]E|COPYING)([-.].*)?$/i.test(file)).sort())
     try { text += `${await fs.readFile(path.join(directory, file), 'utf8')}\n`; } catch {}
   if (!text) unlicensed.push(`${manifest.name}@${manifest.version}`);
-  notices.push(`${manifest.name}@${manifest.version} — ${manifest.license || 'license not declared'}\n${text || 'No license file ships with this package; see its README.'}`);
+  // A few packages still declare their terms in npm's legacy `licenses` array, and several that ship no license file
+  // have no license or copyright line in their README either, so name the terms and the holder from the manifest
+  // instead of sending the reader somewhere that says nothing.
+  const declared = manifest.license || [manifest.licenses].flat().map(entry => entry?.type || entry).filter(Boolean).join(' OR ') || 'license not declared';
+  const holder = [manifest.author, ...(manifest.contributors || [])].map(who => typeof who === 'string' ? who : who?.name).filter(Boolean).join(', ');
+  notices.push(`${manifest.name}@${manifest.version} — ${declared}\n${text || `No license file ships with this package. Declared license: ${declared}; copyright holder(s) per package.json: ${holder || 'not declared'}.`}`);
   await fs.cp(directory, path.join(app, path.relative(root, directory)), {
     recursive: true, filter: file => {
       const parts = path.relative(directory, file).split(path.sep);
@@ -59,7 +64,19 @@ async function copyPackage(name, parent, optional = false) {
     await copyPackage(name, directory, !!manifest.optionalDependencies?.[name] || !!manifest.peerDependenciesMeta?.[name]?.optional);
 }
 for (const name of ['webtorrent', '@thaunknown/simple-peer', 'bittorrent-protocol', 'ut_metadata', 'parse-torrent', 'range-parser']) await copyPackage(name, root);
+// OpenSSL, usrsctp, libsrtp, libjuice and plog are compiled into node-datachannel's prebuilt binding, so the walk
+// above never meets them as packages. Their notices are kept by hand against the version that was reviewed, and the
+// file name carries it, so a bump stops the build until someone checks what the new binding links.
+const native = [...visited].find(directory => path.basename(directory) === 'node-datachannel');
+if (native) {
+  const { version: nativeVersion } = JSON.parse(await fs.readFile(path.join(native, 'package.json'), 'utf8'));
+  const file = path.join(root, 'scripts', 'native-notices', `node-datachannel-${nativeVersion}.txt`);
+  const text = await fs.readFile(file, 'utf8').catch(() => { throw new Error(`Review the libraries linked into node-datachannel@${nativeVersion} and write ${file}.`); });
+  notices.push(`Compiled into node-datachannel@${nativeVersion}\n${text}`);
+}
 await fs.writeFile(path.join(stage, 'THIRD-PARTY-NOTICES.txt'), notices.join('\n\n----\n\n'));
+// The ZIP is the whole of what most people ever receive, so CouchSwarm's own terms have to travel with it.
+await fs.copyFile(path.join(root, 'LICENSE.md'), path.join(stage, 'LICENSE.md'));
 if (unlicensed.length) console.warn(`No license text for ${unlicensed.length} packages: ${unlicensed.join(', ')}`);
 // The assembly version must stay numeric, so package.json's version cannot carry a prerelease suffix.
 const { version: appVersion } = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
@@ -71,7 +88,7 @@ execFileSync(path.join(process.env.WINDIR, 'Microsoft.NET', 'Framework64', 'v4.0
 ], { stdio: 'inherit', windowsHide: true });
 // .NET Framework gates UI Automation live regions (the status label) behind these switches.
 await fs.writeFile(path.join(stage, 'CouchSwarm Helper.exe.config'), '<?xml version="1.0" encoding="utf-8"?>\r\n<configuration>\r\n  <runtime>\r\n    <AppContextSwitchOverrides value="Switch.UseLegacyAccessibilityFeatures=false;Switch.UseLegacyAccessibilityFeatures.2=false;Switch.UseLegacyAccessibilityFeatures.3=false" />\r\n  </runtime>\r\n</configuration>\r\n');
-await fs.writeFile(path.join(stage, 'README.txt'), `CouchSwarm Helper for Windows 10/11 x64\r\n\r\n1. Extract this entire ZIP.\r\n2. Open CouchSwarm Helper.exe. No Node.js installation is needed.\r\n3. In your room, choose Connect your helper, then Create pairing link.\r\n4. Paste that private link into the helper and connect.\r\n5. Keep the helper and room tab open while watching. Guests only need the room link.\r\n\r\nWhen your first movie loads, Windows may ask whether "Node.js JavaScript Runtime" (this app's bundled runtime) can use your network.\r\nAllow it on private networks so torrent peers can reach you too.\r\n\r\nDownloads are kept in %LOCALAPPDATA%\\CouchSwarm\\downloads, or in the folder you choose.\r\nOnly the parts the room watched are downloaded, so a movie you stop early is kept incomplete.\r\nClear "Keep downloads when I close" to delete the movie when you stop sharing or close the app.\r\nThe helper uses as much disk space as the movie needs and uploads movie pieces to room viewers and torrent peers.\r\nBuild ${appVersion} (Node ${version}). This build is unsigned.\r\nThird-party license notices are in THIRD-PARTY-NOTICES.txt and runtime\\LICENSE.\r\n`);
+await fs.writeFile(path.join(stage, 'README.txt'), `CouchSwarm Helper for Windows 10/11 x64\r\n\r\n1. Extract this entire ZIP.\r\n2. Open CouchSwarm Helper.exe. No Node.js installation is needed.\r\n3. In your room, choose Connect your helper, then Create pairing link.\r\n4. Paste that private link into the helper and connect.\r\n5. Keep the helper and room tab open while watching. Guests only need the room link.\r\n\r\nWhen your first movie loads, Windows may ask whether "Node.js JavaScript Runtime" (this app's bundled runtime) can use your network.\r\nAllow it on private networks so torrent peers can reach you too.\r\n\r\nDownloads are kept in %LOCALAPPDATA%\\CouchSwarm\\downloads, or in the folder you choose.\r\nOnly the parts the room watched are downloaded, so a movie you stop early is kept incomplete.\r\nClear "Keep downloads when I close" to delete the movie when you stop sharing or close the app.\r\nThe helper uses as much disk space as the movie needs and uploads movie pieces to room viewers and torrent peers.\r\nBuild ${appVersion} (Node ${version}). This build is unsigned.\r\nCouchSwarm itself is released under The Unlicense, or MIT, or Apache 2.0, whichever you prefer; see LICENSE.md.\r\nThird-party license notices are in THIRD-PARTY-NOTICES.txt and runtime\\LICENSE.\r\n`);
 // Node walks up out of the stage into this repo's own node_modules, so a package left off the list above still
 // loads in the smoke runs below and only fails on a user's extracted copy. Confine both runs to what was staged.
 // The hook file lives in work/ beside AssemblyInfo.cs, so it never reaches the package.
