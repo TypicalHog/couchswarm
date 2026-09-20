@@ -249,6 +249,9 @@ test('torrentPathIssue rejects only the paths Windows cannot store', { timeout: 
     { name: 'c sub.srt', path: 'Pack/c sub.srt', length: 100, offset: 16384 },
     { name: 'C SUB.srt', path: 'Pack/C SUB.srt', length: 100, offset: 16484 }] };
   assert.match(torrentPathIssue(subtitles), /under the same name/, 'subtitles past the video span are checked too');
+  assert.match(torrentPathIssue(torrentOf('Movie.mkv', 'movie.mkv')), /under the same name/);
+  assert.match(torrentPathIssue(torrentOf('Show/ΟΔΟΣ/a.mkv', 'Show/οδοσ/a.mkv')), /under the same name/, 'a word-final Σ folds with σ on NTFS');
+  assert.match(torrentPathIssue(torrentOf('ΤΕΛΟΣ 1.mkv', 'τελοσ 1.mkv')), /under the same name/, 'and so does one before a space');
   const extras = { pieceLength: 16384, files: [
     { name: 'Movie.mkv', path: 'Pack/Movie.mkv', length: 100, offset: 0 },
     { name: 'NUL.txt', path: 'Pack/Extras/NUL.txt', length: 100, offset: 40000 }] };

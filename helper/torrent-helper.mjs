@@ -175,7 +175,9 @@ export function torrentPathIssue(torrent, root = '') {
     if (root && path.join(root, ...stored).length > 250) return 'This torrent stores its files too deep for your download folder. Choose another torrent or a shorter folder.';
     if (torrent.files.length > 1 && (/[#?%\p{Cc}]/u.test(file.path) || file.path.endsWith(' ')))
       return 'This multi-file torrent has a filename WebTorrent cannot request as a web seed path. Choose another torrent.';
-    const key = stored.join('/').toLowerCase();
+    // Folded a code point at a time: lowercasing the whole string applies Unicode's word-final rule, so a Σ before
+    // '/' or a space becomes ς while the same word spelled with σ does not, and NTFS stores the two as one file.
+    const key = Array.from(stored.join('/'), character => character.toLowerCase()).join('');
     if (seen.has(key)) return 'This torrent has two files that Windows would store under the same name. Choose another torrent.';
     seen.add(key);
   }
