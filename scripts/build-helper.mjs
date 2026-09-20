@@ -40,7 +40,12 @@ await fs.writeFile(path.join(app, 'package.json'), JSON.stringify({ name: 'couch
 const visited = new Set();
 const notices = [];
 const unlicensed = [];
+// prebuild-install runs in node-datachannel's npm install script, which a downloaded package never executes, and the
+// bare-* packages are only chosen by the Bare runtime's export condition — under Node the same imports resolve to
+// node:fs and its neighbours. The confined smoke runs at the end are what catch a wrong entry here.
+const unused = new Set(['prebuild-install', 'bare-events', 'bare-fs', 'bare-path', 'bare-stream', 'bare-url']);
 async function copyPackage(name, parent, optional = false) {
+  if (unused.has(name)) return;
   let directory;
   for (const base of createRequire(path.join(parent, 'package.json')).resolve.paths('__couchswarm_package_probe__') || []) {
     const candidate = path.join(base, name);
