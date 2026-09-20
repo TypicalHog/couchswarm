@@ -69,7 +69,8 @@ async function handler(request: Request, context: { params: Promise<{ id: string
   }
   const token = request.headers.get('Authorization')?.replace(/^Bearer /, '') || '';
   if (!/^[a-f0-9]{64}$/.test(token)) return json({ error: 'Reopen your invite link to join this room.' }, 401);
-  const actor = await db.prepare('SELECT id FROM members WHERE room_id = ? AND token_hash = ?').bind(id, await hash(token)).first<{ id: string }>();
+  // Leaving is final: the last_seen = 0 marker retires the token with the seat, so a copy of it opens nothing here.
+  const actor = await db.prepare('SELECT id FROM members WHERE room_id = ? AND token_hash = ? AND last_seen > 0').bind(id, await hash(token)).first<{ id: string }>();
   if (!actor) return json({ error: 'Your seat has expired. Join the room again.' }, 401);
 
   // Evaluate the old lease before a returning host can renew it.

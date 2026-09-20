@@ -7,7 +7,8 @@ export async function roomAccess(request: Request, id: string) {
   const token = request.headers.get('authorization')?.replace(/^Bearer /, '') || '';
   if (!/^[a-f0-9]{64}$/.test(token)) return null;
   const db = getDb();
-  const member = await db.prepare('SELECT id, last_seen FROM members WHERE room_id = ? AND token_hash = ?').bind(id, await hash(token)).first<{ id: string; last_seen: number }>();
+  // last_seen = 0 is the marker a member who left carries: their token is spent, not merely lapsed.
+  const member = await db.prepare('SELECT id, last_seen FROM members WHERE room_id = ? AND token_hash = ? AND last_seen > 0').bind(id, await hash(token)).first<{ id: string; last_seen: number }>();
   const room = await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<HelperRoom>();
   if (!member || !room || await roomExpired(db, room.id, room.created_at, Date.now())) return null;
   return { db, room, memberId: member.id, present: member.last_seen > Date.now() - PRESENCE_MS };

@@ -76,6 +76,8 @@ test('room invites, authority, buffering gate, timeline, stale messages, seeking
   state = await call({ action: 'snapshot' });
   assert.equal(state.members.length, 1);
   await post(path, { action: 'heartbeat', ready: true, buffered: 15, epoch: 2, mediaVersion: 1, duration: 120, sequence: Number.MAX_SAFE_INTEGER }, guest.token, 401);
+  await post(path, { action: 'snapshot' }, guest.token, 401);
+  await post(`${path}/helper`, { action: 'status' }, guest.token, 403);
   await call({ action: 'leave' });
 });
 
