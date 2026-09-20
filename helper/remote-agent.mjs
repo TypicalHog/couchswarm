@@ -10,6 +10,10 @@ import { MAX_HELPER_PEERS } from './constants.mjs';
 // reads at its playhead and backfills from the start of the file at the same time, so a few regions stay selected.
 const READ_AHEAD_BYTES = 32 * 1024 * 1024;
 const READ_AHEAD_WINDOWS = 4;
+// What the swarm may take of the host's uplink while anyone is watching. webtorrent unchokes every interested wire
+// and keeps ten uncapped upload slots, which on a home connection is enough to drain a friend's buffer; the viewers'
+// own wires are not in the client's throttle groups, so this reaches torrent peers only.
+const SWARM_UPLOAD_WHILE_SERVING = 256 * 1024;
 const describe = error => error?.code === 'ENOSPC' ? 'The download drive is full.' : `The torrent connection failed${error?.code ? ` (${error.code})` : ''}.`;
 
 // The native WebRTC polyfill assembles TURN URLs from these fields, and libjuice percent-decodes the userinfo it
@@ -23,7 +27,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
   iceOverride }) {
   let grant, origin, client, torrent, directory, mediaVersion = -1, timer, closed = false, loading, loadedSource = '', swept = false;
   let status = 'Waiting for a pairing link.', problem = false, lastContact = 0, previousStatus, previousProblem = false;
-  let desiredVersion = -2, loadAbort, attemptedVersion = -2, attempts = 0, readyAt = 0, misses = 0, generation = 0, loadingSource = null;
+  let desiredVersion = -2, loadAbort, attemptedVersion = -2, attempts = 0, readyAt = 0, misses = 0, generation = 0, loadingSource = null, throttled = false;
   let servedPieces = [];
   const peers = new Map();
   // Every serving viewer's read-ahead windows, so a deselect can put back what the others still claim.
@@ -73,6 +77,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     torrent = undefined;
     const previousClient = client, previousDirectory = directory;
     client = undefined;
+    throttled = false;
     directory = undefined;
     if (previousClient && !previousClient.destroyed) await new Promise(resolve => previousClient.destroy(resolve));
     // Reports whether the temporary cache really went: a directory something still holds open is the one case the
@@ -281,6 +286,10 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
           peer.signal(remote.offer);
         }
       }
+      // Watching friends and the swarm share one uplink, so the swarm gives way while anyone is connected and gets
+      // it all back when nobody is.
+      const serving = connectedPeers() > 0;
+      if (client && serving !== throttled) { client.throttleUpload(serving ? SWARM_UPLOAD_WHILE_SERVING : -1); throttled = serving; }
       report({ status, peers: connectedPeers(), torrentPeers: torrent?.numPeers || 0, ...(problem ? { problem } : {}), relayAvailable: data.relayAvailable });
     } catch (error) {
       if (closed) return;
