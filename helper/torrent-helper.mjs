@@ -468,26 +468,30 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
         'Content-Length': end - start + 1, 'Cache-Control': 'no-store',
         ...(ranges ? { 'Content-Range': `bytes ${start}-${end}/${file.length}` } : {}) });
       if (req.method === 'HEAD') { res.end(); return; }
-      const stream = file.createReadStream({ start, end: end === 0 ? Math.min(1, file.length - 1) : end });
-      entry.streams.add(stream);
+      // A read waiting on a piece the swarm has not sent yet cannot be called off: WebTorrent settles it only
+      // from a 'verified' event, and destroying the stream neither resolves that wait nor drops its listener.
+      // So race every read against the response instead. The iterator is taken directly, since a stream over
+      // it would only add another handle nothing can release.
       // WebTorrent treats end=0 as absent. Limit this edge case to one byte.
+      const iterator = file[Symbol.asyncIterator]({ start, end: end === 0 ? Math.min(1, file.length - 1) : end });
+      // Ending the response is what frees a parked read, so that is what the entry's teardown is given.
+      const reader = { destroy: () => res.destroy() };
+      entry.streams.add(reader);
+      const gone = new Promise(resolve => res.once('close', () => resolve(null)));
       let remaining = end - start + 1;
       async function* bounded() {
-        for await (const chunk of stream) {
+        while (remaining) {
+          const next = await Promise.race([iterator.next(), gone]);
+          if (!next) return;
+          // FileIterator reports a chunk-store read error as a clean end, so a short read has to fail the pipeline.
+          if (next.done) throw new Error('Incomplete torrent read.');
           session.seen = Date.now();
-          yield chunk.subarray(0, remaining);
-          remaining -= Math.min(remaining, chunk.length);
-          if (!remaining) return;
+          yield next.value.subarray(0, remaining);
+          remaining -= Math.min(remaining, next.value.length);
         }
-        // FileIterator reports a chunk-store read error as a clean end, so a short stream has to fail the pipeline.
-        if (remaining) throw new Error('Incomplete torrent read.');
       }
       res.setTimeout(60000, () => res.destroy());
-      const abortStream = () => stream.destroy();
-      res.once('close', abortStream);
-      try { await pipeline(bounded(), res); } finally {
-        stream.destroy(); entry.streams.delete(stream); res.removeListener('close', abortStream);
-      }
+      try { await pipeline(bounded(), res); } finally { void iterator.return?.(); entry.streams.delete(reader); }
     } catch {
       if (!res.headersSent) json(res, 400, { error: 'The helper request could not be completed.' });
       else res.destroy();

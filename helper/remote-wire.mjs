@@ -24,7 +24,7 @@ export function serveTorrentPeer(peer, torrent, readAhead = () => {}, pieces = n
   wire.extendedHandshake.reqq = MAX_REQUESTS;
   wire.on('error', () => peer.destroy());
   peer.on('error', () => wire.destroy());
-  const cleanup = () => { for (const read of reads.values()) read.stream?.destroy(); reads.clear(); wire.destroy(); };
+  const cleanup = () => { for (const read of reads.values()) read.stop(); reads.clear(); wire.destroy(); };
   peer.once('close', cleanup);
   peer.once('disconnect', cleanup);
   // bittorrent-protocol's _pull() removes the first Request matching (piece, offset, length), not the one that owns
@@ -62,7 +62,7 @@ export function serveTorrentPeer(peer, torrent, readAhead = () => {}, pieces = n
     // ends is not necessarily the first callback's: forget the callback whose entry is the one that went.
     const gone = read.callbacks.findIndex(respond => !wire.peerRequests.some(request => request.callback === respond));
     read.callbacks.splice(gone < 0 ? 0 : gone, 1);
-    if (!read.callbacks.length) { read.cancelled = true; read.stream?.destroy(); }
+    if (!read.callbacks.length) { read.cancelled = true; read.stop(); }
   });
   wire.on('request', (piece, offset, length, callback) => {
     // A refusal would leave the backlog in place, so a peer that stopped draining its replies has to go.
@@ -86,8 +86,14 @@ export function serveTorrentPeer(peer, torrent, readAhead = () => {}, pieces = n
     if (reads.size >= MAX_REQUESTS || queuedBytes + length > MAX_REQUEST_BYTES) { callback(new Error('Too many block requests.')); return; }
     queuedBytes += length;
     readAhead(piece);
-    /** @type {{ stream: import('node:stream').Readable | null, cancelled: boolean, callbacks: ((error: Error | null, block?: Buffer) => void)[] }} */
-    const read = { stream: null, cancelled: false, callbacks: [callback] };
+    // A read waiting on a piece the torrent has not verified yet is never settled by destroying its stream:
+    // WebTorrent resolves that wait only from a 'verified' event, so a cancelled block — or a viewer whose
+    // channel closed — would hold its bytes and its entry here until some unrelated piece happens to arrive.
+    // Race the wait against the channel instead; ending the read still destroys the stream underneath.
+    let stop = () => {};
+    const stopped = new Promise(resolve => { stop = () => resolve(null); });
+    /** @type {{ stop: () => void, cancelled: boolean, callbacks: ((error: Error | null, block?: Buffer) => void)[] }} */
+    const read = { stop, cancelled: false, callbacks: [callback] };
     reads.set(key, read);
     void (async () => {
       const chunks = [];
@@ -97,13 +103,18 @@ export function serveTorrentPeer(peer, torrent, readAhead = () => {}, pieces = n
         const to = Math.min(start + length, file.offset + file.length);
         if (to <= from || read.cancelled || peer.destroyed) continue;
         // WebTorrent treats end=0 as absent and would select the whole file; a one-byte slice reads two bytes instead.
-        read.stream = file.createReadStream({ start: from - file.offset, end: to - file.offset - 1 || Math.min(1, file.length - 1) });
+        const stream = file.createReadStream({ start: from - file.offset, end: to - file.offset - 1 || Math.min(1, file.length - 1) });
+        const iterator = stream[Symbol.asyncIterator]();
         let remaining = to - from;
-        for await (const chunk of read.stream) {
-          const bounded = chunk.subarray(0, remaining);
-          chunks.push(bounded); total += bounded.length; remaining -= bounded.length;
-          if (!remaining) break;
-        }
+        try {
+          while (remaining) {
+            const next = await Promise.race([iterator.next(), stopped]);
+            if (!next) return;
+            if (next.done) break;
+            const bounded = next.value.subarray(0, remaining);
+            chunks.push(bounded); total += bounded.length; remaining -= bounded.length;
+          }
+        } finally { void iterator.return?.(); }
       }
       if (read.cancelled || peer.destroyed) return;
       if (total !== length) throw new Error('Incomplete torrent block.');
