@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash, createHmac } from 'node:crypto';
+import dgram from 'node:dgram';
 import { once } from 'node:events';
 import { execFile } from 'node:child_process';
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
@@ -29,7 +31,7 @@ if (packaged) {
   if (!zip || !staged || zip.mtimeMs < staged.mtimeMs) stale.push('CouchSwarm-Helper-win-x64.zip');
   if (stale.length) throw new Error(`work/helper-package is missing or stale (${stale.join(', ')}). Run npm run build:helper.`);
 }
-const { createRemoteAgent } = await import(packaged ? '../work/helper-package/app/helper/remote-agent.mjs' : '../helper/remote-agent.mjs');
+const { createRemoteAgent, nativeIceServers } = await import(packaged ? '../work/helper-package/app/helper/remote-agent.mjs' : '../helper/remote-agent.mjs');
 const { serveTorrentPeer } = await import(packaged ? '../work/helper-package/app/helper/remote-wire.mjs' : '../helper/remote-wire.mjs');
 const { servedRanges } = await import(packaged ? '../work/helper-package/app/helper/torrent-helper.mjs' : '../helper/torrent-helper.mjs');
 
@@ -277,6 +279,60 @@ test('cancelling one copy of a repeated block request still answers the other', 
   await sleep(50);
   assert.deepEqual(wire.peerRequests, [], 'the cancel leaves no request sitting in the queue owed a reply');
   assert.deepEqual((await Promise.all(copies)).filter(copy => Buffer.isBuffer(copy)), [payload], 'the copy the client kept is still answered');
+});
+
+// Nothing else drives the encoding at remote-agent.mjs: every other agent test passes an empty iceOverride, and
+// scripts/check-relay.mjs keeps its own copy and needs a live relay. This one answers one 401 challenge from a UDP
+// socket and reads what the real ICE stack puts on the wire, so removing the encoding — or webrtc-polyfill starting
+// to do it itself — fails here.
+test('the helper hands the native ICE stack TURN credentials it can put on the wire', { timeout: 15000 }, async t => {
+  const realm = 'couchswarm.test', nonce = 'a1b2c3';
+  // A TURN REST username carries a colon, and a base64 credential the three characters a URL cannot hold.
+  const username = '1789613200:member-1', credential = 'z+9/Ab=';
+  const attributes = message => {
+    const found = [];
+    for (let at = 20; at + 4 <= message.length;) {
+      const length = message.readUInt16BE(at + 2);
+      found.push({ type: message.readUInt16BE(at), at, value: message.subarray(at + 4, at + 4 + length) });
+      at += 4 + length + (-length & 3);
+    }
+    return found;
+  };
+  const attribute = (type, value) => {
+    const header = Buffer.alloc(4);
+    header.writeUInt16BE(type, 0); header.writeUInt16BE(value.length, 2);
+    return Buffer.concat([header, value, Buffer.alloc(-value.length & 3)]);
+  };
+  const socket = dgram.createSocket('udp4');
+  socket.on('error', () => {});
+  t.after(() => socket.close());
+  await new Promise(resolve => socket.bind(0, '127.0.0.1', resolve));
+  const allocate = new Promise(resolve => socket.on('message', (data, from) => {
+    const found = attributes(data);
+    const user = found.find(value => value.type === 0x0006), integrity = found.find(value => value.type === 0x0008);
+    if (!user || !integrity) {
+      // The first Allocate carries no credentials; the 401 is what asks for them.
+      const body = Buffer.concat([attribute(0x0009, Buffer.concat([Buffer.from([0, 0, 4, 1]), Buffer.from('Unauthorized')])),
+        attribute(0x0014, Buffer.from(realm)), attribute(0x0015, Buffer.from(nonce))]);
+      const header = Buffer.alloc(20);
+      header.writeUInt16BE(0x0113, 0); header.writeUInt16BE(body.length, 2); header.writeUInt32BE(0x2112a442, 4);
+      data.copy(header, 8, 8, 20);
+      socket.send(Buffer.concat([header, body]), from.port, from.address);
+      return;
+    }
+    // MESSAGE-INTEGRITY covers the message up to itself, with the length field counting its own 24 bytes.
+    const signed = Buffer.from(data.subarray(0, integrity.at));
+    signed.writeUInt16BE(integrity.at - 20 + 24, 2);
+    const key = createHash('md5').update(`${user.value.toString()}:${realm}:${credential}`).digest();
+    resolve({ username: user.value.toString(), verified: createHmac('sha1', key).update(signed).digest().equals(integrity.value) });
+  }));
+  const peer = new Peer({ initiator: true, trickle: false, config: { iceTransportPolicy: 'relay',
+    iceServers: nativeIceServers([{ urls: [`turn:127.0.0.1:${socket.address().port}?transport=udp`], username, credential }]) } });
+  peer.on('error', () => {});
+  t.after(() => peer.destroy());
+  const authenticated = await allocate;
+  assert.equal(authenticated.username, username, 'the whole TURN REST username reaches the relay, colon and all');
+  assert.ok(authenticated.verified, 'the relay can verify the credential against the one the room issued');
 });
 
 test('a subtitle past the video is advertised and served, and nothing between them is', { timeout: 5000 }, async () => {

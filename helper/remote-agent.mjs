@@ -12,6 +12,12 @@ const READ_AHEAD_BYTES = 32 * 1024 * 1024;
 const READ_AHEAD_WINDOWS = 4;
 const describe = error => error?.code === 'ENOSPC' ? 'The download drive is full.' : `The torrent connection failed${error?.code ? ` (${error.code})` : ''}.`;
 
+// The native WebRTC polyfill assembles TURN URLs from these fields, and libjuice percent-decodes the userinfo it
+// finds there: a TURN REST username loses everything past its colon, and a base64 credential its '+', '/' and '='.
+export const nativeIceServers = servers => servers.map(server => ({ ...server,
+  ...(server.username ? { username: encodeURIComponent(server.username), credential: encodeURIComponent(server.credential) } : {}),
+}));
+
 export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = () => {}, pollMs = 2000, readAheadBytes = READ_AHEAD_BYTES,
   createClient = () => new WebTorrent({ natUpnp: false, natPmp: false, lsd: false, utp: false, ...(process.env.COUCHSWARM_HELPER_OFFLINE === '1' ? { dht: false, tracker: false } : {}) }),
   iceOverride }) {
@@ -236,11 +242,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       if (torrent && data.room.mediaVersion === mediaVersion) {
         for (const remote of data.peers) {
           if (remote.answered || peers.has(remote.id) || peers.size >= MAX_HELPER_PEERS) continue;
-          // The native WebRTC polyfill assembles TURN URLs from these fields.
-          const iceServers = (iceOverride ?? data.iceServers).map(server => ({ ...server,
-            ...(server.username ? { username: encodeURIComponent(server.username), credential: encodeURIComponent(server.credential) } : {}),
-          }));
-          const peer = new Peer({ initiator: false, trickle: false, config: { iceServers } });
+          const peer = new Peer({ initiator: false, trickle: false, config: { iceServers: nativeIceServers(iceOverride ?? data.iceServers) } });
           // simple-peer holds a non-trickle answer until it sees the null end-of-candidates event, which the native
           // polyfill never sends — it reports the end of gathering as a state change — so every viewer would wait out
           // the library's 5 s fallback timer. Its own handler is assigned to onicegatheringstatechange, hence the
