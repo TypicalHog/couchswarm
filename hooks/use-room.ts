@@ -32,6 +32,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   const [unsupported, setUnsupported] = useState(false);
   const [busy, setBusy] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [seatLost, setSeatLost] = useState(false);
   const [refused, setRefused] = useState(false);
   const [armed, setArmed] = useState(false);
   const [playhead, setPlayhead] = useState(0);
@@ -156,8 +157,8 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     try {
       response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body), signal: AbortSignal.timeout(10000) });
     } catch { throw new Error('The room could not be reached. Try again.'); }
-    const data = await response.json().catch(() => null) as { error?: string } | null;
-    if (!response.ok) throw Object.assign(new Error(data?.error || 'The room could not be reached. Try again.'), { status: response.status });
+    const data = await response.json().catch(() => null) as { error?: string; code?: string } | null;
+    if (!response.ok) throw Object.assign(new Error(data?.error || 'The room could not be reached. Try again.'), { status: response.status, code: data?.code });
     if (!data) throw new Error('The room could not be reached. Try again.');
     return data as T;
   }, []);
@@ -266,7 +267,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
           sequence: ++sequence.current,
         }, session.token);
         failures = 0;
-        if (!stopped) { const ok = accept(data, sent); if (!ok) setNetworkError('The room sent an unexpected reply. Retrying.'); else if (performance.now() >= controlError.current) setNetworkError(''); }
+        if (!stopped) { setSeatLost(false); const ok = accept(data, sent); if (!ok) setNetworkError('The room sent an unexpected reply. Retrying.'); else if (performance.now() >= controlError.current) setNetworkError(''); }
       } catch (err) {
         if (stopped) return;
         const status = (err as { status?: number }).status;
@@ -280,6 +281,9 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
           else setError((err as Error).message);
           return;
         }
+        // A seat someone else took while this tab was away is not a connection to repair: the retry below is what
+        // takes it back, so it stays, but the room must stop reading as 'reconnecting' with this tab still seated.
+        setSeatLost(status === 409 && (err as { code?: string }).code === 'seat-lost');
         failures++;
         setNetworkError((err as Error).message);
       } finally { pending.current = false; }
@@ -351,7 +355,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   const hostPresent = !!(room && snapshot && snapshot.members.some(m => m.id === room.hostId && m.lastSeen > snapshot.serverNow - PRESENCE_MS));
   const inviteStale = !!room?.inviteTag && hashed.invite === sessionInvite && room.inviteTag !== hashed.tag;
   return { session, room, members: snapshot?.members || [], invitation, error: error || networkError, unsupported, busy, connected, armed, playhead,
-    buffered, duration, countdown, media, isHost, everyoneReady, hostPresent, inviteStale, create, join, control, enable, leave,
+    buffered, duration, countdown, media, isHost, everyoneReady, hostPresent, inviteStale, seatLost, create, join, control, enable, leave,
     inviteUrl: session ? `${typeof location === 'undefined' ? '' : location.origin}/?room=${session.roomId}#invite=${session.invite}` : '',
   };
 }

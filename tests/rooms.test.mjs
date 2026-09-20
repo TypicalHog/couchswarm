@@ -191,6 +191,7 @@ test('rejects malformed requests, rewinds at the end, and gates seats, moderatio
   await post(fullPath, { action: 'join', invite: full.invite, name: 'One too many' }, undefined, 409);
   const seat = await post(fullPath, { action: 'heartbeat', ready: true, buffered: 15, progress: .1, epoch: 0, mediaVersion: 0, duration: 0, sequence: 1 }, lapsed.token, 409);
   assert.match(seat.error, /This couch is full \(12 people\)/, 'a lapsed seat cannot be reclaimed while the room is full');
+  assert.equal(seat.code, 'seat-lost', 'the refusal names itself, so the client can say the seat is gone rather than that the room is unreachable');
   const back = await post(fullPath, { action: 'join', invite: full.invite, name: 'Host again', hostKey: full.hostKey }, undefined, 201);
   assert.equal(back.memberId, full.memberId, 'a full couch never refuses the host their own seat');
   for (let i = 0; i < 12; i++) await post(awayPath, { action: 'join', invite: away.invite, name: `Seat ${i}` }, undefined, 201);

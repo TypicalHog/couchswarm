@@ -128,7 +128,9 @@ async function handler(request: Request, context: { params: Promise<{ id: string
         .bind(ready, buffered, actor.id === stored.host_id ? 1 : 0, ready && epoch === stored.epoch ? 1 : 0, SPECTATOR_EPOCH, now - PRESENCE_MS, epoch, SPECTATOR_EPOCH, now, body.sequence,
           actor.id, body.sequence, now - 2000, now - PRESENCE_MS, actor.id, stored.host_id, id, now - PRESENCE_MS, MAX_SEATS).run();
       accepted = !!report.meta.changes;
-      if (!accepted && actor.last_seen <= now - PRESENCE_MS) return json({ error: `This couch is full (${MAX_SEATS} people). Try again when a seat opens.` }, 409);
+      // This seat is gone, but the tab keeps asking for it and takes it back the moment one frees up, so the
+      // code lets the client say that instead of reading the refusal as a connection it has to repair.
+      if (!accepted && actor.last_seen <= now - PRESENCE_MS) return json({ error: `This couch is full (${MAX_SEATS} people). We’ll bring you back when a seat opens.`, code: 'seat-lost' }, 409);
     }
     // The room row is already in hand, so a host restating the duration it reported a second ago is answered without
     // asking Turso anything. The statement keeps the same tests for the writer that moved the room in the meantime.
