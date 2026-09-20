@@ -346,6 +346,15 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       if (!code || !/^[a-f0-9]{64}$/.test(code)) throw new Error('Copy a new pairing link from your CouchSwarm room.');
       origin = url.origin;
       site = url.host;
+      // A pairing link is spent the moment it is claimed, so a folder on a drive that is not plugged in has to be
+      // caught here: found at load time instead, it leaves the user needing a fresh link from the room before they
+      // can even try another folder. The load still checks, because a drive can go away mid-session.
+      try {
+        await mkdir(root, { recursive: true });
+        await rm(await mkdtemp(path.join(root, '.couchswarm-probe-')), { recursive: true, force: true });
+      } catch {
+        throw new Error('The helper cannot write to this download folder. Plug in its drive or choose another folder with Browse.');
+      }
       // Naming the origin the helper is about to obey; safe here only because polling has not started, so this
       // status never reaches a room.
       notify(`Connecting to ${url.host}…`);
