@@ -21,6 +21,10 @@ const note = text => {
 };
 
 const io = createInterface({ input: process.stdin, output: process.stdout });
+// Readline holds the terminal in raw mode while it asks, and answers Ctrl+C itself: without this the keystroke
+// closes the interface, the question never resolves and the process dies with a warning about that instead. The
+// answers are all that exists this early, so there is nothing to stop and nothing to say about downloads.
+io.on('SIGINT', () => { console.log(''); process.exit(130); });
 // Piped into a script or started by a service manager there is nobody to answer, and a prompt nobody can see
 // reads as a hang: take the defaults instead. The pairing link is the one answer with no default.
 const ask = async (question, fallback) => process.stdin.isTTY ? (await io.question(question)).trim() || fallback : fallback;
