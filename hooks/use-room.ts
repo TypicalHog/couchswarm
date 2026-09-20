@@ -98,9 +98,13 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     if (state.media.loadedVersion !== current.mediaVersion || video.readyState < 1) return;
     const now = localNow();
     const target = timelinePosition(current, now);
-    const drift = target - video.currentTime;
+    // The room's duration is the host's reading of the file, and another demuxer can come up a shade shorter, so
+    // the timeline can name a moment this element has no frame for. Correct towards its own end instead: a target
+    // it can never reach is a seek on every tick for as long as the room sits there.
+    const reachable = Number.isFinite(video.duration) && video.duration > 0 ? Math.min(target, video.duration) : target;
+    const drift = reachable - video.currentTime;
     if (performance.now() >= bridged.current.until && (appliedEpoch.current !== current.epoch || Math.abs(drift) > 0.75 || (!current.playing && Math.abs(drift) > .12))) {
-      if (!video.seeking) { video.currentTime = target; appliedEpoch.current = current.epoch; }
+      if (!video.seeking) { video.currentTime = reachable; appliedEpoch.current = current.epoch; }
     }
     const shouldPlay = current.playing && now >= current.startsAt && state.armed && !state.media.error && !video.ended;
     if (shouldPlay) {
@@ -260,8 +264,10 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
       const ready = !!(current && video && anchor.current.server && state.armed && !state.media.error && state.media.loadedVersion === current.mediaVersion
         && appliedEpoch.current === current.epoch && video.readyState >= 2 && !video.seeking
         // An element this tab paused itself is behind the timeline through no fault of its buffer, and the
-        // reply to this very request seeks it back, so buffer at the target still counts as ready.
-        && (Math.abs(video.currentTime - target) < 1.5 || (outOfContact() && ahead > 0)) && hasBuffer(ahead, target, video.duration, current.playing));
+        // reply to this very request seeks it back, so buffer at the target still counts as ready. One sitting
+        // at its own end has nowhere further to go, which is all the room asks of it at the wrap.
+        && (Math.abs(video.currentTime - target) < 1.5 || (outOfContact() && ahead > 0) || (video.ended && target >= video.duration - 0.2))
+        && hasBuffer(ahead, target, video.duration, current.playing));
       const sent = performance.now();
       pending.current = true;
       try {
