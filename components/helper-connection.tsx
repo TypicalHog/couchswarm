@@ -9,6 +9,7 @@ export function HelperConnection({ session, isHost, reconnect, needed, open, onO
   { session: Session; isHost: boolean; reconnect: () => void; needed: boolean; open: boolean; onOpenChange: (open: boolean) => void }) {
   const [status, setStatus] = useState<HelperStatus | null>(null);
   const [pairingUrl, setPairingUrl] = useState('');
+  const [pairingExpires, setPairingExpires] = useState(0);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -23,22 +24,30 @@ export function HelperConnection({ session, isHost, reconnect, needed, open, onO
         const result = await helperStatus(session, abort.signal);
         if (abort.signal.aborted) return;
         setStatus(result);
-        if (result.mine && result.online) setPairingUrl('');
+        // Pressing the button while a claim was already in flight answers 409; once the helper reads as connected that complaint is stale.
+        if (result.mine && result.online) { setPairingUrl(''); setError(''); }
         paired = result.paired;
       } catch { /* The room connection already reports connectivity failures. */ }
       finally { running = false; }
       // A hidden tab stops polling entirely; the listener below restarts it the moment the user comes back.
       // The fast cadence only buys anything while the dialog is on screen: outside it the status drives a hint nobody is watching.
-      if (!abort.signal.aborted && !document.hidden) timer = setTimeout(() => void poll(), paired && open ? 3000 : 15000);
+      // An outstanding link counts too: `paired` stays false until the helper claims it, which is the moment worth reporting quickly.
+      if (!abort.signal.aborted && !document.hidden) timer = setTimeout(() => void poll(), open && (paired || pairingUrl) ? 3000 : 15000);
     }
     const onVisibility = () => { clearTimeout(timer); if (!document.hidden && !running) void poll(); };
     document.addEventListener('visibilitychange', onVisibility);
     void poll();
     return () => { abort.abort(); clearTimeout(timer); document.removeEventListener('visibilitychange', onVisibility); };
-  }, [session, open]);
+  }, [session, open, pairingUrl]);
+  // The code behind the link dies on the server's schedule, so take the link away rather than let Copy hand over a dead one.
+  useEffect(() => {
+    if (!pairingUrl) return;
+    const timer = setTimeout(() => { setPairingUrl(''); setCopied(false); }, Math.max(0, pairingExpires - Date.now()));
+    return () => clearTimeout(timer);
+  }, [pairingUrl, pairingExpires]);
   async function pair() {
     setBusy(true); setError(''); setCopied(false);
-    try { const result = await helperRequest<{ pairingUrl: string }>(session, { action: 'pair' }); setPairingUrl(result.pairingUrl); }
+    try { const result = await helperRequest<{ pairingUrl: string; expiresIn: number }>(session, { action: 'pair' }); setPairingUrl(result.pairingUrl); setPairingExpires(Date.now() + result.expiresIn * 1000); }
     catch (error) { setError(error instanceof Error ? error.message : 'Could not create a pairing link.'); }
     finally { setBusy(false); }
   }
