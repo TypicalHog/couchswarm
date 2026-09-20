@@ -558,8 +558,10 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           : await Promise.race([readFile(file, value => { stream = value; }), new Promise<never>((_, reject) => { expire = reject; })]);
         if (disposed) return;
         const vtt = toWebVTT(decodeSubtitle(bytes, navigator.languages), file.name);
-        // A file the picker could not parse would otherwise attach an empty track and show nothing at all.
-        if (!vtt.includes(' --> ')) throw new Error('No subtitles could be read out of that file.');
+        // A file the picker could not parse would otherwise attach an empty track and show nothing at all. A
+        // .vtt is passed through untouched, so its arrow spacing is the author's and WebVTT allows none at all:
+        // look for a cue timing rather than for the spaced arrow only the conversions above write.
+        if (!/\d{2}\.\d+[ \t]*-->/.test(vtt)) throw new Error('No subtitles could be read out of that file.');
         url = URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }));
         track = document.createElement('track');
         track.kind = 'subtitles';
