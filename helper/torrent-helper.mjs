@@ -321,7 +321,11 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
       entry.timeout = setTimeout(() => fail('No torrent metadata arrived after 90 seconds. This torrent may have no reachable seeders.'), 90000);
       entry.timeout.unref();
     } catch (error) {
-      entry.error = error instanceof Error ? error.message : 'The helper could not load this torrent.';
+      console.error('Torrent load failed:', error);
+      // Only an fs error carries .path, and its message spells out the operator's cache folder. The room
+      // may be reaching a reverse-proxied helper, so it gets the code the way the torrent error path does.
+      entry.error = error?.path ? `The helper could not write its cache (${error.code}).`
+        : error instanceof Error ? error.message : 'The helper could not load this torrent.';
       if (entries.get(entry.key) === entry) entries.delete(entry.key);
       cleanup(entry);
     }
