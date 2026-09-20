@@ -8,7 +8,10 @@ function connection() {
   if (!url) throw new Error('Set TURSO_DATABASE_URL and run npm run db:migrate before starting CouchSwarm.');
   if (process.env.VERCEL && url.startsWith('file:')) throw new Error('Vercel requires a remote Turso database.');
   // Without a busy timeout a second writer on the same .local file fails instantly with SQLITE_BUSY.
-  return client = createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN, timeout: 2000 });
+  // A remote client ignores that timeout, so every HTTP statement carries its own deadline: a Turso that
+  // accepts the connection and then goes quiet has to throw, or withDb never gets to answer its 503.
+  return client = createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN, timeout: 2000,
+    fetch: (request: Request) => fetch(request, { signal: AbortSignal.timeout(3000) }) });
 }
 function result(value: ResultSet) { return { results: value.rows, success: true, meta: { changes: value.rowsAffected } }; }
 class Statement {
