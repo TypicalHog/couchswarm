@@ -6,6 +6,10 @@ const url = process.env.TURSO_DATABASE_URL || (process.env.VERCEL || process.env
 if (!url) throw new Error('Set TURSO_DATABASE_URL to the target database.');
 if (url.startsWith('file:')) await mkdir(path.dirname(url.slice(5).replace(/^\/+(?=[A-Za-z]:)/, '')), { recursive: true });
 const client = createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN });
+// Database variables left unscoped make a preview build migrate production, so every build log says which
+// database this run is about to change, and from which deployment.
+console.log(`Migrating ${url.startsWith('file:') ? url : new URL(url).host}`
+  + (process.env.VERCEL_ENV ? ` (${[process.env.VERCEL_ENV, process.env.VERCEL_GIT_COMMIT_REF].filter(Boolean).join(', ')})` : ''));
 try {
   await client.execute('CREATE TABLE IF NOT EXISTS couchswarm_migrations (name TEXT PRIMARY KEY, checksum TEXT NOT NULL)');
   for (const name of (await readdir('drizzle')).filter((name) => name.endsWith('.sql')).sort()) {
