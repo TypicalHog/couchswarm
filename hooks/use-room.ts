@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
-import { allReady, bufferedAhead, estimateServerNow, hasBuffer, timelinePosition, validSource, type Session, type Snapshot } from '@/lib/sync';
+import { allReady, bufferedAhead, estimateServerNow, hasBuffer, PRESENCE_MS, timelinePosition, validSource, type Session, type Snapshot } from '@/lib/sync';
 import { useTorrent } from '@/hooks/use-torrent';
 
 const seats = new Map<string, Promise<boolean>>();
@@ -299,8 +299,10 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
 
   const isHost = room ? room.hostId === session?.memberId : !session;
   const everyoneReady = !!(room && snapshot && allReady(snapshot.members, room, snapshot.serverNow));
+  // lastSeen carries the server's clock, so presence is judged against the snapshot's own timestamp, as allReady does.
+  const hostPresent = !!(room && snapshot && snapshot.members.some(m => m.id === room.hostId && m.lastSeen > snapshot.serverNow - PRESENCE_MS));
   return { session, room, members: snapshot?.members || [], invitation, error: error || networkError, unsupported, busy, connected, armed, playhead,
-    buffered, duration, countdown, media, isHost, everyoneReady, create, join, control, enable, leave,
+    buffered, duration, countdown, media, isHost, everyoneReady, hostPresent, create, join, control, enable, leave,
     inviteUrl: session ? `${typeof location === 'undefined' ? '' : location.origin}/?room=${session.roomId}#invite=${session.invite}` : '',
   };
 }
