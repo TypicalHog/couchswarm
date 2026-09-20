@@ -209,9 +209,12 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     // A tab that cannot hold the seat must not spend the host's re-claim key: the server would crown a tab that never heartbeats.
     if (!await claimSeat(invitation.roomId)) { setError('This room is already open in another CouchSwarm tab.'); return; }
     setBusy(true); setError('');
+    // A corrected link pasted into this tab only changes the fragment, which never remounts the hook, so join
+    // with whatever invite the address bar holds now rather than the one read at load.
+    const invite = new URLSearchParams(location.hash.slice(1)).get('invite') || invitation.invite;
     let hostKey: string | undefined;
     try { hostKey = localStorage.getItem(`couchswarm:host:${invitation.roomId}`) || undefined; } catch { /* Blocked storage only costs the host their re-claim. */ }
-    try { saveSession(await request<Session>(`/api/rooms/${invitation.roomId}`, { action: 'join', name, invite: invitation.invite, hostKey })); }
+    try { saveSession(await request<Session>(`/api/rooms/${invitation.roomId}`, { action: 'join', name, invite, hostKey })); }
     catch (err) { setError((err as Error).message); }
     finally { setBusy(false); }
   };
