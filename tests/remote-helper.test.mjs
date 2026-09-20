@@ -277,7 +277,7 @@ test('a failed native torrent stops advertising readiness, then reloads', { time
   const cacheRoot = await mkdtemp(path.join(tmpdir(), 'couchswarm-failed-test-'));
   let nativeClient;
   const reports = [];
-  const helper = createRemoteAgent({ cacheRoot, pollMs: 100, iceOverride: [], report: value => reports.push(value), createClient: () => nativeClient = new WebTorrent(offline) });
+  const helper = createRemoteAgent({ cacheRoot, pollMs: 100, retryMs: 2000, iceOverride: [], report: value => reports.push(value), createClient: () => nativeClient = new WebTorrent(offline) });
   t.after(async () => { await helper.stop(); if (path.dirname(cacheRoot) === tmpdir()) await rm(cacheRoot, { recursive: true, force: true }); });
   await helper.pair(pair.pairingUrl);
   let state;
@@ -304,7 +304,7 @@ test('a failed native torrent stops advertising readiness, then reloads', { time
   }
   assert.equal(state.ready, false, 'a failed native torrent cannot keep advertising readiness');
   assert.ok(reports.some(value => /The torrent connection failed\. Reconnecting/.test(value.status)), 'the failure names its cause and promises a reload');
-  // The reload is scheduled 15 seconds after the failure.
+  // The reload is scheduled retryMs after the failure — 2 seconds here, 15 in the shipped default.
   for (let i = 0; i < 300 && !state.ready; i++) {
     await sleep(100);
     state = await post(route, { action: 'status' }, host.token);

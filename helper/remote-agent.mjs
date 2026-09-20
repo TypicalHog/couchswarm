@@ -42,7 +42,7 @@ const cleanOffer = offer => {
   }).join('\r\n') };
 };
 
-export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = () => {}, pollMs = 2000, readAheadBytes = READ_AHEAD_BYTES,
+export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = () => {}, pollMs = 2000, readAheadBytes = READ_AHEAD_BYTES, retryMs = 15000,
   createClient = () => new WebTorrent({ natUpnp: false, natPmp: false, lsd: false, utp: false, ...(process.env.COUCHSWARM_HELPER_OFFLINE === '1' ? { dht: false, tracker: false } : {}) }),
   iceOverride }) {
   let grant, origin, site = '', client, torrent, directory, mediaVersion = -1, timer, closed = false, loading, loadedSource = '', swept = false;
@@ -111,7 +111,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
   // A later poll sees the room's version differ from desiredVersion and loads again.
   function scheduleRetry() {
     const version = attemptedVersion;
-    setTimeout(() => { if (!closed && desiredVersion === version) desiredVersion = -2; }, 15000).unref();
+    setTimeout(() => { if (!closed && desiredVersion === version) desiredVersion = -2; }, retryMs).unref();
   }
   // webtorrent merges overlapping non-stream selections into one range, so deselecting a window drops whatever another
   // viewer's overlapping window claimed too. Re-selecting every live window afterwards is idempotent — the merge
