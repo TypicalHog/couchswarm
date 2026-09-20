@@ -49,7 +49,7 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     if (!name) return json({ error: 'Enter your name to join.' }, 400);
     const idle = await db.prepare('SELECT COUNT(*) AS n FROM members WHERE room_id = ? AND report_sequence = 0 AND last_seen > ?').bind(id, now - 60_000).first<{ n: number }>();
     if ((idle?.n ?? 0) >= 24) return json({ error: 'Too many joins. Try again in a minute.' }, 429);
-    const host = stored.playing ? await db.prepare('SELECT last_seen FROM members WHERE id = ?').bind(stored.host_id).first<{ last_seen: number }>() : null;
+    const host = stored.playing ? await db.prepare('SELECT last_seen FROM members WHERE id = ? AND last_seen > 0').bind(stored.host_id).first<{ last_seen: number }>() : null;
     // The host comes back to the seat they already own, never to a new one: the room can never resume without
     // them, so a full couch must not refuse them, and the room's helper stays bound to that member id.
     const reclaim = typeof body.hostKey === 'string' && body.hostKey.length === 64 && await hash(body.hostKey) === stored.host_key_hash;
@@ -74,7 +74,9 @@ async function handler(request: Request, context: { params: Promise<{ id: string
 
   // Evaluate the old lease before a returning host can renew it.
   if (stored.playing) {
-    const host = await db.prepare('SELECT last_seen FROM members WHERE id = ?').bind(stored.host_id).first<{ last_seen: number }>();
+    // A host who left carries the last_seen = 0 marker, not a timestamp: read them as gone, or the lease
+    // arithmetic below rewinds the room to its last play or seek.
+    const host = await db.prepare('SELECT last_seen FROM members WHERE id = ? AND last_seen > 0').bind(stored.host_id).first<{ last_seen: number }>();
     if (!host || host.last_seen <= now - PRESENCE_MS) {
       const stoppedAt = host ? Math.min(now, host.last_seen + PRESENCE_MS) : now;
       await db.prepare('UPDATE rooms SET playing = 0, position = ?, revision = revision + 1, reason = ? WHERE id = ? AND revision = ?')
