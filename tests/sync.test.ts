@@ -33,6 +33,13 @@ test('buffer readiness measures playable time at the target, not total downloade
   assert.equal(bufferedAhead(chained, 0), 3);
   assert.equal(bufferedAhead({ length: 2, start: (i: number) => [0, 1.095][i], end: (i: number) => [1, 5][i] }, 0), 5);
   assert.equal(bufferedAhead({ length: 2, start: (i: number) => [0, 1.2][i], end: (i: number) => [1, 5][i] }, 0), 1);
+  // A hole wider than a seam reads the same on either side of it, rather than flipping on 10ms of playhead.
+  const holed = { length: 2, start: (i: number) => [0, 10.12][i], end: (i: number) => [10, 20][i] };
+  assert.ok(bufferedAhead(holed, 9.99) < 0.02, 'a range ends at the hole, whichever side the playhead sits');
+  assert.equal(bufferedAhead(holed, 10), 0);
+  const bridged = { length: 2, start: (i: number) => [0, 10.05][i], end: (i: number) => [10, 20][i] };
+  assert.ok(bufferedAhead(bridged, 9.99) > 10, 'a bridged seam counts the range past it from either side');
+  assert.equal(bufferedAhead(bridged, 10), 10);
   assert.equal(hasBuffer(7, 0, 100, false), false);
   assert.equal(hasBuffer(8, 0, 100, false), true);
   assert.equal(hasBuffer(2, 98, 100, false), true);

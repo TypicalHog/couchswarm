@@ -28,13 +28,16 @@ export function timelinePosition(room: Pick<Room, 'position' | 'playing' | 'star
   return Math.max(0, room.duration > 0 ? Math.min(room.duration, position) : position);
 }
 
+// Segment joins can leave seams a few frames wide; hls.js plays across up to 0.1s, so a range starting within
+// a seam of the playhead counts, and so does the range on the far side of one (0.1001 because an exactly-0.1s
+// seam subtracts to either side of 0.1 in binary floating point).
+const SEAM = 0.1001;
+
 export function bufferedAhead(ranges: Pick<TimeRanges, 'length' | 'start' | 'end'>, position: number) {
   for (let i = 0; i < ranges.length; i++) {
-    if (ranges.start(i) > position + 0.15 || ranges.end(i) <= position) continue;
+    if (ranges.start(i) - position >= SEAM || ranges.end(i) <= position) continue;
     let end = ranges.end(i);
-    // Segment joins can leave seams a few frames wide; hls.js plays across up to 0.1s, so count past them too
-    // (0.1001 because an exactly-0.1s seam subtracts to either side of 0.1 in binary floating point).
-    while (i + 1 < ranges.length && ranges.start(i + 1) - end < 0.1001) end = ranges.end(++i);
+    while (i + 1 < ranges.length && ranges.start(i + 1) - end < SEAM) end = ranges.end(++i);
     return end - position;
   }
   return 0;
