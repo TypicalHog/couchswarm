@@ -208,3 +208,17 @@ test('rejects malformed requests, rewinds at the end, and gates seats, moderatio
   quietState = await beatQuiet(watcher.token, 5, true, 1);
   assert.equal(quietState.members.find(m => m.id === watcher.memberId).epoch, 1, 'a spectator takes its seat back by reporting ready at the epoch the room is on');
 });
+
+test('a join-then-leave loop cannot outrun the join throttle', { timeout: 60000 }, async t => {
+  const host = await post('/api/rooms', { source: magnet }, undefined, 201);
+  const path = `/api/rooms/${host.roomId}`;
+  t.after(() => post(path, { action: 'leave' }, host.token).catch(() => {}));
+  // Leaving frees the seat, so the couch cap never fires and the throttle is the only thing that can stop this. The
+  // host's own seat is the first join of the minute, which leaves 23 before the limit.
+  for (let i = 0; i < 23; i++) {
+    const guest = await post(path, { action: 'join', invite: host.invite, name: `Guest ${i}` }, undefined, 201);
+    await post(path, { action: 'leave' }, guest.token);
+  }
+  const refused = await post(path, { action: 'join', invite: host.invite, name: 'One too many' }, undefined, 429);
+  assert.match(refused.error, /Too many joins/, 'a join counts against the throttle however it ended');
+});

@@ -48,8 +48,10 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     const token = secret();
     const name = cleanName(body.name);
     if (!name) return json({ error: 'Enter your name to join.' }, 400);
-    const idle = await db.prepare('SELECT COUNT(*) AS n FROM members WHERE room_id = ? AND report_sequence = 0 AND last_seen > ?').bind(id, now - 60_000).first<{ n: number }>();
-    if ((idle?.n ?? 0) >= 24) return json({ error: 'Too many joins. Try again in a minute.' }, 429);
+    // Counted by when the seat was taken, not by what became of it: leaving zeroes last_seen and frees the seat, so
+    // a join-then-leave loop otherwise passes both this and the seat cap and grows the table as fast as it can post.
+    const recent = await db.prepare('SELECT COUNT(*) AS n FROM members WHERE room_id = ? AND joined_at > ?').bind(id, now - 60_000).first<{ n: number }>();
+    if ((recent?.n ?? 0) >= 24) return json({ error: 'Too many joins. Try again in a minute.' }, 429);
     const host = stored.playing ? await db.prepare('SELECT last_seen FROM members WHERE id = ? AND last_seen > 0').bind(stored.host_id).first<{ last_seen: number }>() : null;
     // The host comes back to the seat they already own, never to a new one: the room can never resume without
     // them, so a full couch must not refuse them, and the room's helper stays bound to that member id.
@@ -59,8 +61,8 @@ async function handler(request: Request, context: { params: Promise<{ id: string
       await db.prepare('UPDATE members SET token_hash = ?, name = ?, ready = 0, buffered = 0, epoch = -1, last_seen = ?, report_sequence = 0 WHERE id = ?')
         .bind(await hash(token), name, now, memberId).run();
     } else {
-      const result = await db.prepare('INSERT INTO members (id, room_id, token_hash, name, last_seen) SELECT ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ?')
-        .bind(memberId, id, await hash(token), name, now, id, now - PRESENCE_MS, MAX_SEATS).run();
+      const result = await db.prepare('INSERT INTO members (id, room_id, token_hash, name, last_seen, joined_at) SELECT ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ?')
+        .bind(memberId, id, await hash(token), name, now, now, id, now - PRESENCE_MS, MAX_SEATS).run();
       if (!result.meta.changes) return json({ error: `This couch is full (${MAX_SEATS} people). Try again when a seat opens.` }, 409);
     }
     // Nobody is waiting on the new arrival's buffer if the host is already gone: the room stopped at the lease,

@@ -30,7 +30,8 @@ export const members = sqliteTable('members', {
   epoch: integer('epoch').notNull().default(-1),
   lastSeen: integer('last_seen').notNull(),
   reportSequence: integer('report_sequence').notNull().default(0),
-}, table => [index('idx_members_room_presence').on(table.roomId, table.lastSeen), uniqueIndex('idx_members_token').on(table.tokenHash)]);
+  joinedAt: integer('joined_at').notNull().default(0),
+}, table => [index('idx_members_room_presence').on(table.roomId, table.lastSeen), index('idx_members_room_joined').on(table.roomId, table.joinedAt), uniqueIndex('idx_members_token').on(table.tokenHash)]);
 
 export const helpers = sqliteTable('helpers', {
   id: text('id').primaryKey(),

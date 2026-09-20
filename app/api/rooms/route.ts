@@ -29,8 +29,8 @@ async function handler(request: Request) {
     db.prepare('DELETE FROM helpers WHERE token_hash IS NULL AND pair_expires < ?').bind(now),
     db.prepare('INSERT INTO rooms (id, name, host_id, invite_hash, host_key_hash, source, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(id, 'The living room', memberId, inviteHash, hostKeyHash, source, source ? 'Buffering a new movie.' : 'Waiting for a movie.', now),
-    db.prepare('INSERT INTO members (id, room_id, token_hash, name, last_seen) VALUES (?, ?, ?, ?, ?)')
-      .bind(memberId, id, tokenHash, name, now),
+    db.prepare('INSERT INTO members (id, room_id, token_hash, name, last_seen, joined_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(memberId, id, tokenHash, name, now, now),
   ]);
   return json({ roomId: id, memberId, token, invite, hostKey }, 201);
 }
