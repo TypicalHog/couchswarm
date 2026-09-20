@@ -27,7 +27,9 @@ export async function connectRemoteHelper(session: Session, mediaVersion: number
     // Offline for a while: stream browser-only now; the readiness watcher upgrades when the helper returns.
     if (!status.online && Date.now() > offlineDeadline) return null;
     if (Date.now() > deadline) throw new Error(`${status.own ? 'Your' : 'The host’s'} helper is not ready. Keep it open and check that the torrent has seeders.`);
-    report(status.online ? status.status : status.own ? 'Open your helper to continue…' : 'Waiting for the host to open their helper…');
+    // The helper's own status is written for the launcher window and can still read 'Ready…' while a new movie loads, so only its owner sees it.
+    report(status.online ? status.own ? status.status : 'The host’s helper is loading this movie…'
+      : status.own ? 'Open your helper to continue…' : 'Waiting for the host to open their helper…');
     await sleep();
     // A blip in a 120 s wait is not a dead helper; the heartbeat below tolerates the same four misses.
     try { status = await helperStatus(session, signal); misses = 0; }
