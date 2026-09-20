@@ -41,7 +41,9 @@ const REFUSAL = 'needs a current browser: Chrome or Edge 116+, Firefox 124+, or 
 export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   const [session, setSession] = useState<Session | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [invitation, setInvitation] = useState<{ roomId: string; invite: string } | null>(null);
+  // dead marks an invitation nothing can be done with: the link arrived without its invite, or the room turned it
+  // down for good. The dialog drops the name form for one of these rather than offering a join that cannot work.
+  const [invitation, setInvitation] = useState<{ roomId: string; invite: string; dead?: boolean } | null>(null);
   const [error, setError] = useState('');
   const [networkError, setNetworkError] = useState('');
   const [unsupported, setUnsupported] = useState(false);
@@ -213,8 +215,25 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
       const saved = JSON.parse(sessionStorage.getItem(`couchswarm:${roomId}`) || 'null') as Session | null;
       if (saved?.roomId === roomId && saved.token) { setSession(saved); return; }
     } catch { /* An expired tab credential can be replaced by the invite. */ }
+    // A chat app that eats the fragment leaves a link that can never seat anybody, so say so at once instead of
+    // after the guest has picked a name for a couch they were never getting onto.
+    if (!invite) { setError('This invite link is incomplete. Ask your host to send you the whole one.'); setInvitation({ roomId, invite, dead: true }); return; }
     setInvitation({ roomId, invite });
   }, []);
+
+  // Pasting the whole link over a broken one only changes the fragment, which never remounts this hook and so
+  // would never take the name form back. join() already reads the invite out of the address bar; hear the paste.
+  useEffect(() => {
+    if (!invitation?.dead) return;
+    const onHash = () => {
+      const invite = new URLSearchParams(location.hash.slice(1)).get('invite');
+      if (!invite) return;
+      setInvitation({ roomId: invitation.roomId, invite });
+      setError('');
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, [invitation]);
 
   // Rotation is host-only and no reply carries the new invite, so a guest holding the old link would go on
   // handing out a dead one. The room publishes a tag of its invite's hash instead: this tab hashes the link it
@@ -267,7 +286,14 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
       hostKey = (stored.startsWith('{') ? (JSON.parse(stored) as { key?: string }).key : stored) || undefined;
     } catch { /* Blocked or unreadable storage only costs the host their re-claim. */ }
     try { saveSession(await request<Session>(`/api/rooms/${invitation.roomId}`, { action: 'join', name, invite, hostKey })); return true; }
-    catch (err) { setError((err as Error).message); return false; }
+    catch (err) {
+      setError((err as Error).message);
+      // A refused invite, a room that is gone and one that has expired are all final: nothing this guest types
+      // changes them. Anything else - a full couch, a lost connection - is worth trying again.
+      const status = (err as { status?: number }).status;
+      if (status === 403 || status === 404 || status === 410) setInvitation(value => value && { ...value, dead: true });
+      return false;
+    }
     finally { setBusy(false); }
   };
 
