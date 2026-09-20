@@ -45,7 +45,7 @@ const cleanOffer = offer => {
 export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = () => {}, pollMs = 2000, readAheadBytes = READ_AHEAD_BYTES,
   createClient = () => new WebTorrent({ natUpnp: false, natPmp: false, lsd: false, utp: false, ...(process.env.COUCHSWARM_HELPER_OFFLINE === '1' ? { dht: false, tracker: false } : {}) }),
   iceOverride }) {
-  let grant, origin, client, torrent, directory, mediaVersion = -1, timer, closed = false, loading, loadedSource = '', swept = false;
+  let grant, origin, site = '', client, torrent, directory, mediaVersion = -1, timer, closed = false, loading, loadedSource = '', swept = false;
   let status = 'Waiting for a pairing link.', problem = false, lastContact = 0, previousStatus, previousProblem = false;
   let desiredVersion = -2, loadAbort, attemptedVersion = -2, attempts = 0, readyAt = 0, misses = 0, generation = 0, loadingSource = null, throttled = false;
   let servedPieces = [];
@@ -59,7 +59,9 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
   // A status the user has to clear themselves — an unwritable folder, a full drive, retries exhausted — is flagged
   // so the launcher can colour its dot, and the flag stays with the status until the next one replaces it, since
   // every later report repeats the text.
-  const notify = (message, isProblem = false) => { status = message; problem = isProblem; report({ status, peers: connectedPeers(), torrentPeers: torrent?.numPeers || 0, ...(problem ? { problem } : {}) }); };
+  // The site travels with the status so the launcher can keep naming whoever is driving this helper. It goes to
+  // the launcher only: the status text itself is sent to the room on every poll.
+  const notify = (message, isProblem = false) => { status = message; problem = isProblem; report({ status, site, peers: connectedPeers(), torrentPeers: torrent?.numPeers || 0, ...(problem ? { problem } : {}) }); };
   async function api(body) {
     let response;
     try {
@@ -343,6 +345,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       const code = new URLSearchParams(url.hash.slice(1)).get('helper');
       if (!code || !/^[a-f0-9]{64}$/.test(code)) throw new Error('Copy a new pairing link from your CouchSwarm room.');
       origin = url.origin;
+      site = url.host;
       // Naming the origin the helper is about to obey; safe here only because polling has not started, so this
       // status never reaches a room.
       notify(`Connecting to ${url.host}…`);

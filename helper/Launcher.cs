@@ -216,7 +216,7 @@ class CouchSwarmHelper : Form {
     Process helper;
     bool quitting, running;
     int viewers;
-    string lastLink = "";
+    string lastLink = "", site = "";
 
     CouchSwarmHelper() {
         Text = "CouchSwarm Helper";
@@ -273,6 +273,8 @@ class CouchSwarmHelper : Form {
         status.LiveSetting = System.Windows.Forms.Automation.AutomationLiveSetting.Polite;
         meta.ForeColor = Skin.Muted; meta.Font = new Font("Segoe UI", 8.5F);
         meta.SetBounds(46, 96, 434, 18);
+        // The paired site pushes this line past the card on a long host name.
+        meta.AutoEllipsis = true;
         // Empty, this label borrows the status text above it and a screen reader reads that message twice.
         meta.Visible = false;
         meta.TextChanged += (s, e) => meta.Visible = meta.Text.Length > 0;
@@ -462,7 +464,11 @@ class CouchSwarmHelper : Form {
                 bool problem = data.ContainsKey("problem");
                 if (data.ContainsKey("status")) Say(Convert.ToString(data["status"]), failed || problem ? Skin.Alarm : ended || !running ? Skin.Muted : Skin.Lime);
                 viewers = data.ContainsKey("peers") ? Convert.ToInt32(data["peers"]) : 0;
-                meta.Text = data.ContainsKey("peers") && data.ContainsKey("torrentPeers") ? "Viewers connected: " + data["peers"] + "     Torrent peers: " + data["torrentPeers"] : "";
+                // Whoever holds the pairing decides which torrent this machine downloads and seeds, so say who it
+                // is for as long as the session lasts, not just in the moment the link is pasted.
+                if (ended) site = "";
+                else if (data.ContainsKey("site")) site = Convert.ToString(data["site"]);
+                meta.Text = (site.Length > 0 ? "Paired with " + site + "     " : "") + (data.ContainsKey("peers") && data.ContainsKey("torrentPeers") ? "Viewers connected: " + data["peers"] + "     Torrent peers: " + data["torrentPeers"] : "");
                 if (ended) SetRunning(false);
                 if (failed && link.Text.Length == 0) link.Text = lastLink;
             });
@@ -474,6 +480,7 @@ class CouchSwarmHelper : Form {
             OnUi(() => {
                 if (quitting) { Close(); return; }
                 Say("Helper stopped (code " + code + "). Create a fresh pairing link to reconnect.", Skin.Alarm);
+                site = "";
                 meta.Text = "";
                 viewers = 0;
                 SetRunning(false);
