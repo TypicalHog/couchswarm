@@ -195,17 +195,25 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           helperTimer = setTimeout(() => void heartbeat(), 5000);
         }
         if (remote || bridge) lostHelper.current = false;
-        if (session && !bridge && !helperFailed && !remote?.own) {
+        if (session && !bridge && !remote?.own) {
           // A helper that becomes ready later upgrades this browser-only stream, and a guest on the host's
           // helper remounts onto their own once it is ready. The restart interrupts playback, so adopt one
           // only before any video bytes land — unless this stream lost its helper, where the kept store's
           // bytes say nothing about the swarm and the stall is worse than the interruption.
-          // A helper that was offered and could not be reached is upgraded to once per movie, never in a loop.
+          // A helper that was offered and could not be reached is upgraded to once per movie, never in a loop:
+          // once that budget is spent the returning helper is offered instead, because a tab left on browser
+          // peers that receive nothing holds the whole room paused with nothing to click.
           const watch = async () => {
             try {
               const { ready, own } = await helperStatus(session, abort.signal);
               if (disposed) return;
-              if (ready && (!remote || own)) { if (!fileRef.current?.downloaded || lostHelper.current) setAttempt(value => value + 1); return; }
+              if (ready && (!remote || own)) {
+                if (!fileRef.current?.downloaded || lostHelper.current) {
+                  if (helperFailed) fail(`${own ? 'Your' : 'The host’s'} helper is available again. Reconnect to the movie to use it.`);
+                  else setAttempt(value => value + 1);
+                }
+                return;
+              }
             }
             catch { /* The room connection already reports connectivity failures. */ }
             if (!disposed) helperTimer = setTimeout(() => void watch(), document.hidden ? 30000 : 15000);

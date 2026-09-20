@@ -78,9 +78,19 @@ export async function connectRemoteHelper(session: Session, mediaVersion: number
           const result = await helperRequest<{ peerId: string }>(session, { action: 'offer', mediaVersion, offer }, signal);
           peerId = result.peerId;
           if (released) { void helperRequest(session, { action: 'close', peerId }).catch(() => {}); return; }
+          // Waiting for the answer is no different: one failed poll is a blip, not a helper that cannot be
+          // reached, and the 45 s timeout above still bounds a doomed attempt.
+          let answerMisses = 0;
           while (!released) {
-            const result = await helperRequest<{ answer: unknown }>(session, { action: 'peer', peerId }, signal);
-            if (result.answer) { peer.signal(result.answer); break; }
+            try {
+              const result = await helperRequest<{ answer: unknown }>(session, { action: 'peer', peerId }, signal);
+              answerMisses = 0;
+              if (result.answer) { peer.signal(result.answer); break; }
+            }
+            catch (error) {
+              const code = (error as { status?: number }).status;
+              if (signal.aborted || code === 403 || code === 410 || ++answerMisses >= 4) throw error;
+            }
             await sleep();
           }
         } catch (error) { clearTimeout(timeout); reject(error); }
