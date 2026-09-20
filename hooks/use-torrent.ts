@@ -57,6 +57,9 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
   const [stats, setStats] = useState({ speed: 0, peers: 0, progress: 0, filename: '', size: 0 });
   const [loadedVersion, setLoadedVersion] = useState(-1);
   const [helper, setHelper] = useState<{ peers?: number; host?: boolean } | null>(null);
+  // A paired helper is only reported once it is connected, which is a metadata wait plus a WebRTC leg away.
+  // Set while that is in flight, so nothing on screen claims the room has no helper during it.
+  const [helperPending, setHelperPending] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const fileRef = useRef<TorrentFile | null>(null);
   const retriedHelper = useRef(0);
@@ -91,6 +94,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     subtitleRef.current = [];
     setLoadedVersion(-1);
     setHelper(null);
+    setHelperPending(false);
     // The file list belongs to the torrent, not the selection: keep it across a file switch so the picker stays mounted.
     if (sourceRef.current !== source) { sourceRef.current = source; setFiles([]); setSubtitles([]); }
     setError('');
@@ -159,7 +163,11 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         // candidates rather than on somebody else's STUN.
         let iceServers: RTCIceServer[] = [];
         if (session) {
-          try { ({ iceServers } = await helperStatus(session, abort.signal)); }
+          try {
+            const status = await helperStatus(session, abort.signal);
+            iceServers = status.iceServers;
+            if (status.paired) setHelperPending(true);
+          }
           catch { /* The room connection already reports connectivity failures. */ }
           if (disposed) return;
         }
@@ -209,6 +217,9 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           // spending this movie's one upgrade attempt on a browser-only stream.
           }).catch(err => { if (abort.signal.aborted || (err as { stale?: boolean }).stale) throw err; helperFailed = retriedUpgrade.current; retriedUpgrade.current = true; return fallBack(err); }) : null;
         if (remote) setHelper({ host: !remote.own });
+        // Cleared after the helper is reported, so the two never read false at the same moment. Every way
+        // out of the attempt — connected, unpaired mid-wait, offline too long, failed — passes here.
+        setHelperPending(false);
         const bridge = session && !remote ? await connectHelper(session, source, mediaVersion, abort.signal, value => {
           if (disposed) return;
           setHelper({ peers: value.peers });
@@ -527,5 +538,5 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
   }, [subtitle, videoRef, listed]);
 
   const reconnect = useCallback(() => { retriedHelper.current = 0; retriedUpgrade.current = false; setAttempt(value => value + 1); }, []);
-  return { status, error, files, stats, loadedVersion, helper, reconnect, subtitles, subtitle, setSubtitle, subtitleError, subtitleBusy };
+  return { status, error, files, stats, loadedVersion, helper, helperPending, reconnect, subtitles, subtitle, setSubtitle, subtitleError, subtitleBusy };
 }
