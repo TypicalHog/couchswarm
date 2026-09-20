@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, open, readdir, rm, stat } from 'node:fs/promises';
+import { BlockList, isIP } from 'node:net';
 import path from 'node:path';
 import WebTorrent from 'webtorrent';
 import Peer from '@thaunknown/simple-peer';
@@ -21,6 +22,25 @@ const describe = error => error?.code === 'ENOSPC' ? 'The download drive is full
 export const nativeIceServers = servers => servers.map(server => ({ ...server,
   ...(server.username ? { username: encodeURIComponent(server.username), credential: encodeURIComponent(server.credential) } : {}),
 }));
+
+// An offer is written by a room member and relayed to the helper untouched, so its candidate lines choose the
+// addresses this machine then sends STUN checks to. Loopback, the unspecified address, link-local and the cloud
+// metadata address are nothing a guest can be reached at, and the count is capped so one offer cannot fan out.
+// Private addresses stay: a guest on the same LAN needs them when no relay is configured.
+const MAX_OFFER_CANDIDATES = 20;
+const unreachable = new BlockList();
+for (const [address, prefix] of [['0.0.0.0', 8], ['127.0.0.0', 8], ['169.254.0.0', 16]]) unreachable.addSubnet(address, prefix);
+for (const [address, prefix] of [['::', 128], ['::1', 128], ['fe80::', 10]]) unreachable.addSubnet(address, prefix, 'ipv6');
+const cleanOffer = offer => {
+  let kept = 0;
+  return { ...offer, sdp: offer.sdp.split(/\r?\n/).filter(line => {
+    if (!line.startsWith('a=candidate:')) return true;
+    const address = line.split(' ')[4] || '';
+    const family = isIP(address);
+    if (family && unreachable.check(address, family === 6 ? 'ipv6' : 'ipv4')) return false;
+    return ++kept <= MAX_OFFER_CANDIDATES;
+  }).join('\r\n') };
+};
 
 export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = () => {}, pollMs = 2000, readAheadBytes = READ_AHEAD_BYTES,
   createClient = () => new WebTorrent({ natUpnp: false, natPmp: false, lsd: false, utp: false, ...(process.env.COUCHSWARM_HELPER_OFFLINE === '1' ? { dht: false, tracker: false } : {}) }),
@@ -283,7 +303,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
             report({ status, peers: connectedPeers(), torrentPeers: torrent?.numPeers || 0, ...(problem ? { problem } : {}) });
           });
           peer.on('signal', answer => { void api({ action: 'answer', peerId: remote.id, answer }).catch(() => peer.destroy()); });
-          peer.signal(remote.offer);
+          peer.signal(cleanOffer(remote.offer));
         }
       }
       // Watching friends and the swarm share one uplink, so the swarm gives way while anyone is connected and gets
