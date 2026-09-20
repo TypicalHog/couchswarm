@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, open, readdir, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import WebTorrent from 'webtorrent';
 import Peer from '@thaunknown/simple-peer';
-import { markSparse, torrentPathIssue, torrentSource, videoSpanFiles } from './torrent-helper.mjs';
+import { markSparse, servedRanges, torrentPathIssue, torrentSource } from './torrent-helper.mjs';
 import { serveTorrentPeer } from './remote-wire.mjs';
 import { MAX_HELPER_PEERS } from './constants.mjs';
 
@@ -18,7 +18,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
   let grant, origin, client, torrent, directory, mediaVersion = -1, timer, closed = false, loading, loadedSource = '', swept = false;
   let status = 'Waiting for a pairing link.', lastContact = 0, previousStatus;
   let desiredVersion = -2, loadAbort, attemptedVersion = -2, attempts = 0, readyAt = 0, misses = 0, generation = 0, loadingSource = null;
-  let servedPieces = { from: 0, to: -1 };
+  let servedPieces = [];
   const peers = new Map();
   // Every serving viewer's read-ahead windows, so a deselect can put back what the others still claim.
   const viewers = new Set();
@@ -86,12 +86,16 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
   // window opens another, retiring the oldest. The request's own stream selection has higher priority and stays first.
   function readAhead(value, piece, windows) {
     if (value !== torrent || value.destroyed) return;
+    // Prefetch stays inside the run the request landed in: the video's pieces and a subtitle's are separate runs,
+    // and the gap between them holds files nothing validated.
+    const served = servedPieces.find(range => piece >= range.from && piece <= range.to);
+    if (!served) return;
     const span = Math.ceil(readAheadBytes / value.pieceLength);
     const index = windows.findIndex(window => piece >= window.from && piece <= window.to);
     if (index >= 0 && piece <= windows[index].from + span / 2) return;
     const stale = index >= 0 ? windows.splice(index, 1)[0] : windows.length >= READ_AHEAD_WINDOWS ? windows.shift() : null;
     if (stale) { value.deselect(stale.from, stale.to); reassert(value); }
-    const window = { from: piece, to: Math.min(servedPieces.to, piece + span) };
+    const window = { from: piece, to: Math.min(served.to, piece + span) };
     windows.push(window);
     value.select(window.from, window.to, 0);
   }
@@ -183,10 +187,10 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     await markSparse(value, signal);
     if (closed || signal.aborted) return;
     if (value.destroyed) throw new Error(describe(cause));
-    // Serve and prefetch only the pieces the video span covers: torrentPathIssue and markSparse validate that span
-    // alone, so a write outside it lands in an unchecked, non-sparse file. An empty span leaves nothing to serve.
-    const spanned = videoSpanFiles(value), last = spanned[spanned.length - 1];
-    servedPieces = spanned.length ? { from: Math.floor(spanned[0].offset / value.pieceLength), to: Math.floor((last.offset + last.length - 1) / value.pieceLength) } : { from: 0, to: -1 };
+    // Serve and prefetch only the video's own pieces and each subtitle's: torrentPathIssue and markSparse validate
+    // every file those pieces carry, so a read outside them would download and write a file nothing checked. A
+    // torrent with no video leaves nothing to serve.
+    servedPieces = servedRanges(value);
     torrent = value;
     loadedSource = room.source;
     readyAt = Date.now();

@@ -31,6 +31,7 @@ if (packaged) {
 }
 const { createRemoteAgent } = await import(packaged ? '../work/helper-package/app/helper/remote-agent.mjs' : '../helper/remote-agent.mjs');
 const { serveTorrentPeer } = await import(packaged ? '../work/helper-package/app/helper/remote-wire.mjs' : '../helper/remote-wire.mjs');
+const { servedRanges } = await import(packaged ? '../work/helper-package/app/helper/torrent-helper.mjs' : '../helper/torrent-helper.mjs');
 
 const origin = process.env.TEST_ORIGIN || 'http://localhost:3001';
 const offline = { dht: false, tracker: false, lsd: false, utp: false, natUpnp: false, natPmp: false };
@@ -276,6 +277,24 @@ test('cancelling one copy of a repeated block request still answers the other', 
   await sleep(50);
   assert.deepEqual(wire.peerRequests, [], 'the cancel leaves no request sitting in the queue owed a reply');
   assert.deepEqual((await Promise.all(copies)).filter(copy => Buffer.isBuffer(copy)), [payload], 'the copy the client kept is still answered');
+});
+
+test('a subtitle past the video is advertised and served, and nothing between them is', { timeout: 5000 }, async () => {
+  const infoHash = 'd'.repeat(40), subtitle = Buffer.alloc(16384, 17);
+  const file = (name, offset, body) => ({ name, path: `Pack/${name}`, offset, length: body.length,
+    createReadStream({ start, end }) { const stream = new PassThrough(); stream.end(body.subarray(start, end + 1)); return stream; } });
+  const torrent = { infoHash, torrentFile: null, pieceLength: 16384, length: 49152, pieces: ['x', 'y', 'z'],
+    files: [file('movie.mkv', 0, Buffer.alloc(16384, 1)), file('extras.bin', 16384, Buffer.alloc(16384, 2)), file('en.srt', 32768, subtitle)] };
+  const client = new Wire();
+  serveTorrentPeer(client, torrent, () => {}, servedRanges(torrent));
+  const advertised = new Promise(resolve => client.once('bitfield', resolve));
+  client.handshake(infoHash, Buffer.concat([Buffer.from('-TE0001-'), Buffer.alloc(12, 1)]), { fast: true });
+  const bitfield = await advertised;
+  assert.deepEqual([0, 1, 2].map(piece => bitfield.get(piece)), [true, false, true], 'only the pieces the helper will answer are advertised');
+  await new Promise(resolve => { client.once('unchoke', resolve); client.interested(); });
+  const ask = piece => new Promise((resolve, reject) => client.request(piece, 0, 16384, (error, data) => error ? reject(error) : resolve(Buffer.from(data))));
+  assert.deepEqual(await ask(2), subtitle, 'a subtitle past the video arrives instead of being refused for the whole timeout');
+  await assert.rejects(ask(1), /rejected/, 'the file between them is still one the helper refuses, so it is never written');
 });
 
 test('a failed native torrent stops advertising readiness, then reloads', { timeout: 60000 }, async t => {

@@ -85,26 +85,37 @@ const slashed = file => file.path.replaceAll('\\', '/');
 export const videoFiles = files => files.filter(file => /\.(mkv|mp4|webm|m4v|ogv)$/i.test(file.name))
   .sort((a, b) => b.length - a.length || (slashed(a) < slashed(b) ? -1 : slashed(a) > slashed(b) ? 1 : 0));
 
-// The files sharing a piece with a video.
-export function videoSpanFiles(torrent) {
+// Keep this list in step with lib/subtitles.ts, which offers the same extensions in the picker.
+const subtitleName = /\.(srt|ass|ssa|vtt)$/i;
+const filesIn = (torrent, ranges) => torrent.files.filter(file => ranges.some(range =>
+  file.offset < (range.to + 1) * torrent.pieceLength && file.offset + file.length > range.from * torrent.pieceLength));
+
+// The pieces a viewer may ask for: the video's own run first, then one per subtitle, so a sidecar the picker lists
+// past the video still arrives. The video run stops at the video's last piece rather than at the last byte of the
+// file sharing that piece, or read-ahead would reach into whatever follows.
+export function servedRanges(torrent) {
   const videos = videoFiles(torrent.files);
   if (!videos.length) return [];
+  const range = (from, to) => ({ from: Math.floor(from / torrent.pieceLength), to: Math.floor((to - 1) / torrent.pieceLength) });
   // A torrent can list more files than a spread can carry as arguments, so walk them instead.
   let first = Infinity, last = 0;
   for (const file of videos) { first = Math.min(first, file.offset); last = Math.max(last, file.offset + file.length); }
-  const from = Math.floor(first / torrent.pieceLength) * torrent.pieceLength;
-  const to = Math.ceil(last / torrent.pieceLength) * torrent.pieceLength;
-  return torrent.files.filter(file => file.offset + file.length > from && file.offset < to);
+  return [range(first, last), ...torrent.files.filter(file => file.length && subtitleName.test(file.name))
+    .map(file => range(file.offset, file.offset + file.length))];
 }
 
-// Keep this list in step with lib/subtitles.ts, which offers the same extensions in the picker.
-const subtitleName = /\.(srt|ass|ssa|vtt)$/i;
-// Every file the helper is ever allowed to write: the video span, plus the subtitles a viewer can choose.
-// torrentPathIssue and markSparse cover exactly this set, so a route that resolves outside it would write
-// a name nothing validated into a file nothing flagged sparse.
+// The files a viewer can ask for: whatever shares a piece with the video, plus the subtitles the picker offers.
 export function servedFiles(torrent) {
-  const span = new Set(videoSpanFiles(torrent));
+  const [video] = servedRanges(torrent);
+  const span = new Set(video ? filesIn(torrent, [video]) : []);
   return torrent.files.filter(file => span.has(file) || subtitleName.test(file.name));
+}
+
+// Every file the helper is ever allowed to write. A piece reaches the disk whole, so a subtitle's own piece brings
+// its neighbours with it: torrentPathIssue and markSparse cover exactly this set, so a piece the helper serves can
+// never write a name nothing validated into a file nothing flagged sparse.
+export function writtenFiles(torrent) {
+  return filesIn(torrent, servedRanges(torrent));
 }
 
 // NTFS zero-fills everything below a write, so the tail pieces an MKV player reads first would allocate the
@@ -113,7 +124,7 @@ export async function markSparse(value, signal) {
   if (process.platform !== 'win32') return;
   let store = value.store;
   while (store && !Array.isArray(store.files)) store = store.store;
-  const wanted = new Set(servedFiles(value));
+  const wanted = new Set(writtenFiles(value));
   for (const [index, file] of value.files.entries()) {
     if (signal?.aborted) return;
     const target = store?.files[index];
@@ -141,7 +152,7 @@ export function torrentPathIssue(torrent, root = '') {
   for (const file of torrent.files)
     if (slashed(file).split('/').slice(0, -1).some(part => /[<>:"|?*\p{Cc}]/u.test(part) || deviceName(part) || /[. ]$/.test(part)))
       return 'This torrent has a folder name Windows cannot create. Choose another torrent.';
-  for (const file of servedFiles(torrent)) {
+  for (const file of writtenFiles(torrent)) {
     const parts = file.path.replaceAll('\\', '/').split('/');
     if (parts.slice(0, -1).some(part => /[<>:"|?*\p{Cc}]/u.test(part))) return 'This torrent has a folder name Windows cannot create. Choose another torrent.';
     // fs-chunk-store strips these characters from the file name, so 'nul?.mkv' reaches the disk as

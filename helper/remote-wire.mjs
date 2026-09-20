@@ -46,8 +46,11 @@ export function serveTorrentPeer(peer, torrent, readAhead = () => {}, pieces = n
     // extended handshake built from extendedMapping straight away.
     wire.use(utMetadata(torrent.torrentFile));
     wire.handshake(torrent.infoHash, Buffer.concat([Buffer.from('-CS0001-'), randomBytes(12)]), { fast: true });
-    const bits = Buffer.alloc(Math.ceil(torrent.pieces.length / 8), 255);
-    if (torrent.pieces.length % 8) bits[bits.length - 1] = (255 << (8 - torrent.pieces.length % 8)) & 255;
+    // Advertise only what the guard below will answer: a browser told this peer holds a piece it will always refuse
+    // re-asks for it until the room gives up on the file, which is how a subtitle past the video used to fail.
+    const bits = Buffer.alloc(Math.ceil(torrent.pieces.length / 8));
+    for (let piece = 0; piece < torrent.pieces.length; piece++)
+      if (!pieces || pieces.some(range => piece >= range.from && piece <= range.to)) bits[piece >> 3] |= 128 >> (piece % 8);
     wire.bitfield(bits);
   });
   // peer.destroy() is deferred, so a rejected peer keeps parsing the same message: staying choked is what stops it.
@@ -66,9 +69,9 @@ export function serveTorrentPeer(peer, torrent, readAhead = () => {}, pieces = n
     if (wire._readableState.buffered + queuedBytes > MAX_UNSENT_BYTES) { peer.destroy(); return; }
     const start = piece * torrent.pieceLength + offset;
     const pieceSize = Math.min(torrent.pieceLength, torrent.length - piece * torrent.pieceLength);
-    // A piece outside the video span belongs to a file nothing validated or marked sparse, and reading it here is
+    // A piece nothing serves belongs to a file nothing validated or marked sparse, and reading it here is
     // what makes the torrent download and write it.
-    if (!Number.isInteger(piece) || !Number.isInteger(offset) || !Number.isInteger(length) || piece < 0 || offset < 0 || length < 1 || length > 128 * 1024 || offset + length > pieceSize || (pieces && (piece < pieces.from || piece > pieces.to))) {
+    if (!Number.isInteger(piece) || !Number.isInteger(offset) || !Number.isInteger(length) || piece < 0 || offset < 0 || length < 1 || length > 128 * 1024 || offset + length > pieceSize || (pieces && !pieces.some(range => piece >= range.from && piece <= range.to))) {
       callback(new Error('Invalid block request.')); return;
     }
     const key = `${piece}:${offset}:${length}`;
