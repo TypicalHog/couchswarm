@@ -68,7 +68,10 @@ async function fetchTorrent(url, signal) {
       },
     }, async response => {
       try {
-        if (response.statusCode !== 200) throw new Error('The torrent URL must return the file directly, without a redirect.');
+        const status = response.statusCode ?? 0;
+        // Redirects are not followed, so the address checked above stays the one this connection uses.
+        if (status >= 300 && status < 400) throw new Error('The torrent URL must return the file directly, without a redirect.');
+        if (status !== 200) throw new Error(`The torrent URL returned HTTP ${status}. Check that the link still works.`);
         resolve(await readLimited(response, 4 * 1024 * 1024, 'That .torrent file is larger than 4 MiB. Choose another torrent.'));
       } catch (error) { response.destroy(); reject(error); }
     });
