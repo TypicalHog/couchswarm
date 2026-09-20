@@ -472,6 +472,47 @@ test('a torrent is refused before its folders reach the disk', { timeout: 30000 
     'the torrent is judged before anything opens a file, so no folder Windows cannot remove is left behind');
 });
 
+test('an answered offer is not a connected viewer', { timeout: 30000 }, async t => {
+  const seed = new WebTorrent(offline);
+  t.after(() => destroy(seed));
+  const payload = Object.assign(Buffer.alloc(16384, 41), { name: 'movie.mp4' });
+  const seeded = await new Promise(resolve => seed.seed(payload, { name: payload.name, pieceLength: 16384, announce: [], store: MemoryStore }, resolve));
+  const host = await post('/api/rooms', { source: `${seeded.magnetURI}&x.pe=127.0.0.1:${seed.torrentPort}` }, null, 201);
+  const room = `/api/rooms/${host.roomId}`, route = room + '/helper';
+  t.after(() => post(room, { action: 'leave' }, host.token).catch(() => {}));
+  const pair = await post(route, { action: 'pair' }, host.token);
+  const cacheRoot = await mkdtemp(path.join(tmpdir(), 'couchswarm-count-test-'));
+  const reports = [];
+  const helper = createRemoteAgent({ cacheRoot, pollMs: 100, iceOverride: [], report: value => reports.push(value), createClient: () => new WebTorrent(offline) });
+  t.after(async () => { await helper.stop(); if (path.dirname(cacheRoot) === tmpdir()) await rm(cacheRoot, { recursive: true, force: true }); });
+  await helper.pair(pair.pairingUrl);
+  let state;
+  for (let i = 0; i < 200; i++) {
+    state = await post(route, { action: 'status' }, host.token);
+    if (state.ready) break;
+    await sleep(100);
+  }
+  assert.equal(state.ready, true, 'the helper loaded the seeded torrent');
+  // roomAccess does not renew a seat, and the wait above can outlast the presence window.
+  await post(room, { action: 'heartbeat', ready: true, buffered: 15, epoch: 0, mediaVersion: 0, duration: 120, sequence: 1 }, host.token);
+  const peer = new Peer({ initiator: true, trickle: false, config: { iceServers: [] } });
+  peer.on('error', () => {});
+  t.after(() => peer.destroy());
+  const [offer] = await once(peer, 'signal');
+  const { peerId } = await post(route, { action: 'offer', mediaVersion: 0, offer }, host.token, 201);
+  let answered = false;
+  for (let i = 0; i < 100 && !answered; i++) {
+    answered = !!(await post(route, { action: 'peer', peerId }, host.token)).answer;
+    if (!answered) await sleep(100);
+  }
+  assert.ok(answered, 'the helper answered the offer and now holds a peer that cannot connect');
+  // The answer is never signalled back, so this viewer stays a friend behind a NAT the helper cannot reach.
+  const before = reports.length;
+  await sleep(600);
+  assert.ok(reports.length > before, 'the helper kept reporting while the offer sat unconnected');
+  assert.ok(reports.slice(before).every(value => !value.peers), 'the launcher is not told about a viewer that never connected');
+});
+
 // CS1-S41: a revoked pairing must stop the agent from its own poll, so this case needs its own
 // helper — an unpaired room reports online === false whether or not the agent ever said goodbye.
 test('a revoked pairing stops the helper from its own poll', { timeout: 20000 }, async t => {

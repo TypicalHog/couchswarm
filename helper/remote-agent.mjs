@@ -29,7 +29,10 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
   // Every serving viewer's read-ahead windows, so a deselect can put back what the others still claim.
   const viewers = new Set();
   const root = path.resolve(cacheRoot);
-  const notify = message => { status = message; report({ status, peers: peers.size, torrentPeers: torrent?.numPeers || 0 }); };
+  // Counted once the channel is actually open: an offer that will never connect sits in the map until its 45 s
+  // timer, and the launcher would call that a viewer for the whole attempt, then again on every retry.
+  const connectedPeers = () => [...peers.values()].filter(peer => peer.connected).length;
+  const notify = message => { status = message; report({ status, peers: connectedPeers(), torrentPeers: torrent?.numPeers || 0 }); };
   async function api(body) {
     let response;
     try {
@@ -142,7 +145,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       if (!keepDownloads) await (await open(path.join(created, '.couchswarm'), 'w')).close();
     } catch (error) {
       // The room must never see a local filesystem path; the launcher window still does.
-      report({ status: error.message, peers: peers.size, torrentPeers: 0 });
+      report({ status: error.message, peers: connectedPeers(), torrentPeers: 0 });
       throw new Error('The helper cannot write to its download folder. Stop sharing, then choose another folder in the helper.');
     }
     directory = created;
@@ -265,12 +268,14 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
             clearTimeout(timeout);
             served = torrent;
             if (served && !closed) { viewers.add(own); serveTorrentPeer(peer, served, piece => readAhead(served, piece, own), servedPieces); } else peer.destroy();
+            // The count only moves here, so say so now rather than at the next poll.
+            report({ status, peers: connectedPeers(), torrentPeers: torrent?.numPeers || 0 });
           });
           peer.on('signal', answer => { void api({ action: 'answer', peerId: remote.id, answer }).catch(() => peer.destroy()); });
           peer.signal(remote.offer);
         }
       }
-      report({ status, peers: peers.size, torrentPeers: torrent?.numPeers || 0, relayAvailable: data.relayAvailable });
+      report({ status, peers: connectedPeers(), torrentPeers: torrent?.numPeers || 0, relayAvailable: data.relayAvailable });
     } catch (error) {
       if (closed) return;
       if (error.revoked) { notify(error.message); await stop(false); report({ status: error.message, stopped: true }); return; }
