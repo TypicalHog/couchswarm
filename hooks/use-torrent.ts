@@ -662,6 +662,11 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
   // pipeline for a helper that had already stopped empties the video for nothing, and the ready:false the next
   // heartbeat then reports pauses the room for everyone.
   const reconnectIfOwnHelper = useCallback(() => { if (ownHelperLive.current) reconnect(); }, [reconnect]);
+  // The other half: a helper the viewer has only just paired. The watcher above adopts one on its own solely
+  // before any video bytes have landed, and a room cannot be opened without a torrent, so the host — who can
+  // only pair after that — would otherwise spend the whole movie on browser peers. Someone who has just pasted
+  // a pairing link has asked for the interruption a rebuild costs.
+  const adoptOwnHelper = useCallback(() => { if (!ownHelperLive.current) reconnect(); }, [reconnect]);
   const chooseSubtitle = useCallback((next: number | File | null) => { setSubtitle(next); setPicked(count => count + 1); }, []);
 
   // The effect's cleanup pulls the attached <track> the moment the pick changes, so committing an upload before
@@ -680,5 +685,5 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     return true;
   }, [chooseSubtitle]);
 
-  return { status, error, files, stats, loadedVersion, helper, helperPending, reconnect, reconnectIfOwnHelper, readPieces, subtitles, subtitle, setSubtitle: chooseSubtitle, uploadSubtitle, subtitleError, subtitleBusy };
+  return { status, error, files, stats, loadedVersion, helper, helperPending, reconnect, reconnectIfOwnHelper, adoptOwnHelper, readPieces, subtitles, subtitle, setSubtitle: chooseSubtitle, uploadSubtitle, subtitleError, subtitleBusy };
 }

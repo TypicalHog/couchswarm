@@ -1,12 +1,12 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Download, Link2, MonitorPlay } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { helperRequest, helperStatus, type HelperStatus } from '@/lib/remote-helper';
 import { PAIR_TTL_MS, type Session } from '@/lib/sync';
 
-export function HelperConnection({ session, isHost, reconnectIfOwnHelper, needed, open, onOpenChange }:
-  { session: Session; isHost: boolean; reconnectIfOwnHelper: () => void; needed: boolean; open: boolean; onOpenChange: (open: boolean) => void }) {
+export function HelperConnection({ session, isHost, reconnectIfOwnHelper, adoptOwnHelper, needed, open, onOpenChange }:
+  { session: Session; isHost: boolean; reconnectIfOwnHelper: () => void; adoptOwnHelper: () => void; needed: boolean; open: boolean; onOpenChange: (open: boolean) => void }) {
   const [status, setStatus] = useState<HelperStatus | null>(null);
   const [pairingUrl, setPairingUrl] = useState('');
   const [pairingExpires, setPairingExpires] = useState(0);
@@ -16,6 +16,11 @@ export function HelperConnection({ session, isHost, reconnectIfOwnHelper, needed
   // Both builds are always offered; this only decides which comes first, so it can settle after hydration and a
   // wrong guess costs a visitor nothing. Android reports Linux in its user agent and runs neither build.
   const [linuxFirst, setLinuxFirst] = useState(false);
+  // Adopting this participant's helper is worth a rebuilt pipeline only when it came up while they were sitting
+  // here, which is what pairing one looks like. A tab that loads with one already running is streaming from it
+  // already, so it has to see the helper offline first to arm this; once spent it stays spent, because a helper
+  // that drops is the pipeline's own business and it keeps a retry budget for it.
+  const adopt = useRef<'idle' | 'armed' | 'spent'>('idle');
   useEffect(() => {
     const platform = (navigator as Navigator & { userAgentData?: { platform: string } }).userAgentData?.platform || navigator.userAgent;
     setLinuxFirst(/linux/i.test(platform) && !/android/i.test(platform));
@@ -33,6 +38,8 @@ export function HelperConnection({ session, isHost, reconnectIfOwnHelper, needed
         setStatus(result);
         // Pressing the button while a claim was already in flight answers 409; once the helper reads as connected that complaint is stale.
         if (result.mine && result.online) { setPairingUrl(''); setError(''); }
+        if (!result.mineOnline) { if (adopt.current === 'idle') adopt.current = 'armed'; }
+        else if (adopt.current === 'armed') { adopt.current = 'spent'; adoptOwnHelper(); }
         paired = result.paired;
       } catch { /* The room connection already reports connectivity failures. */ }
       finally { running = false; }
@@ -45,7 +52,7 @@ export function HelperConnection({ session, isHost, reconnectIfOwnHelper, needed
     document.addEventListener('visibilitychange', onVisibility);
     void poll();
     return () => { abort.abort(); clearTimeout(timer); document.removeEventListener('visibilitychange', onVisibility); };
-  }, [session, open, pairingUrl]);
+  }, [session, open, pairingUrl, adoptOwnHelper]);
   // The code behind the link dies on the server's schedule, so take the link away rather than let Copy hand over a dead one.
   useEffect(() => {
     if (!pairingUrl) return;
