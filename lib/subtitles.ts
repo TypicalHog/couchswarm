@@ -1,8 +1,13 @@
 // Bitmap subtitles (.sub with its .idx, .sup) are image streams, and a frame-based .sub needs a frame rate
 // nothing knows before playback, so neither can reach a <track> and neither is offered.
-export function subtitleFiles<T extends { name: string; path: string }>(files: T[]): T[] {
+// A season pack carries a subtitle for every episode, and path order puts the one belonging to the video being
+// played wherever the torrent happens to put it, so the files named after that video come first. A release group
+// that renamed its subtitles matches nothing here and simply keeps the order it had: everything stays listed.
+export function subtitleFiles<T extends { name: string; path: string }>(files: T[], videoName = ''): T[] {
+  const stem = videoName.replace(/\.[^.]+$/, '').toLowerCase();
+  const episode = (file: T) => (stem && file.name.toLowerCase().startsWith(stem) ? 0 : 1);
   return files.filter(file => /\.(srt|ass|ssa|vtt)$/i.test(file.name))
-    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    .sort((a, b) => episode(a) - episode(b) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
 // Nothing inside an SRT or an ASS names its code page, so a file that is not UTF-8 has to be guessed at. The

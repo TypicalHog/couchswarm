@@ -415,7 +415,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           const videos = videoFiles(value.files);
           setFiles(videos.map(file => ({ name: file.name, path: file.path, size: file.length })));
           // Naming the subtitles costs nothing; their bytes are only read once somebody picks one.
-          subtitleRef.current = subtitleFiles(value.files);
+          subtitleRef.current = subtitleFiles(value.files, videos[fileIndex]?.name);
           setSubtitles(subtitleRef.current.map(file => ({ name: file.name, path: file.path })));
           if (pendingPick.current) setListed(count => count + 1);
           const file = videos[fileIndex];
