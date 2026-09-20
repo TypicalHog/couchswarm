@@ -189,6 +189,22 @@ export default function CouchSwarm() {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   });
+  // A media key, a headset button or the OS media hub acts on the element itself, and the 100 ms corrector puts it
+  // straight back, so the controls people reach for first did nothing at all. Claiming the actions takes them off
+  // the browser: the host's press becomes a room control, and everyone else's simply stops fighting the loop.
+  // Seeking is the host's from the room's timeline, so those actions are claimed only to keep the hub out of it.
+  // Re-bound each render like the Space key above, so the handler always closes over the current room state.
+  useEffect(() => {
+    if (!session || !('mediaSession' in navigator)) return;
+    const hub = navigator.mediaSession;
+    const actions = ['play', 'pause', 'seekto', 'seekforward', 'seekbackward'] as const;
+    const claim = (action: (typeof actions)[number], handler: MediaSessionActionHandler | null) => {
+      try { hub.setActionHandler(action, handler); } catch { /* An action this browser has never heard of. */ }
+    };
+    for (const action of actions) claim(action, action === 'play' || action === 'pause' ? togglePlayback : () => { /* Not the hub's to move. */ });
+    hub.playbackState = isPlaying ? 'playing' : 'paused';
+    return () => { for (const action of actions) claim(action, null); };
+  });
 
   // A dialog can be opened from more than one place, so closing it returns to the control that was pressed
   // rather than to whichever one the ref happens to name. Each dialog keeps its own ref as the fallback.
