@@ -137,11 +137,13 @@ export async function markSparse(value, signal) {
     if (signal?.aborted) return;
     const target = store?.files[index];
     if (!target || !wanted.has(file) || file.length <= value.pieceLength) continue;
+    // The launcher keeps stderr in a log that outlives the download, so the failure is reported by code: the
+    // message execFile builds repeats the whole command line, movie folder and file name included.
     try {
       await mkdir(path.dirname(target.path), { recursive: true });
       await (await open(target.path, 'a')).close();
       await run('fsutil', ['sparse', 'setflag', target.path], { windowsHide: true, timeout: 5000, signal });
-    } catch (error) { console.error('Sparse flag failed:', error.message); }
+    } catch (error) { console.error('Sparse flag failed:', error.code ?? error.signal ?? 'no reason given'); }
   }
 }
 

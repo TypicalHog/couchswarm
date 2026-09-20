@@ -202,7 +202,9 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     // Identity, not this load's signal: a same-source version bump aborts the controller while its torrent keeps serving.
     const failed = error => {
       if (closed || client !== currentClient || torrent !== value) return;
-      console.error('Torrent failed:', error?.stack || error || 'closed without an error');
+      // A filesystem error spells the download path into its message and its stack, and the launcher's log
+      // outlives the download it names, so an error that carries a code is logged by that code alone.
+      console.error('Torrent failed:', error?.code ? `${error.code} ${error.syscall ?? ''}`.trim() : error?.stack || error || 'closed without an error');
       if (Date.now() - readyAt > 300000) attempts = 0;
       void clearTorrent().then(cleared => {
         if (closed || generation !== own) return; // a newer load owns the status now
