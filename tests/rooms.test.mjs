@@ -176,6 +176,9 @@ test('rejects malformed requests, rewinds at the end, and gates seats, moderatio
   desertedState = await post(desertedPath, { action: 'snapshot' }, friend.token);
   assert.equal(desertedState.room.playing, false, 'a join stops a room the host has walked out of');
   assert.match(desertedState.room.reason, /host disconnected/, 'the friend is told the host is gone, not that everyone is waiting on them');
+  desertedState = await post(desertedPath, { action: 'heartbeat', ready: true, buffered: 15, epoch: 0, mediaVersion: 0, duration: 120, sequence: 2 }, deserted.token);
+  assert.match(desertedState.room.reason, /host is back/, 'the couch stops waiting for a host who has returned');
+  assert.equal(desertedState.room.playing, false, 'a lease that lapsed is still the host’s to resume');
   for (let i = 0; i < 11; i++) await post(fullPath, { action: 'join', invite: full.invite, name: `Guest ${i}` }, undefined, 201);
   await post(fullPath, { action: 'heartbeat', ready: true, buffered: 15, progress: .1, epoch: 0, mediaVersion: 0, duration: 120, sequence: 1 }, full.token);
   await post(fullPath, { action: 'join', invite: full.invite, name: 'One too many' }, undefined, 409);

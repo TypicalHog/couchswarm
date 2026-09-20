@@ -4,6 +4,7 @@ import { allReady, MAX_SEATS, PRESENCE_MS, SPECTATOR_EPOCH, timelinePosition, va
 export const maxDuration = 10;
 
 const BUFFERING = 'Someone is buffering. Waiting for everyone.';
+const HOST_AWAY = 'The host disconnected. Waiting for them to return.';
 
 type StoredRoom = {
   id: string; name: string; host_id: string; invite_hash: string; host_key_hash: string; source: string;
@@ -70,7 +71,7 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     // a pause and a restart in between would put the movie back where it never was, and the joiner's own first
     // report pauses the room anyway.
     await db.prepare('UPDATE rooms SET playing = 0, position = ?, reason = ?, revision = revision + 1 WHERE id = ? AND playing = 1 AND revision = ?')
-      .bind(timelinePosition(publicRoom(stored), pausedAt), away && !reclaim ? 'The host disconnected. Waiting for them to return.' : 'A friend joined. Waiting for their buffer.', id, stored.revision).run();
+      .bind(timelinePosition(publicRoom(stored), pausedAt), away && !reclaim ? HOST_AWAY : 'A friend joined. Waiting for their buffer.', id, stored.revision).run();
     return json({ roomId: id, memberId, token, invite: body.invite }, 201);
   }
   const token = request.headers.get('Authorization')?.replace(/^Bearer /, '') || '';
@@ -81,6 +82,7 @@ async function handler(request: Request, context: { params: Promise<{ id: string
   if (!actor) return json({ error: 'Your seat has expired. Join the room again.' }, 401);
 
   // Evaluate the old lease before a returning host can renew it.
+  let lapsed = false;
   if (stored.playing) {
     // A host who left carries the last_seen = 0 marker, not a timestamp: read them as gone, or the lease
     // arithmetic below rewinds the room to its last play or seek.
@@ -88,8 +90,9 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     if (!host || host.last_seen <= now - PRESENCE_MS) {
       const stoppedAt = host ? Math.min(now, host.last_seen + PRESENCE_MS) : now;
       await db.prepare('UPDATE rooms SET playing = 0, position = ?, revision = revision + 1, reason = ? WHERE id = ? AND revision = ?')
-        .bind(timelinePosition(publicRoom(stored), stoppedAt), 'The host disconnected. Waiting for them to return.', id, stored.revision).run();
+        .bind(timelinePosition(publicRoom(stored), stoppedAt), HOST_AWAY, id, stored.revision).run();
       stored = (await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<StoredRoom>())!;
+      lapsed = true;
     }
   }
 
@@ -202,7 +205,7 @@ async function handler(request: Request, context: { params: Promise<{ id: string
   if (room.playing && (!allReady(members, room, Date.now()) || timelinePosition(room, Date.now()) >= room.duration)) {
     const hostPresent = members.some(m => m.id === room.hostId);
     const ended = room.duration > 0 && timelinePosition(room, Date.now()) >= room.duration;
-    const reason = ended ? 'That’s a wrap. Ready for another?' : hostPresent ? BUFFERING : 'The host disconnected. Waiting for them to return.';
+    const reason = ended ? 'That’s a wrap. Ready for another?' : hostPresent ? BUFFERING : HOST_AWAY;
     await db.prepare('UPDATE rooms SET playing = 0, position = ?, revision = revision + 1, reason = ? WHERE id = ? AND revision = ?')
       .bind(timelinePosition(room, Date.now()), reason, id, room.revision).run();
     stored = (await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<StoredRoom>())!;
@@ -210,6 +213,15 @@ async function handler(request: Request, context: { params: Promise<{ id: string
   } else if (!room.playing && room.reason === BUFFERING && allReady(members, room, Date.now())) {
     await db.prepare('UPDATE rooms SET playing = 1, starts_at = ?, revision = revision + 1, reason = ? WHERE id = ? AND revision = ? AND playing = 0')
       .bind(Date.now() + 3000, 'Playing together.', id, room.revision).run();
+    stored = (await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<StoredRoom>())!;
+    room = publicRoom(stored);
+  } else if (!room.playing && !lapsed && room.reason === HOST_AWAY && members.some(m => m.id === room.hostId)) {
+    // Nothing used to take that message back, so the couch read 'waiting for them to return' at a host who was
+    // sitting right there, and only a control action cleared it. The room still does not restart itself: a lease
+    // that lapsed is the host's to resume. The request that stopped the room keeps the message, because it is
+    // the one that has to explain where the movie stopped.
+    await db.prepare('UPDATE rooms SET revision = revision + 1, reason = ? WHERE id = ? AND revision = ? AND playing = 0')
+      .bind('The host is back. Waiting for them to press play.', id, room.revision).run();
     stored = (await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<StoredRoom>())!;
     room = publicRoom(stored);
   }
