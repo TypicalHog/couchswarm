@@ -3,6 +3,10 @@ import { useRef } from 'react';
 import { Upload } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
+// Opening the picker mounts every option at once, and a torrent can carry tens of thousands of subtitle files:
+// past this many the tab stops responding for seconds, so the rest stay reachable through Upload.
+const LISTED = 500;
+
 // Everyone picks their own, so this stays enabled for guests: nothing here is room state.
 export function SubtitleSelection({ subtitles, value, busy, error, onChange }:
   { subtitles: { name: string; path: string }[]; value: number | File | null; busy: boolean; error: string; onChange: (next: number | File | null) => void }) {
@@ -17,7 +21,8 @@ export function SubtitleSelection({ subtitles, value, busy, error, onChange }:
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="off">Off</SelectItem>
-        {subtitles.map((file, i) => <SelectItem key={i} value={String(i)} title={file.path}>{file.name}</SelectItem>)}
+        {subtitles.slice(0, LISTED).map((file, i) => <SelectItem key={i} value={String(i)} title={file.path}>{file.name}</SelectItem>)}
+        {subtitles.length > LISTED && <SelectItem disabled>{subtitles.length - LISTED} more not listed. Upload the one you want.</SelectItem>}
         {uploaded && <SelectItem value="upload" title="From this device">{uploaded.name}</SelectItem>}
       </SelectContent>
     </Select>
