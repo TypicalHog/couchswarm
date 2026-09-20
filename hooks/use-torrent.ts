@@ -227,6 +227,9 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
             else setAttempt(value => value + 1);
           };
           const watch = async () => {
+            // The helper dialog polls this same status on a timer of its own, so stop as soon as the upgrade
+            // can no longer fire: once this stream has bytes there is nothing left for a second poller to do.
+            if (fileRef.current?.downloaded && !lostHelper.current) return;
             try {
               const { ready, own } = await helperStatus(session, abort.signal);
               if (disposed) return;
