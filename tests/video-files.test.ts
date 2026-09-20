@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { isMkv, videoFiles } from '../lib/video-files.ts';
 import { videoFiles as helperVideoFiles } from '../helper/torrent-helper.mjs';
 import { MAX_HELPER_PEERS, MAX_SEATS } from '../lib/sync.ts';
@@ -35,6 +36,20 @@ test('the packaged helper and the site select the same video files', () => {
   const windows = nested.map(file => ({ ...file, path: file.path.replaceAll('/', '\\') }));
   assert.deepEqual(helperVideoFiles(windows).map((file: { name: string }) => file.name), videoFiles(nested).map(file => file.name),
     'a backslash path ties the same way the browser ties the forward-slash one');
+});
+
+// A video element opens with a one-byte probe, and WebTorrent reads an end of 0 as no end at all: it answers
+// that probe with a Content-Length of 1 and the whole movie behind it, which the hook cuts back to one byte.
+// Neither half can be run offline, so both are pinned here. An upgrade that honours end=0 fails this and the
+// workaround can go; a refactor that drops the handler fails it too, rather than leaving every probe to
+// download a whole film in silence.
+test('the bytes=0-0 workaround still answers the WebTorrent quirk it was written for', () => {
+  const upstream = readFileSync(new URL('../node_modules/webtorrent/lib/file.js', import.meta.url), 'utf8');
+  assert.match(upstream, /opts\?\.end && opts\.end < this\.length/,
+    'WebTorrent no longer reads a range end of 0 as absent: re-check the handler in hooks/use-torrent.ts');
+  const hook = readFileSync(new URL('../hooks/use-torrent.ts', import.meta.url), 'utf8');
+  assert.match(hook, /\^bytes=0-0\$/,
+    'hooks/use-torrent.ts no longer truncates a bytes=0-0 read, so that probe streams the whole file');
 });
 
 test('the packaged helper and the site agree on the seat count', () => assert.equal(helperSeats, MAX_SEATS));
