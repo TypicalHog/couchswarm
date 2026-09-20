@@ -1,5 +1,9 @@
 name: checks
-on: [push, pull_request]
+# A push to a branch with an open pull request would otherwise run everything here twice.
+on:
+  push: { branches: [main] }
+  pull_request:
+permissions: { contents: read }
 jobs:
   checks:
     runs-on: ubuntu-latest
