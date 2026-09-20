@@ -238,14 +238,21 @@ test('torrentPathIssue rejects only the paths Windows cannot store', { timeout: 
     files: paths.map((value, index) => ({ name: value.split('/').pop(), path: value, length: 100, offset: index * 100 })) });
   for (const entry of ['Pack/NUL.mkv', 'Pack./Movie.mkv', 'Pack/nul?.mkv', 'Pack/nu:l.mkv', 'Pack/nul .mkv', 'Pack/CONOUT$.mkv', 'Pack/COM¹.mkv'])
     assert.match(torrentPathIssue(torrentOf(entry)), /Windows cannot create/, entry);
+  assert.match(torrentPathIssue(torrentOf('Pack:1/Movie.mkv')), /Windows cannot create/, 'a folder name no sanitiser touches');
   assert.match(torrentPathIssue(torrentOf('Movie.mkv', '<>')), /Windows cannot create/, 'a name that sanitises to nothing');
   assert.match(torrentPathIssue(torrentOf('Movie.mkv', 'Pack/Movie.mkv.<')), /Windows cannot create/, 'a name that sanitises to a trailing dot');
   assert.match(torrentPathIssue(torrentOf('Movie.mkv'), 'x'.repeat(250)), /too deep for your download folder/);
+  assert.match(torrentPathIssue(torrentOf('Movie #1.mkv', 'extra.nfo')), /web seed path/);
+  assert.equal(torrentPathIssue(torrentOf('Movie #1.mkv')), '', 'a single-file torrent is never requested by path');
   const subtitles = { pieceLength: 16384, files: [
     { name: 'Movie.mkv', path: 'Pack/Movie.mkv', length: 16384, offset: 0 },
     { name: 'c sub.srt', path: 'Pack/c sub.srt', length: 100, offset: 16384 },
     { name: 'C SUB.srt', path: 'Pack/C SUB.srt', length: 100, offset: 16484 }] };
   assert.match(torrentPathIssue(subtitles), /under the same name/, 'subtitles past the video span are checked too');
+  const extras = { pieceLength: 16384, files: [
+    { name: 'Movie.mkv', path: 'Pack/Movie.mkv', length: 100, offset: 0 },
+    { name: 'NUL.txt', path: 'Pack/Extras/NUL.txt', length: 100, offset: 40000 }] };
+  assert.equal(torrentPathIssue(extras), '', 'a file the helper never writes is not refused');
   for (const entry of ['com.mkv', 'Contact.mkv', 'nullify.mkv', 'console/x.mkv'])
     assert.equal(torrentPathIssue(torrentOf(entry)), '', entry);
 });
