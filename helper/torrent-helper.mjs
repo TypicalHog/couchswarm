@@ -426,6 +426,8 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
           remaining -= Math.min(remaining, chunk.length);
           if (!remaining) return;
         }
+        // FileIterator reports a chunk-store read error as a clean end, so a short stream has to fail the pipeline.
+        if (remaining) throw new Error('Incomplete torrent read.');
       }
       res.setTimeout(60000, () => res.destroy());
       const abortStream = () => stream.destroy();
