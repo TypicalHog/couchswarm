@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
-import { allReady, bufferedAhead, estimateServerNow, hasBuffer, PRESENCE_MS, timelinePosition, validSource, type Session, type Snapshot } from '@/lib/sync';
+import { allReady, bufferedAhead, estimateServerNow, hasBuffer, PRESENCE_MS, ROOM_TTL_MS, timelinePosition, validSource, type Session, type Snapshot } from '@/lib/sync';
 import { useTorrent } from '@/hooks/use-torrent';
 
 const seats = new Map<string, Promise<boolean>>();
@@ -19,6 +19,21 @@ function claimSeat(roomId: string) {
     seats.set(roomId, seat);
   }
   return seat;
+}
+
+// A re-claim key outlives the tab that wrote it by design, but nothing ever took one back, so a device kept an
+// entry for every room it had ever hosted. The room behind a key is gone a day after it was created, and a new
+// room is the natural moment to sweep: keys stamped longer ago than that, and the unstamped ones that predate
+// the stamp, can no longer claim anything.
+function pruneHostKeys() {
+  try {
+    for (const name of Object.keys(localStorage)) {
+      if (!name.startsWith('couchswarm:host:')) continue;
+      let at = 0;
+      try { at = (JSON.parse(localStorage.getItem(name) || 'null') as { at?: number } | null)?.at ?? 0; } catch { /* A bare key from before the stamp. */ }
+      if (Date.now() - at > ROOM_TTL_MS) localStorage.removeItem(name);
+    }
+  } catch { /* Storage blocked: there is nothing stored to prune. */ }
 }
 
 const REFUSAL = 'needs a current browser: Chrome or Edge 116+, Firefox 124+, or Safari 17.4+.';
@@ -171,7 +186,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     // Only the device's access credential lives here. Room state is authoritative on the server.
     try {
       sessionStorage.setItem(`couchswarm:${value.roomId}`, JSON.stringify(value));
-      if (value.hostKey) localStorage.setItem(`couchswarm:host:${value.roomId}`, value.hostKey);
+      if (value.hostKey) localStorage.setItem(`couchswarm:host:${value.roomId}`, JSON.stringify({ key: value.hostKey, at: Date.now() }));
     } catch { /* Storage blocked: the seat lives in memory until this tab closes. */ }
     history.replaceState(null, '', `?room=${value.roomId}#invite=${value.invite}`);
     setSession(value);
@@ -224,6 +239,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     creating.current = (async () => {
       if (source && !validSource(source.trim())) { setError('Enter a valid magnet link or HTTPS .torrent URL.'); return false; }
       setBusy(true); setError('');
+      pruneHostKeys();
       try { saveSession(await request<Session>('/api/rooms', { source: source.trim(), name })); return true; }
       catch (err) { setError((err as Error).message); return false; }
       finally { setBusy(false); }
@@ -240,7 +256,11 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     // with whatever invite the address bar holds now rather than the one read at load.
     const invite = new URLSearchParams(location.hash.slice(1)).get('invite') || invitation.invite;
     let hostKey: string | undefined;
-    try { hostKey = localStorage.getItem(`couchswarm:host:${invitation.roomId}`) || undefined; } catch { /* Blocked storage only costs the host their re-claim. */ }
+    // A key stored before the prune stamp is the bare secret.
+    try {
+      const stored = localStorage.getItem(`couchswarm:host:${invitation.roomId}`) || '';
+      hostKey = (stored.startsWith('{') ? (JSON.parse(stored) as { key?: string }).key : stored) || undefined;
+    } catch { /* Blocked or unreadable storage only costs the host their re-claim. */ }
     try { saveSession(await request<Session>(`/api/rooms/${invitation.roomId}`, { action: 'join', name, invite, hostKey })); }
     catch (err) { setError((err as Error).message); }
     finally { setBusy(false); }
