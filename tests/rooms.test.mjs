@@ -142,7 +142,9 @@ test('rejects malformed requests, rewinds at the end, and gates seats, moderatio
     assert.equal((await call({ action: 'snapshot' })).room.hostId, host.memberId, 'only the real host key moves the room');
   }
   const returning = await post(path, { action: 'join', invite: state.invite, name: 'Host', hostKey: state.hostKey }, undefined, 201);
-  assert.equal((await call({ action: 'snapshot' })).room.hostId, returning.memberId);
+  assert.equal(returning.memberId, host.memberId, 'the returning host comes back to their own seat');
+  assert.equal((await post(path, { action: 'snapshot' }, returning.token)).room.hostId, returning.memberId);
+  await post(path, { action: 'snapshot' }, host.token, 401);
 
   const full = await post('/api/rooms', { source: magnet }, undefined, 201);
   const fullPath = `/api/rooms/${full.roomId}`;
@@ -164,6 +166,8 @@ test('rejects malformed requests, rewinds at the end, and gates seats, moderatio
   await post(fullPath, { action: 'join', invite: full.invite, name: 'One too many' }, undefined, 409);
   const seat = await post(fullPath, { action: 'heartbeat', ready: true, buffered: 15, progress: .1, epoch: 0, mediaVersion: 0, duration: 0, sequence: 1 }, lapsed.token, 409);
   assert.match(seat.error, /This couch is full \(12 people\)/, 'a lapsed seat cannot be reclaimed while the room is full');
+  const back = await post(fullPath, { action: 'join', invite: full.invite, name: 'Host again', hostKey: full.hostKey }, undefined, 201);
+  assert.equal(back.memberId, full.memberId, 'a full couch never refuses the host their own seat');
   await beatQuiet(quiet.token, 2);
   quietState = await beatQuiet(watcher.token, 3, false);
   assert.equal(quietState.members.find(m => m.id === watcher.memberId).epoch, -2, 'a lapsed seat comes back as a spectator');

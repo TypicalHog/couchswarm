@@ -44,22 +44,24 @@ async function handler(request: Request, context: { params: Promise<{ id: string
   if (typeof body.action !== 'string' || !['join', 'snapshot', 'heartbeat', 'leave', 'source', 'file', 'play', 'pause', 'seek', 'kick', 'rotate'].includes(body.action)) return json({ error: 'Unknown room action.' }, 400);
   if (body.action === 'join') {
     if (typeof body.invite !== 'string' || await hash(body.invite) !== stored.invite_hash) return json({ error: 'This invite link is invalid.' }, 403);
-    const memberId = crypto.randomUUID();
     const token = secret();
     const name = cleanName(body.name);
     if (!name) return json({ error: 'Enter your name to join.' }, 400);
     const idle = await db.prepare('SELECT COUNT(*) AS n FROM members WHERE room_id = ? AND report_sequence = 0 AND last_seen > ?').bind(id, now - 60_000).first<{ n: number }>();
     if ((idle?.n ?? 0) >= 24) return json({ error: 'Too many joins. Try again in a minute.' }, 429);
-    const result = await db.prepare('INSERT INTO members (id, room_id, token_hash, name, last_seen) SELECT ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ?')
-      .bind(memberId, id, await hash(token), name, now, id, now - PRESENCE_MS, MAX_SEATS).run();
-    if (!result.meta.changes) return json({ error: `This couch is full (${MAX_SEATS} people). Try again when a seat opens.` }, 409);
-    if (typeof body.hostKey === 'string' && body.hostKey.length === 64 && await hash(body.hostKey) === stored.host_key_hash)
-      // The room's helper follows the crown: a re-claiming host keeps serving the room instead of orphaning a running agent.
-      await db.batch([
-        db.prepare('UPDATE rooms SET host_id = ?, revision = revision + 1 WHERE id = ?').bind(memberId, id),
-        db.prepare('UPDATE helpers SET member_id = ? WHERE room_id = ? AND member_id = ?').bind(memberId, id, stored.host_id),
-      ]);
     const host = stored.playing ? await db.prepare('SELECT last_seen FROM members WHERE id = ?').bind(stored.host_id).first<{ last_seen: number }>() : null;
+    // The host comes back to the seat they already own, never to a new one: the room can never resume without
+    // them, so a full couch must not refuse them, and the room's helper stays bound to that member id.
+    const reclaim = typeof body.hostKey === 'string' && body.hostKey.length === 64 && await hash(body.hostKey) === stored.host_key_hash;
+    const memberId = reclaim ? stored.host_id : crypto.randomUUID();
+    if (reclaim) {
+      await db.prepare('UPDATE members SET token_hash = ?, name = ?, ready = 0, buffered = 0, epoch = -1, last_seen = ?, report_sequence = 0 WHERE id = ?')
+        .bind(await hash(token), name, now, memberId).run();
+    } else {
+      const result = await db.prepare('INSERT INTO members (id, room_id, token_hash, name, last_seen) SELECT ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ?')
+        .bind(memberId, id, await hash(token), name, now, id, now - PRESENCE_MS, MAX_SEATS).run();
+      if (!result.meta.changes) return json({ error: `This couch is full (${MAX_SEATS} people). Try again when a seat opens.` }, 409);
+    }
     const pausedAt = host && host.last_seen <= now - PRESENCE_MS ? host.last_seen + PRESENCE_MS : now;
     await db.prepare('UPDATE rooms SET playing = 0, position = ?, reason = ?, revision = revision + 1 WHERE id = ? AND playing = 1')
       .bind(timelinePosition(publicRoom(stored), pausedAt), 'A friend joined. Waiting for their buffer.', id).run();
