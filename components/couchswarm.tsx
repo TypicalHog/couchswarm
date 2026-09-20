@@ -39,6 +39,8 @@ export default function CouchSwarm() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const playerRef = useRef<HTMLDivElement>(null);
   const seekTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const seekInFlight = useRef(false);
+  const nextSeek = useRef<number | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastToggle = useRef(0);
   const helpRef = useRef<HTMLButtonElement>(null);
@@ -105,13 +107,26 @@ export default function CouchSwarm() {
     lastToggle.current = performance.now();
     void swarm.control(isPlaying ? 'pause' : 'play');
   };
+  // Two clicks on the timeline before the first reply lands carry the same room revision, so the server takes the
+  // first and refuses the second with 'The room changed', and the thumb springs back to a place nobody asked for.
+  // Hold the later position and send it once the one in flight settles, so the last place the host chose wins.
+  const sendSeek = (position: number) => {
+    if (seekInFlight.current) { nextSeek.current = position; return; }
+    seekInFlight.current = true;
+    void swarm.control('seek', { position }).finally(() => {
+      seekInFlight.current = false;
+      const queued = nextSeek.current;
+      nextSeek.current = null;
+      if (queued === null) setSeek(null); else sendSeek(queued);
+    });
+  };
 
   useEffect(() => {
     if (!feedback) return;
     const timer = setTimeout(() => setFeedback(''), 3500);
     return () => clearTimeout(timer);
   }, [feedback]);
-  useEffect(() => { if (seekLost) { clearTimeout(seekTimer.current); setSeek(null); } }, [seekLost]);
+  useEffect(() => { if (seekLost) { clearTimeout(seekTimer.current); nextSeek.current = null; setSeek(null); } }, [seekLost]);
   // The rejoin dialog portals to the body, outside the fullscreen player card, so it cannot paint until we leave.
   useEffect(() => { if (swarm.invitation && document.fullscreenElement) void document.exitFullscreen().catch(() => {}); }, [swarm.invitation]);
   useEffect(() => { const on = () => setIsFullscreen(!!document.fullscreenElement); document.addEventListener('fullscreenchange', on); return () => { document.removeEventListener('fullscreenchange', on); clearTimeout(hideTimer.current); }; }, []);
@@ -223,7 +238,7 @@ export default function CouchSwarm() {
             {!hasSource && <span className="screen-corner">MAKE YOURSELF AT HOME.</span>}
           </div>
           <div className="player-controls">
-            <div className="timeline"><span className="time">{time(seek ?? swarm.playhead)}</span><Slider aria-label="Playback position" getAriaValueText={(_, v) => time(v)} value={[seek ?? swarm.playhead]} min={0} max={swarm.duration || 1} step={1} disabled={seekLost} onValueChange={value => setSeek(Array.isArray(value) ? value[0] : value)} onValueCommitted={(value, details) => { const position = Array.isArray(value) ? value[0] : value; const send = () => void swarm.control('seek', { position }).finally(() => setSeek(null)); clearTimeout(seekTimer.current); if (details.reason === 'keyboard') seekTimer.current = setTimeout(send, 400); else send(); }}/><span className="time">{swarm.duration ? time(swarm.duration) : '--:--'}</span></div>
+            <div className="timeline"><span className="time">{time(seek ?? swarm.playhead)}</span><Slider aria-label="Playback position" getAriaValueText={(_, v) => time(v)} value={[seek ?? swarm.playhead]} min={0} max={swarm.duration || 1} step={1} disabled={seekLost} onValueChange={value => setSeek(Array.isArray(value) ? value[0] : value)} onValueCommitted={(value, details) => { const position = Array.isArray(value) ? value[0] : value; const send = () => sendSeek(position); clearTimeout(seekTimer.current); if (details.reason === 'keyboard') seekTimer.current = setTimeout(send, 400); else send(); }}/><span className="time">{swarm.duration ? time(swarm.duration) : '--:--'}</span></div>
             <div className="control-row"><div className="control-group"><button className="play-button" onMouseDown={keepFocus} aria-disabled={!canPlay} aria-describedby="play-hint" title={isHost ? `${isPlaying ? 'Pause' : 'Play'} for everyone (space)` : undefined} onClick={togglePlayback}>{isPlaying ? <Pause size={15} fill="currentColor"/> : <Play size={15} fill="currentColor"/>}{isPlaying ? 'Pause for all' : 'Play for all'}</button><div className="volume-control" onMouseEnter={() => setVolumeOpen(true)} onMouseLeave={e => { if (!e.currentTarget.contains(document.activeElement)) setVolumeOpen(false); }} onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setVolumeOpen(false); }}><button className="icon-button" onMouseDown={keepFocus} aria-label={muted ? 'Unmute' : 'Mute'} title={muted ? 'Unmute; volume slider opens above' : 'Mute; volume slider opens above'} onClick={() => { if (!muted) { setMuted(true); return; } const v = volume > 0 ? volume : .5; setVolume(v); if (videoRef.current) videoRef.current.volume = v; setMuted(false); }} onFocus={() => setVolumeOpen(true)}>{muted ? <VolumeX size={19}/> : <Volume2 size={19}/>}</button>{volumeOpen && <div className="volume-slider"><Slider aria-label="Your volume" getAriaValueText={(_, v) => `${Math.round(v * 100)}%`} value={[muted ? 0 : volume]} min={0} max={1} step={.01} largeStep={.1} onValueChange={value => { const v = Array.isArray(value) ? value[0] : value; setVolume(v); setMuted(v === 0); if (videoRef.current) videoRef.current.volume = v; }}/></div>}</div><span className="control-hint" id="play-hint"><Crown size={13}/>{playHint}</span></div><div className="control-group"><span className="pill"><span className={`dot ${swarm.everyoneReady ? 'live' : ''}`}/>{swarm.seatLost ? 'Seat taken' : !hasSource ? 'Waiting for a movie' : !swarm.connected ? 'Reconnecting' : isPlaying ? 'In sync' : swarm.everyoneReady ? 'Everyone ready' : hostAway ? 'Host away' : 'Buffering'}</span><button className="icon-button" onMouseDown={keepFocus} aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} aria-pressed={isFullscreen} onClick={() => void fullscreen()}><Maximize size={18}/></button></div></div>
           </div>
           <output className="notice">{feedback || playerMessage}</output>
