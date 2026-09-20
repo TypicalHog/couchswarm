@@ -21,6 +21,8 @@ function claimSeat(roomId: string) {
   return seat;
 }
 
+const REFUSAL = 'needs a current browser: Chrome or Edge 116+, Firefox 124+, or Safari 17.4+.';
+
 export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   const [session, setSession] = useState<Session | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -171,8 +173,9 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   }, []);
 
   useEffect(() => {
-    if (typeof AbortSignal.any !== 'function') { setUnsupported(true); setError('CouchSwarm needs a current browser: Chrome or Edge 116+, Firefox 124+, or Safari 17.4+.'); return; }
     const roomId = new URLSearchParams(location.search).get('room');
+    // Read the link first, so an invitee on a refused browser is told their friend's room is out of reach.
+    if (typeof AbortSignal.any !== 'function') { setUnsupported(true); setError(`${roomId ? 'This room' : 'CouchSwarm'} ${REFUSAL}`); return; }
     const invite = new URLSearchParams(location.hash.slice(1)).get('invite') || '';
     if (!roomId) return;
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(roomId)) { setError('This invite link is not valid.'); return; }
@@ -187,6 +190,9 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   useEffect(() => { const restore = (event: PageTransitionEvent) => { if (event.persisted && leaving.current) location.reload(); }; window.addEventListener('pageshow', restore); return () => window.removeEventListener('pageshow', restore); }, []);
 
   const create = (source = '', name = '') => {
+    // Every new room is born here, so the refusal is enforced here too: a created room would wipe it off the
+    // screen and leave a host whose browser cannot load the movie.
+    if (unsupported) { setError(`CouchSwarm ${REFUSAL}`); return Promise.resolve(false); }
     if (creating.current) { setError('Still creating the room. Try again in a moment.'); return Promise.resolve(false); }
     creating.current = (async () => {
       if (source && !validSource(source.trim())) { setError('Enter a valid magnet link or HTTPS .torrent URL.'); return false; }
