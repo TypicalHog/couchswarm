@@ -75,8 +75,8 @@ export function toWebVTT(text: string, filename: string) {
     }
     return `WEBVTT\n\n${cues.join('\n\n')}\n`;
   }
-  // Rewriting only the timing lines leaves cue numbers, blank lines and <i>/<b> tags alone: WebVTT reads a
-  // numeric line as a cue identifier and renders those tags itself, so every one of them is already legal.
+  // Past the timing lines and the override tags an SRT is left alone: WebVTT reads a numeric line as a cue
+  // identifier and renders <i>/<b> itself, so cue numbers, blank lines and those tags are all already legal.
   const lines = body.split('\n').flatMap(line => {
     const timing = TIMING.exec(line);
     if (timing) return `${clock(timing[1], timing[2], timing[3], timing[4])} --> ${clock(timing[5], timing[6], timing[7], timing[8])}`;
