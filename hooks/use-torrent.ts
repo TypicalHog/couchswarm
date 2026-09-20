@@ -166,15 +166,17 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           // A newly installed worker claims this page within milliseconds. Only a page still
           // uncontrolled after that was loaded under an already-active worker that never re-claims it.
           if (!(await claimed(1000)) && !disposed) {
-            if (registration.active && !sessionStorage.getItem('couchswarm:sw-reload')) {
-              sessionStorage.setItem('couchswarm:sw-reload', '1');
-              location.reload();
-              return;
-            }
+            try {
+              if (registration.active && !sessionStorage.getItem('couchswarm:sw-reload')) {
+                sessionStorage.setItem('couchswarm:sw-reload', '1');
+                location.reload();
+                return;
+              }
+            } catch { /* Storage blocked: the reload cannot be marked, so wait for the claim rather than loop. */ }
             if (!(await claimed(15000))) throw new Error('Streaming could not start. Reload this page.');
           }
         }
-        sessionStorage.removeItem('couchswarm:sw-reload');
+        try { sessionStorage.removeItem('couchswarm:sw-reload'); } catch { /* Storage blocked: nothing to clear. */ }
         if (disposed) return;
         // Every tracker announce carries WebRTC offers, and with no configuration of ours the bundled
         // simple-peer reaches for its own Google and Twilio STUN: an operator who named their servers
