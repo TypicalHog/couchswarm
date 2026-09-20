@@ -1,5 +1,6 @@
 import { cleanName, deleteRoom, getDb, hash, json, notAllowed, readBody, roomExpired, secret, withDb, type RunResult } from '@/lib/db';
 import { allReady, MAX_SEATS, PRESENCE_MS, SPECTATOR_EPOCH, timelinePosition, validSource, type Member, type Room } from '@/lib/sync';
+import { MAX_FILE_INDEX } from '@/lib/video-files';
 
 export const maxDuration = 10;
 
@@ -161,7 +162,7 @@ async function handler(request: Request, context: { params: Promise<{ id: string
       result = await db.prepare('UPDATE rooms SET source = ?, file_index = 0, media_version = media_version + 1, epoch = epoch + 1, revision = revision + 1, playing = 0, position = 0, starts_at = 0, duration = 0, reason = ? WHERE id = ? AND revision = ?')
         .bind(body.source, 'Buffering a new movie.', id, stored.revision).run();
     } else if (body.action === 'file') {
-      if (!Number.isInteger(body.fileIndex) || Number(body.fileIndex) < 0 || Number(body.fileIndex) > 10000) return json({ error: 'Invalid video selection.' }, 400);
+      if (!Number.isInteger(body.fileIndex) || Number(body.fileIndex) < 0 || Number(body.fileIndex) > MAX_FILE_INDEX) return json({ error: 'Invalid video selection.' }, 400);
       if (Number(body.fileIndex) === stored.file_index) return json({ room: publicRoom(stored), members: await readMembers(), serverNow: Date.now(), serverReceivedAt });
       result = await db.prepare('UPDATE rooms SET file_index = ?, media_version = media_version + 1, epoch = epoch + 1, revision = revision + 1, playing = 0, position = 0, duration = 0, reason = ? WHERE id = ? AND revision = ?')
         .bind(body.fileIndex, 'Buffering the selected video.', id, stored.revision).run();
