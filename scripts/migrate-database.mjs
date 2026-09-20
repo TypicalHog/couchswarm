@@ -1,7 +1,12 @@
 import { createClient } from '@libsql/client';
+import nextEnv from '@next/env';
 import { readFile, readdir, mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+// next dev and next build read TURSO_* from .env files as well, so the runner loads the same chain:
+// a URL set in .env.local otherwise migrates the local fallback while the app answers 503 from it.
+// Shell and Vercel variables still win, and only predev loads the development files, as next dev does.
+nextEnv.loadEnvConfig(process.cwd(), process.env.npm_lifecycle_event === 'predev');
 const url = process.env.TURSO_DATABASE_URL || (process.env.VERCEL || process.env.NODE_ENV === 'production' ? '' : 'file:.local/rooms.db');
 if (!url) throw new Error('Set TURSO_DATABASE_URL to the target database.');
 if (url.startsWith('file:')) await mkdir(path.dirname(url.slice(5).replace(/^\/+(?=[A-Za-z]:)/, '')), { recursive: true });
