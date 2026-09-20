@@ -160,8 +160,16 @@ async function handler(request: Request, context: { params: Promise<{ id: string
       // The host re-claim key is reissued with the invite: a leaked key is only revocable here.
       invite = secret();
       hostKey = secret();
-      result = await db.prepare('UPDATE rooms SET invite_hash = ?, host_key_hash = ?, revision = revision + 1 WHERE id = ? AND revision = ?')
-        .bind(await hash(invite), await hash(hostKey), id, stored.revision).run();
+      // Every seat taken with the old link goes with it, lapsed ones included: a token banked from that link
+      // would otherwise heartbeat its way back into the room the host just cleared.
+      const rotation = await db.batch([
+        db.prepare('DELETE FROM helper_peers WHERE helper_id IN (SELECT id FROM helpers WHERE room_id = ?) AND (member_id != ? OR helper_id IN (SELECT id FROM helpers WHERE room_id = ? AND member_id != ?)) AND EXISTS (SELECT 1 FROM rooms WHERE id = ? AND revision = ?)').bind(id, stored.host_id, id, stored.host_id, id, stored.revision),
+        db.prepare('DELETE FROM helpers WHERE room_id = ? AND member_id != ? AND EXISTS (SELECT 1 FROM rooms WHERE id = ? AND revision = ?)').bind(id, stored.host_id, id, stored.revision),
+        db.prepare('DELETE FROM members WHERE room_id = ? AND id != ? AND EXISTS (SELECT 1 FROM rooms WHERE id = ? AND revision = ?)').bind(id, stored.host_id, id, stored.revision),
+        db.prepare('UPDATE rooms SET invite_hash = ?, host_key_hash = ?, revision = revision + 1 WHERE id = ? AND revision = ?')
+          .bind(await hash(invite), await hash(hostKey), id, stored.revision),
+      ]);
+      result = rotation[3];
     } else return json({ error: 'Unknown room action.' }, 400);
     if (!result.meta.changes) return json({ error: 'The room changed. Try again when everyone is ready.' }, 409);
     roomChanged = true;

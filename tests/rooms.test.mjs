@@ -131,7 +131,10 @@ test('rejects malformed requests, rewinds at the end, and gates seats, moderatio
   state = await call({ action: 'rotate', revision: state.room.revision });
   assert.match(state.invite, /^[a-f0-9]{64}$/);
   await post(path, { action: 'join', invite: host.invite, name: 'Stale link' }, undefined, 403);
-  await post(path, { action: 'join', invite: state.invite, name: 'New link' }, undefined, 201);
+  const rejoined = await post(path, { action: 'join', invite: state.invite, name: 'New link' }, undefined, 201);
+  state = await call({ action: 'rotate', revision: state.room.revision });
+  await post(path, { action: 'snapshot' }, rejoined.token, 401);
+  assert.equal((await call({ action: 'snapshot' })).members.length, 1, 'a new invite link takes the seats the old one handed out');
   for (const route of ['/api/rooms', path, `${path}/helper`, '/api/helper']) {
     const response = await fetch(origin + route, { signal: AbortSignal.timeout(10000) });
     assert.equal(response.status, 405, route);
