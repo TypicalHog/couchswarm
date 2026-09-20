@@ -247,10 +247,11 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     return creating.current;
   };
 
+  // Answers whether the seat was taken: the caller moves focus off the dialog only when there is no failure left in it.
   const join = async (name: string) => {
-    if (!invitation) return;
+    if (!invitation) return false;
     // A tab that cannot hold the seat must not spend the host's re-claim key: the server would crown a tab that never heartbeats.
-    if (!await claimSeat(invitation.roomId)) { setError('This room is already open in another CouchSwarm tab.'); return; }
+    if (!await claimSeat(invitation.roomId)) { setError('This room is already open in another CouchSwarm tab.'); return false; }
     setBusy(true); setError('');
     // A corrected link pasted into this tab only changes the fragment, which never remounts the hook, so join
     // with whatever invite the address bar holds now rather than the one read at load.
@@ -261,8 +262,8 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
       const stored = localStorage.getItem(`couchswarm:host:${invitation.roomId}`) || '';
       hostKey = (stored.startsWith('{') ? (JSON.parse(stored) as { key?: string }).key : stored) || undefined;
     } catch { /* Blocked or unreadable storage only costs the host their re-claim. */ }
-    try { saveSession(await request<Session>(`/api/rooms/${invitation.roomId}`, { action: 'join', name, invite, hostKey })); }
-    catch (err) { setError((err as Error).message); }
+    try { saveSession(await request<Session>(`/api/rooms/${invitation.roomId}`, { action: 'join', name, invite, hostKey })); return true; }
+    catch (err) { setError((err as Error).message); return false; }
     finally { setBusy(false); }
   };
 
@@ -358,9 +359,10 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     finally { setBusy(false); }
   };
 
+  // Answers whether playback was unlocked, so a failed attempt leaves focus on the button that has to be pressed again.
   const enable = async () => {
     const video = videoRef.current;
-    if (!video || unlocking.current) return;
+    if (!video || unlocking.current) return false;
     unlocking.current = true;
     const started = video.play();
     try {
@@ -368,7 +370,8 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
       video.pause();
       setArmed(true);
       setError('');
-    } catch { setError('Playback could not start yet. Allow more time to buffer, then try again.'); }
+      return true;
+    } catch { setError('Playback could not start yet. Allow more time to buffer, then try again.'); return false; }
     finally { void started.catch(() => {}); unlocking.current = false; }
   };
 
