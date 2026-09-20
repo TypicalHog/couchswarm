@@ -46,6 +46,8 @@ export async function connectRemoteHelper(session: Session, mediaVersion: number
   // webtorrent.min.js is a prebuilt bundle carrying its own copy of simple-peer and streamx, so webpack cannot share
   // them with this one: helper sessions pay about 18 KB gzip twice. Importing webtorrent from source would deduplicate,
   // at the price of Node polyfill aliases for the whole app.
+  // Its constructor builds a peer id from Uint8Array methods that browsers we support may not have yet.
+  await import('@/lib/uint8-polyfill');
   const { default: SimplePeer } = await import('@thaunknown/simple-peer');
   if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
   const peer = new SimplePeer({ initiator: true, trickle: false, config: { iceServers: status.iceServers } });

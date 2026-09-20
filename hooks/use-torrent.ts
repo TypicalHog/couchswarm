@@ -100,6 +100,8 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         });
         if (!locked) { try { sessionStorage.removeItem('couchswarm:sw-reload'); } catch { /* Storage blocked: nothing to clear. */ } fail('This movie is already open in another CouchSwarm tab. Close or reload that tab, then reconnect here.'); return; }
         if (disposed) { releaseLock?.(); return; }
+        // The bundle's peer id and piece hashing call Uint8Array methods that browsers we support may not have yet.
+        await import('@/lib/uint8-polyfill');
         const { default: TorrentClient } = await import('webtorrent/dist/webtorrent.min.js')
           .catch(() => { throw new Error('The streaming files could not be loaded — this site may have been updated. Reload this page and rejoin.'); });
         if (disposed) return;
