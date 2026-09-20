@@ -19,14 +19,14 @@ test('MKV torrents select the main movie and retain other video choices', () => 
   assert.equal(isMkv('Movie.mkv.txt'), false);
 });
 
-test('existing MP4, WebM, M4V and OGV videos keep their selection order', () => {
-  const files = ['video.mp4', 'video.webm', 'video.m4v', 'video.ogv'].map((name, i) => ({ name, path: name, length: 40 - i }));
+test('existing MP4, M4V, MOV, WebM and OGV videos keep their selection order', () => {
+  const files = ['video.mp4', 'video.m4v', 'video.mov', 'video.webm', 'video.ogv'].map((name, i) => ({ name, path: name, length: 40 - i }));
   assert.deepEqual(videoFiles(files), files);
   assert.equal(isMkv('video.mp4'), false);
 });
 
 test('the packaged helper and the site select the same video files', () => {
-  const files = [{ name: 'sample.mp4', path: 'r/sample.mp4', length: 10 }, { name: 'Movie.MKV', path: 'r/Movie.MKV', length: 1000 }, { name: 'poster.jpg', path: 'r/poster.jpg', length: 2000 }, { name: 'clip.ogv', path: 'r/clip.ogv', length: 10 }];
+  const files = [{ name: 'sample.mp4', path: 'r/sample.mp4', length: 10 }, { name: 'Movie.MKV', path: 'r/Movie.MKV', length: 1000 }, { name: 'poster.jpg', path: 'r/poster.jpg', length: 2000 }, { name: 'clip.ogv', path: 'r/clip.ogv', length: 10 }, { name: 'trailer.mov', path: 'r/trailer.mov', length: 5 }];
   assert.deepEqual(helperVideoFiles(files), videoFiles(files));
   const ties = ['A.mkv', 'Zebra.mkv', 'Ärger.mkv'].map(name => ({ name, path: name, length: 40 }));
   assert.deepEqual(videoFiles(ties).map(file => file.name), ['A.mkv', 'Zebra.mkv', 'Ärger.mkv'], 'equal lengths tie-break on code units, not on the runner locale');

@@ -419,7 +419,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           setSubtitles(subtitleRef.current.map(file => ({ name: file.name, path: file.path })));
           if (pendingPick.current) setListed(count => count + 1);
           const file = videos[fileIndex];
-          if (!videos.length) { fail('No video found. Choose a torrent containing an MKV, MP4, WebM, M4V, or OGV video.'); return; }
+          if (!videos.length) { fail('No video found. Choose a torrent containing an MKV, MP4, M4V, MOV, or WebM video.'); return; }
           if (!file) { fail(`The host chose video #${fileIndex + 1}, but this torrent has ${videos.length}. Ask the host to pick again.`); return; }
           fileRef.current = file;
           // WebTorrent treats an end of 0 as absent and streams the whole file against a Content-Length of 1.

@@ -90,7 +90,7 @@ async function fetchTorrent(url, signal) {
 // parse-torrent joins a nested path with the platform separator, so compare the shape the site sees or
 // 'Pack\A.mkv' and 'Pack/A.mkv' sort to opposite sides of 'PackA.mkv'.
 const slashed = file => file.path.replaceAll('\\', '/');
-export const videoFiles = files => files.filter(file => /\.(mkv|mp4|webm|m4v|ogv)$/i.test(file.name))
+export const videoFiles = files => files.filter(file => /\.(mkv|mp4|m4v|mov|webm|ogv)$/i.test(file.name))
   .sort((a, b) => b.length - a.length || (slashed(a) < slashed(b) ? -1 : slashed(a) > slashed(b) ? 1 : 0));
 
 // Keep this list in step with lib/subtitles.ts, which offers the same extensions in the picker.
@@ -361,7 +361,7 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
         try {
           if (entry.disposed) return;
           clearTimeout(entry.timeout);
-          if (!videoFiles(torrent.files).length) { fail('This torrent does not contain an MKV, MP4, WebM, M4V, or OGV video.'); return; }
+          if (!videoFiles(torrent.files).length) { fail('This torrent does not contain an MKV, MP4, M4V, MOV, or WebM video.'); return; }
           const issue = torrentPathIssue(torrent, directory);
           if (issue) { fail(issue); return; }
           // entry.ready unlocks the read endpoint, which drives the first store write, so flag the files first.
