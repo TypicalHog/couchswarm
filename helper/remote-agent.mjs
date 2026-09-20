@@ -17,7 +17,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
   iceOverride }) {
   let grant, origin, client, torrent, directory, mediaVersion = -1, timer, closed = false, loading, loadedSource = '', swept = false;
   let status = 'Waiting for a pairing link.', lastContact = 0, previousStatus;
-  let desiredVersion = -2, loadAbort, attemptedVersion = -2, attempts = 0, readyAt = 0, misses = 0, generation = 0;
+  let desiredVersion = -2, loadAbort, attemptedVersion = -2, attempts = 0, readyAt = 0, misses = 0, generation = 0, loadingSource = null;
   let servedPieces = { from: 0, to: -1 };
   const peers = new Map();
   // Every serving viewer's read-ahead windows, so a deselect can put back what the others still claim.
@@ -98,6 +98,8 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     await clearTorrent();
     if (closed || signal.aborted) return;
     mediaVersion = room.mediaVersion;
+    // Past this point the load owns the torrent it is fetching, so a pick inside that same torrent can ride along.
+    loadingSource = room.source;
     if (!room.source) { notify('Connected. Choose a movie in your room.'); return; }
     notify('Finding torrent peers…');
     const source = await torrentSource(room.source, signal);
@@ -194,22 +196,28 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
         if (data.room.mediaVersion !== attemptedVersion) { attemptedVersion = data.room.mediaVersion; attempts = 0; }
         attempts++;
         desiredVersion = data.room.mediaVersion;
-        loadAbort?.abort();
-        const controller = loadAbort = new AbortController();
-        const previous = loading;
-        loading = (async () => {
-          await previous;
-          if (closed || controller.signal.aborted) return;
-          await load(data.room, controller.signal);
-        })().catch(async error => {
-          await clearTorrent();
-          if (closed || controller.signal.aborted) return;
-          const retry = attempts < 3 && !/public internet addresses|magnet or HTTPS|Choose another torrent/.test(error.message);
-          // Filesystem errors carry local paths, which the room must never see.
-          const message = error.code ? describe(error) : error.message;
-          notify(retry ? `${message} Retrying…` : `${message} Choose the movie again in the room to retry.`);
-          if (retry) scheduleRetry();
-        });
+        // Picking another video only changes which file of the torrent the room plays, so a pick during a load rides
+        // along with it rather than destroying the client and starting the metadata fetch or hash check over.
+        if (loadingSource === data.room.source) mediaVersion = data.room.mediaVersion;
+        else {
+          loadingSource = null;
+          loadAbort?.abort();
+          const controller = loadAbort = new AbortController();
+          const previous = loading;
+          loading = (async () => {
+            await previous;
+            if (closed || controller.signal.aborted) return;
+            await load(data.room, controller.signal);
+          })().catch(async error => {
+            await clearTorrent();
+            if (closed || controller.signal.aborted) return;
+            const retry = attempts < 3 && !/public internet addresses|magnet or HTTPS|Choose another torrent/.test(error.message);
+            // Filesystem errors carry local paths, which the room must never see.
+            const message = error.code ? describe(error) : error.message;
+            notify(retry ? `${message} Retrying…` : `${message} Choose the movie again in the room to retry.`);
+            if (retry) scheduleRetry();
+          }).finally(() => { if (loadAbort === controller) loadingSource = null; });
+        }
       }
       const live = new Set(data.peers.map(peer => peer.id));
       for (const [id, peer] of peers) if (!live.has(id) || data.room.mediaVersion !== mediaVersion) { peers.delete(id); peer.destroy(); }

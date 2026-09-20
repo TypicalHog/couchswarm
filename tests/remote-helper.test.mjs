@@ -271,6 +271,27 @@ test('a failed native torrent stops advertising readiness, then reloads', { time
   assert.equal(state.infoHash, seeded.infoHash);
 });
 
+test('picking another video does not restart a load already under way', { timeout: 20000 }, async t => {
+  const host = await post('/api/rooms', { source: 'magnet:?xt=urn:btih:' + 'c'.repeat(40) }, null, 201);
+  const room = `/api/rooms/${host.roomId}`, route = room + '/helper';
+  t.after(() => post(room, { action: 'leave' }, host.token).catch(() => {}));
+  const pair = await post(route, { action: 'pair' }, host.token);
+  const cacheRoot = await mkdtemp(path.join(tmpdir(), 'couchswarm-pick-test-'));
+  const reports = [];
+  let clients = 0;
+  const helper = createRemoteAgent({ cacheRoot, pollMs: 100, iceOverride: [], report: value => reports.push(value),
+    createClient: () => { clients++; return new WebTorrent(offline); } });
+  t.after(async () => { await helper.stop(); if (path.dirname(cacheRoot) === tmpdir()) await rm(cacheRoot, { recursive: true, force: true }); });
+  await helper.pair(pair.pairingUrl);
+  // The magnet has no seeders, so the load stays where a metadata fetch or a hash check would leave it.
+  for (let i = 0; i < 100 && clients === 0; i++) await sleep(50);
+  assert.equal(clients, 1, 'the helper started loading the magnet');
+  await post(room, { action: 'file', fileIndex: 1, revision: 0 }, host.token);
+  await sleep(1000);
+  assert.equal(clients, 1, 'a file pick keeps the client that is already fetching this torrent');
+  assert.equal(reports.at(-1).status, 'Finding torrent peers…', 'the helper is still on the load it started');
+});
+
 test('a kept download gets its own subfolder and outlives the helper', { timeout: 30000 }, async t => {
   const seed = new WebTorrent(offline);
   t.after(() => destroy(seed));
