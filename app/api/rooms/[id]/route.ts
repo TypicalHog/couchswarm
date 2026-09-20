@@ -7,7 +7,7 @@ const BUFFERING = 'Someone is buffering. Waiting for everyone.';
 const HOST_AWAY = 'The host disconnected. Waiting for them to return.';
 
 type StoredRoom = {
-  id: string; name: string; host_id: string; invite_hash: string; host_key_hash: string; source: string;
+  id: string; host_id: string; invite_hash: string; host_key_hash: string; source: string;
   file_index: number; media_version: number; epoch: number; revision: number;
   playing: number; position: number; starts_at: number; duration: number; reason: string; created_at: number;
 };

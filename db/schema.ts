@@ -2,7 +2,6 @@ import { index, integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-or
 
 export const rooms = sqliteTable('rooms', {
   id: text('id').primaryKey(),
-  name: text('name').notNull(),
   hostId: text('host_id').notNull(),
   inviteHash: text('invite_hash').notNull(),
   hostKeyHash: text('host_key_hash').notNull().default(''),
@@ -26,7 +25,6 @@ export const members = sqliteTable('members', {
   name: text('name').notNull(),
   ready: integer('ready').notNull().default(0),
   buffered: real('buffered').notNull().default(0),
-  progress: real('progress').notNull().default(0),
   epoch: integer('epoch').notNull().default(-1),
   lastSeen: integer('last_seen').notNull(),
   reportSequence: integer('report_sequence').notNull().default(0),
