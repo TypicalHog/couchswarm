@@ -273,3 +273,9 @@ checked-in files, which stay under their upstream terms:
 - the sofa icon in public/favicon.svg, public/favicon.ico, public/apple-touch-icon.png and
   app/opengraph-image.tsx, drawn from Lucide's sofa — ISC, Copyright (c) 2026 Lucide Icons
   and Contributors (public/LICENSE.lucide)
+
+It does not cover the packages CouchSwarm is built from either. Their licence text is
+collected from node_modules into public/third-party-notices.txt, which the site links
+from its footer; run `node scripts/web-notices.mjs` to rebuild it after changing a
+dependency. The Windows helper ZIP carries its own THIRD-PARTY-NOTICES.txt, built by
+scripts/build-helper.mjs.
