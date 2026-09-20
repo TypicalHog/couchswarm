@@ -50,7 +50,7 @@ export default function CouchSwarm() {
   const openerRef = useRef<HTMLElement | null>(null);
   const swarm = useRoom(videoRef);
   const { room, media, session, isHost, members } = swarm;
-  const [modal, setModal] = useState<'help' | 'invite' | 'source' | 'helper' | null>(null);
+  const [openDialog, setModal] = useState<'help' | 'invite' | 'source' | 'helper' | null>(null);
   const [magnet, setMagnet] = useState('');
   const [loadingTorrent, setLoadingTorrent] = useState(false);
   const [formError, setFormError] = useState(false);
@@ -71,6 +71,9 @@ export default function CouchSwarm() {
   // The prerendered form carries no submit handler, so Enter would navigate to /?torrent=… - losing the magnet
   // to the address bar and history, and with it the ?room= of an invite link, which leaves a guest in a host lobby.
   const hydrated = useSyncExternalStore(noUpdates, () => true, () => false);
+  // A lost seat takes every dialog with it: nothing behind the join dialog can be reached anyway, and the helper
+  // one - which unmounts with the session - would otherwise spring open by itself the moment the guest rejoined.
+  const modal = swarm.invitation ? null : openDialog;
   const hasSource = !!room?.source;
   const isPlaying = !!room?.playing;
   const canPlay = hasSource && swarm.connected && isHost && !swarm.busy && (isPlaying || swarm.everyoneReady);
@@ -250,6 +253,6 @@ export default function CouchSwarm() {
         another control action takes it back: it outlived the dialog under the player and turned up again inside
         Invite friends. Dismissing the dialog takes the attempt with it - the message, the field and the mark on it. */}
     <Dialog open={modal === 'source'} onOpenChange={open => { if (open) return; setModal(null); setMagnet(''); setFormError(false); swarm.clearError(); }}><DialogContent className="modal" initialFocus={magnetRef} finalFocus={() => openerRef.current?.isConnected ? openerRef.current : changeRef.current}><DialogHeader><DialogTitle>What are we watching?</DialogTitle><DialogDescription>Paste another magnet or HTTPS .torrent link below. Loading it starts a fresh buffer for everyone.</DialogDescription></DialogHeader>{torrentForm}<p className="help-limit">Use a magnet or HTTPS .torrent link with browser-compatible video and WebRTC seeders or web seeds.</p></DialogContent></Dialog>
-    <Dialog open={!!swarm.invitation}><DialogContent className="modal" showCloseButton={false}><DialogHeader><DialogTitle>There’s a seat for you.</DialogTitle><DialogDescription>Pick a name so your friends know you’ve arrived.</DialogDescription></DialogHeader><form onSubmit={event => { event.preventDefault(); if (swarm.busy) return; void swarm.join(guestName).then(() => headingRef.current?.focus()); }}><label htmlFor="guest-name">Your name</label><input className="text-input" id="guest-name" value={guestName} onChange={e => setGuestName(e.target.value)} placeholder="What should we call you?" maxLength={24} required autoComplete="name"/><button className="primary-button" style={{ marginTop: 16 }} aria-busy={swarm.busy} disabled={!guestName.trim()}>{swarm.busy ? <><LoaderCircle className="spin" size={16}/><span className="sr-only">Joining the couch</span></> : <>Join the couch <ArrowRight size={16}/></>}</button></form>{swarm.error && <div role="alert" className="error">{swarm.error}</div>}<button className="quiet-button" onClick={() => location.assign('/')}>Create your own room instead</button></DialogContent></Dialog>
+    <Dialog open={!!swarm.invitation}><DialogContent className="modal" showCloseButton={false}><DialogHeader><DialogTitle>There’s a seat for you.</DialogTitle><DialogDescription>Pick a name so your friends know you’ve arrived.</DialogDescription></DialogHeader><form onSubmit={event => { event.preventDefault(); if (swarm.busy) return; setModal(null); void swarm.join(guestName).then(() => headingRef.current?.focus()); }}><label htmlFor="guest-name">Your name</label><input className="text-input" id="guest-name" value={guestName} onChange={e => setGuestName(e.target.value)} placeholder="What should we call you?" maxLength={24} required autoComplete="name"/><button className="primary-button" style={{ marginTop: 16 }} aria-busy={swarm.busy} disabled={!guestName.trim()}>{swarm.busy ? <><LoaderCircle className="spin" size={16}/><span className="sr-only">Joining the couch</span></> : <>Join the couch <ArrowRight size={16}/></>}</button></form>{swarm.error && <div role="alert" className="error">{swarm.error}</div>}<button className="quiet-button" onClick={() => location.assign('/')}>Create your own room instead</button></DialogContent></Dialog>
   </div>;
 }
