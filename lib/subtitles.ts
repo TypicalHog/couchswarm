@@ -17,8 +17,10 @@ export function decodeSubtitle(bytes: AllowSharedBufferSource) {
 }
 
 const TIMING = /^(\d+):(\d{1,2}):(\d{1,2})[.,](\d{1,3}) *--> *(\d+):(\d{1,2}):(\d{1,2})[.,](\d{1,3})/;
-// Layer, Start, End, then the six fields before Text, which keeps every comma of its own.
-const DIALOGUE = /^Dialogue:\s*[^,]*,([^,]+),([^,]+),(?:[^,]*,){6}(.*)$/;
+// Layer, Start, End, then the six fields before Text, which keeps every comma of its own. A \s* in front of
+// [^,]* would let the two split a run of spaces every possible way, which a crafted line stretches into
+// minutes; Text matches every character rather than '.', which alone never crosses a U+2028 or U+2029.
+const DIALOGUE = /^Dialogue:[^,]*,([^,]+),([^,]+),(?:[^,]*,){6}([\s\S]*)$/;
 
 const clock = (h: string, m: string, s: string, ms: string) =>
   `${h.padStart(2, '0')}:${m.padStart(2, '0')}:${s.padStart(2, '0')}.${ms.padEnd(3, '0')}`;
@@ -38,6 +40,14 @@ function assClock(value: string) {
   return parts ? clock(parts[1], parts[2], parts[3], `${parts[4].padEnd(2, '0')}0`) : '';
 }
 
+// A '{' with no '}' after it opens no override block, so only the text up to the last '}' is scanned. Without
+// that bound the pattern rescans to the end of the line from every one of those '{', which a crafted line
+// stretches into minutes of blocked main thread.
+const stripOverrides = (text: string) => {
+  const end = text.lastIndexOf('}') + 1;
+  return text.slice(0, end).replace(/\{[^}]*\}/g, '') + text.slice(end);
+};
+
 // WebVTT is the only format a <track> can load. Styling, positioning and karaoke are dropped to plain text,
 // which is what the MKV player already does with the same subtitle muxed into the movie.
 export function toWebVTT(text: string, filename: string) {
@@ -52,7 +62,7 @@ export function toWebVTT(text: string, filename: string) {
       // A vector drawing keeps its coordinates in the text field and would render as visible gibberish.
       if (!dialogue || /\\p[1-9]/.test(dialogue[3])) continue;
       const start = assClock(dialogue[1]), end = assClock(dialogue[2]);
-      const cue = escapeCue(dialogue[3].replace(/\{[^}]*\}/g, '').replaceAll('\\h', ' ').replace(/\\[Nn]/g, '\n')).trim();
+      const cue = escapeCue(stripOverrides(dialogue[3]).replaceAll('\\h', ' ').replace(/\\[Nn]/g, '\n')).trim();
       if (start && end && cue) cues.push(`${start} --> ${end}\n${cue}`);
     }
     return `WEBVTT\n\n${cues.join('\n\n')}\n`;

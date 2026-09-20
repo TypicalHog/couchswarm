@@ -62,6 +62,23 @@ test('an ASS dialogue becomes a plain-text cue', () => {
   assert.match(out, /^Legacy SSA$/m);
 });
 
+test('a crafted ASS line is converted without blocking the thread', () => {
+  const dialogue = (text: string) => `[Events]\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,${text}`;
+  // Each of these took 20 seconds or more before the scans were bounded — long past the 12 seconds that keep
+  // the picker's seat, so the room paused around whoever chose the subtitle.
+  const crafted = [
+    `Dialogue:${' '.repeat(100_000)}0,0:00:01.00,0:00:02.00,Default,,0,0,0,,${'a'.repeat(100_000)}\u2028`,
+    `Dialogue:${' '.repeat(1_000_000)}`,
+    dialogue('{'.repeat(1_000_000)),
+  ];
+  for (const input of crafted) {
+    const started = performance.now();
+    toWebVTT(input, 'a.ass');
+    assert.ok(performance.now() - started < 2000, 'a crafted line must not block the thread');
+  }
+  assert.match(toWebVTT(dialogue('Hi\u2028there'), 'a.ass'), /Hi\u2028there/, 'a line separator is legal cue text');
+});
+
 test('a WebVTT file is already the target format', () => {
   const vtt = 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello\n';
   assert.equal(toWebVTT(vtt, 'a.vtt'), vtt);
