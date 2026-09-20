@@ -69,7 +69,7 @@ async function fetchTorrent(url, signal) {
     }, async response => {
       try {
         if (response.statusCode !== 200) throw new Error('The torrent URL must return the file directly, without a redirect.');
-        resolve(await readLimited(response, 4 * 1024 * 1024));
+        resolve(await readLimited(response, 4 * 1024 * 1024, 'That .torrent file is larger than 4 MiB. Choose another torrent.'));
       } catch (error) { response.destroy(); reject(error); }
     });
     request.on('error', reject);
@@ -153,12 +153,12 @@ function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-async function readLimited(stream, limit) {
+async function readLimited(stream, limit, message = 'Request is too large.') {
   const chunks = [];
   let size = 0;
   for await (const chunk of stream) {
     size += chunk.length;
-    if (size > limit) throw new Error('Request is too large.');
+    if (size > limit) throw new Error(message);
     chunks.push(Buffer.from(chunk));
   }
   return Buffer.concat(chunks);
@@ -171,7 +171,10 @@ export async function torrentSource(source, signal) {
   } else {
     const url = new URL(source);
     if (url.protocol !== 'https:' || url.username || url.password || !/\.torrent$/i.test(url.pathname)) throw new Error('Use a magnet or HTTPS .torrent URL.');
-    parsed = await parseTorrent(await fetchTorrent(url, signal));
+    const bytes = await fetchTorrent(url, signal);
+    // A login page or an empty body reaches the parser, whose own text names a bencode delimiter or a null read.
+    try { parsed = await parseTorrent(bytes); }
+    catch (error) { console.error('Torrent parse failed:', error.message); throw new Error('That link did not return a valid .torrent file. Choose another torrent.'); }
   }
   // This helper retrieves data from torrent peers. Do not let metadata URLs,
   // web seeds, trackers or peer hints turn it into an arbitrary HTTP/file proxy
