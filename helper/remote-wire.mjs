@@ -14,6 +14,38 @@ const MAX_DUPLICATES = 8;
 // never stacks more than the 4 MiB it may have in flight; 16 MiB unsent is a client requesting faster than it reads.
 const MAX_UNSENT_BYTES = 16 * 1024 * 1024;
 
+// A block waiting on a piece the torrent has not verified yet used to open its own WebTorrent read stream, and each
+// of those parks a stream selection: 256 per viewer across a full room is thousands of them, while every select,
+// deselect and garbage-collection pass walks that whole list. Wait on the piece instead — the first waiter selects it
+// and marks it critical, one 'verified' listener serves every waiter on the torrent, and the last one to leave puts
+// the selection back. Resolves false when the read ended first, so a cancelled block stops holding the piece.
+/** @type {WeakMap<object, Map<number, Set<(verified: boolean) => void>>>} */
+const waiting = new WeakMap();
+function whenVerified(torrent, piece, stopped) {
+  let pieces = waiting.get(torrent);
+  if (!pieces) {
+    waiting.set(torrent, pieces = new Map());
+    torrent.on('verified', index => { for (const settle of pieces.get(index) ?? []) settle(true); });
+  }
+  let waiters = pieces.get(piece);
+  if (!waiters) {
+    // The priority and shape WebTorrent's own read streams ask with, so the swarm fetches the piece a viewer is
+    // blocked on before the read-ahead window trailing it.
+    torrent._select(piece, piece, 1, null, true);
+    torrent.critical(piece, piece);
+    pieces.set(piece, waiters = new Set());
+  }
+  return new Promise(resolve => {
+    const settle = verified => {
+      if (!waiters.delete(settle)) return;
+      if (!waiters.size) { pieces.delete(piece); if (!torrent.destroyed) torrent._deselect(piece, piece, true); }
+      resolve(verified);
+    };
+    waiters.add(settle);
+    void stopped.then(() => settle(false));
+  });
+}
+
 // Advertise availability to our authenticated room only. Each requested block
 // is fetched and verified by the native torrent before the browser receives it.
 export function serveTorrentPeer(peer, torrent, readAhead = () => {}, pieces = null) {
@@ -67,7 +99,6 @@ export function serveTorrentPeer(peer, torrent, readAhead = () => {}, pieces = n
   wire.on('request', (piece, offset, length, callback) => {
     // A refusal would leave the backlog in place, so a peer that stopped draining its replies has to go.
     if (wire._readableState.buffered + queuedBytes > MAX_UNSENT_BYTES) { peer.destroy(); return; }
-    const start = piece * torrent.pieceLength + offset;
     const pieceSize = Math.min(torrent.pieceLength, torrent.length - piece * torrent.pieceLength);
     // A piece nothing serves belongs to a file nothing validated or marked sparse, and reading it here is
     // what makes the torrent download and write it.
@@ -86,39 +117,22 @@ export function serveTorrentPeer(peer, torrent, readAhead = () => {}, pieces = n
     if (reads.size >= MAX_REQUESTS || queuedBytes + length > MAX_REQUEST_BYTES) { callback(new Error('Too many block requests.')); return; }
     queuedBytes += length;
     readAhead(piece);
-    // A read waiting on a piece the torrent has not verified yet is never settled by destroying its stream:
-    // WebTorrent resolves that wait only from a 'verified' event, so a cancelled block — or a viewer whose
-    // channel closed — would hold its bytes and its entry here until some unrelated piece happens to arrive.
-    // Race the wait against the channel instead; ending the read still destroys the stream underneath.
+    // A read waiting on a piece the torrent has not verified yet is never settled from this side: WebTorrent
+    // resolves that wait only from a 'verified' event, so a cancelled block — or a viewer whose channel closed —
+    // would hold its bytes and its entry here until some unrelated piece happens to arrive. Race the wait against
+    // the channel instead; ending the read releases its share of the piece with it.
     let stop = () => {};
     const stopped = new Promise(resolve => { stop = () => resolve(null); });
     /** @type {{ stop: () => void, cancelled: boolean, callbacks: ((error: Error | null, block?: Buffer) => void)[] }} */
     const read = { stop, cancelled: false, callbacks: [callback] };
     reads.set(key, read);
     void (async () => {
-      const chunks = [];
-      let total = 0;
-      for (const file of torrent.files) {
-        const from = Math.max(start, file.offset);
-        const to = Math.min(start + length, file.offset + file.length);
-        if (to <= from || read.cancelled || peer.destroyed) continue;
-        // WebTorrent treats end=0 as absent and would select the whole file; a one-byte slice reads two bytes instead.
-        const stream = file.createReadStream({ start: from - file.offset, end: to - file.offset - 1 || Math.min(1, file.length - 1) });
-        const iterator = stream[Symbol.asyncIterator]();
-        let remaining = to - from;
-        try {
-          while (remaining) {
-            const next = await Promise.race([iterator.next(), stopped]);
-            if (!next) return;
-            if (next.done) break;
-            const bounded = next.value.subarray(0, remaining);
-            chunks.push(bounded); total += bounded.length; remaining -= bounded.length;
-          }
-        } finally { void iterator.return?.(); }
-      }
+      // The guard above keeps a block inside one piece, and the bitfield is set only once that piece has been
+      // written and verified, so whatever it holds is already in the store — no read stream, and no selection.
+      if (!torrent.bitfield.get(piece) && !await whenVerified(torrent, piece, stopped)) return;
       if (read.cancelled || peer.destroyed) return;
-      if (total !== length) throw new Error('Incomplete torrent block.');
-      return Buffer.concat(chunks, length);
+      return await new Promise((resolve, reject) =>
+        torrent.store.get(piece, { offset, length }, (error, block) => error ? reject(error) : resolve(block)));
     })().then(block => { if (block) answer(read, null, block, piece, offset, length); },
       error => { if (!read.cancelled && !peer.destroyed) answer(read, error, undefined, piece, offset, length); })
       .finally(() => { queuedBytes -= length; if (reads.get(key) === read) reads.delete(key); });
