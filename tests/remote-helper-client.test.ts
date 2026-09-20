@@ -6,7 +6,7 @@ import type { Session } from '../lib/sync.ts';
 const session: Session = { roomId: 'room', memberId: 'member', token: 'a'.repeat(64), invite: 'invite' };
 const helperStatus = (extra: Partial<HelperStatus> = {}): HelperStatus => ({ paired: true, online: true, ready: false,
   own: true, mine: true, mineOnline: true, mineStatus: '', status: 'Finding torrent peers…', infoHash: '',
-  downloadUrl: '', iceServers: [], relayAvailable: false, ...extra });
+  downloadUrl: '', downloadUrlLinux: '', iceServers: [], relayAvailable: false, ...extra });
 const connect = (report: (message: string) => void = () => {}) =>
   connectRemoteHelper(session, 0, new AbortController().signal, report, () => {});
 const realFetch = globalThis.fetch;
