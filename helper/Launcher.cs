@@ -223,10 +223,12 @@ class CouchSwarmHelper : Form {
         wordmark.SetBounds(84, 26, 340, 26);
         var tagline = new Label { Text = "Your computer brings the movie. Everyone brings a couch.", ForeColor = Skin.Muted, Font = new Font("Segoe UI", 9F), TextAlign = ContentAlignment.MiddleLeft };
         tagline.SetBounds(86, 52, 420, 20);
-        var rule = new Panel { BackColor = Skin.Edge };
+        // An empty name still borrows the tagline above, so give the divider one of its own.
+        var rule = new Panel { BackColor = Skin.Edge, AccessibleName = " ", AccessibleRole = AccessibleRole.Separator };
         rule.SetBounds(28, 96, 504, 1);
 
         linkCard.SetBounds(28, 112, 504, 164);
+        Group(linkCard, "Pairing link");
         var linkTitle = Eyebrow("PAIRING LINK FROM YOUR ROOM");
         linkTitle.SetBounds(24, 18, 456, 18);
         Dress(link);
@@ -236,6 +238,7 @@ class CouchSwarmHelper : Form {
         linkCard.Controls.AddRange(new Control[] { linkTitle, link, pair, stop });
 
         diskCard.SetBounds(28, 292, 504, 170);
+        Group(diskCard, "Download folder");
         var diskTitle = Eyebrow("DOWNLOAD FOLDER");
         diskTitle.SetBounds(24, 18, 456, 18);
         Dress(folder);
@@ -249,6 +252,7 @@ class CouchSwarmHelper : Form {
         diskCard.Controls.AddRange(new Control[] { diskTitle, folder, browse, keep, keepHint });
 
         statusCard.SetBounds(28, 478, 504, 126);
+        Group(statusCard, "Status");
         statusCard.Dot = Skin.Muted;
         status.Text = "Open your room, choose Connect your helper, and copy a pairing link.";
         // Three lines: the longest real message (a rejected torrent plus its retry advice) needs 57px.
@@ -258,6 +262,9 @@ class CouchSwarmHelper : Form {
         status.LiveSetting = System.Windows.Forms.Automation.AutomationLiveSetting.Polite;
         meta.ForeColor = Skin.Muted; meta.Font = new Font("Segoe UI", 8.5F);
         meta.SetBounds(46, 96, 434, 18);
+        // Empty, this label borrows the status text above it and a screen reader reads that message twice.
+        meta.Visible = false;
+        meta.TextChanged += (s, e) => meta.Visible = meta.Text.Length > 0;
         statusCard.Controls.AddRange(new Control[] { status, meta });
 
         Controls.AddRange(new Control[] { mark, wordmark, tagline, rule, linkCard, diskCard, statusCard });
@@ -337,6 +344,8 @@ class CouchSwarmHelper : Form {
     static Label Eyebrow(string text) {
         return new Label { Text = text, ForeColor = Skin.Muted, Font = new Font("Segoe UI", 8F, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft };
     }
+    // A card with no name of its own borrows the nearest text above it, which here is the tagline.
+    static void Group(Card card, string name) { card.AccessibleName = name; card.AccessibleRole = AccessibleRole.Grouping; }
     static void Dress(TextBox box) { box.BorderStyle = BorderStyle.None; box.BackColor = Skin.Field; box.ForeColor = Skin.Ink; }
     static void Cue(TextBox box, string text) {
         try { SendMessage(box.Handle, 0x1501, (IntPtr)1, text); } catch {}
