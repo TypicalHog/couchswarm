@@ -162,7 +162,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
             return new Promise<void>(release => { releaseLock = release; });
           }).catch(() => resolve(false));
         });
-        if (!locked) { try { sessionStorage.removeItem('couchswarm:sw-reload'); } catch { /* Storage blocked: nothing to clear. */ } fail('This movie is already open in another CouchSwarm tab. Close or reload that tab, then reconnect here.'); return; }
+        if (!locked) { try { sessionStorage.removeItem('couchswarm:sw-reload'); } catch { /* Storage blocked: nothing to clear. */ } fail('Another CouchSwarm tab already has a movie open. Close or reload that tab, then reconnect here.'); return; }
         if (disposed) { releaseLock?.(); return; }
         // The bundle's peer id and piece hashing call Uint8Array methods that browsers we support may not have yet.
         await import('@/lib/uint8-polyfill');
