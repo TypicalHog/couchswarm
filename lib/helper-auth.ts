@@ -1,4 +1,4 @@
-import { getDb, hash, roomExpired } from '@/lib/db';
+import { deleteRoom, getDb, hash, roomExpired } from '@/lib/db';
 import { PRESENCE_MS } from '@/lib/sync';
 
 export type HelperRow = { id: string; room_id: string; member_id: string; token_hash: string | null; last_seen: number; status: string; media_version: number; info_hash: string };
@@ -10,7 +10,11 @@ export async function roomAccess(request: Request, id: string) {
   // last_seen = 0 is the marker a member who left carries: their token is spent, not merely lapsed.
   const member = await db.prepare('SELECT id, last_seen FROM members WHERE room_id = ? AND token_hash = ? AND last_seen > 0').bind(id, await hash(token)).first<{ id: string; last_seen: number }>();
   const room = await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<HelperRoom>();
-  if (!member || !room || await roomExpired(db, room.id, room.created_at, Date.now())) return null;
+  if (!room) return null;
+  // A room past its day is refused here whoever is asking, so this is as good a moment to clear it as any: the
+  // helper routes may be the last thing that ever touches it.
+  if (await roomExpired(db, room.id, room.created_at, Date.now())) { await deleteRoom(db, room.id); return null; }
+  if (!member) return null;
   return { db, room, memberId: member.id, present: member.last_seen > Date.now() - PRESENCE_MS };
 }
 export function validSignal(value: unknown, type: string): { type: string; sdp: string } | null {

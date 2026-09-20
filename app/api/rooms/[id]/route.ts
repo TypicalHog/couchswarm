@@ -1,4 +1,4 @@
-import { cleanName, getDb, hash, json, notAllowed, readBody, roomExpired, secret, withDb, type RunResult } from '@/lib/db';
+import { cleanName, deleteRoom, getDb, hash, json, notAllowed, readBody, roomExpired, secret, withDb, type RunResult } from '@/lib/db';
 import { allReady, MAX_SEATS, PRESENCE_MS, SPECTATOR_EPOCH, timelinePosition, validSource, type Member, type Room } from '@/lib/sync';
 
 export const maxDuration = 10;
@@ -46,12 +46,7 @@ async function handler(request: Request, context: { params: Promise<{ id: string
   let stored = roomRow.results[0] as StoredRoom | undefined;
   if (!stored) return json({ error: 'This room does not exist. Check your invite link.' }, 404);
   if (await roomExpired(db, id, stored.created_at, Date.now())) {
-    await db.batch([
-      db.prepare('DELETE FROM helper_peers WHERE helper_id IN (SELECT id FROM helpers WHERE room_id = ?)').bind(id),
-      db.prepare('DELETE FROM helpers WHERE room_id = ?').bind(id),
-      db.prepare('DELETE FROM members WHERE room_id = ?').bind(id),
-      db.prepare('DELETE FROM rooms WHERE id = ?').bind(id),
-    ]);
+    await deleteRoom(db, id);
     return json({ error: 'This room has expired. Create a new room for tonight.' }, 410);
   }
   const now = Date.now();

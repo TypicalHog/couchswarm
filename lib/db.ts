@@ -17,6 +17,18 @@ export async function roomExpired(db: Db, roomId: string, createdAt: number, now
   return now - createdAt > ROOM_TTL_MS && !await db.prepare('SELECT 1 AS n FROM members WHERE room_id = ? AND last_seen > ?').bind(roomId, now - EXPIRY_GRACE_MS).first<{ n: number }>();
 }
 
+// Everything a room holds, children first: an expired room is refused to every caller, so the request that finds
+// that out deletes it here rather than leaving the names, the source and the leftover signalling rows waiting for
+// somebody to create the next room.
+export function deleteRoom(db: Db, id: string) {
+  return db.batch([
+    db.prepare('DELETE FROM helper_peers WHERE helper_id IN (SELECT id FROM helpers WHERE room_id = ?)').bind(id),
+    db.prepare('DELETE FROM helpers WHERE room_id = ?').bind(id),
+    db.prepare('DELETE FROM members WHERE room_id = ?').bind(id),
+    db.prepare('DELETE FROM rooms WHERE id = ?').bind(id),
+  ]);
+}
+
 export function secret() {
   return Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, '0')).join('');
 }

@@ -1,4 +1,4 @@
-import { cleanName, getDb, hash, json, notAllowed, readBody, roomExpired, secret, withDb } from '@/lib/db';
+import { cleanName, deleteRoom, getDb, hash, json, notAllowed, readBody, roomExpired, secret, withDb } from '@/lib/db';
 import { validSignal, type HelperRoom, type HelperRow } from '@/lib/helper-auth';
 import { iceConfiguration } from '@/lib/ice';
 import { HELPER_PEER_TTL_MS, MAX_HELPER_PEERS, PRESENCE_MS } from '@/lib/sync';
@@ -17,7 +17,9 @@ async function handler(request: Request) {
     if (typeof body.code !== 'string' || !/^[a-f0-9]{64}$/.test(body.code)) return json({ error: 'Invalid pairing link.' }, 400);
     const helper = await db.prepare('SELECT helpers.*, rooms.created_at AS room_created_at FROM helpers JOIN rooms ON rooms.id = helpers.room_id WHERE pair_hash = ? AND pair_expires > ? AND token_hash IS NULL')
       .bind(await hash(body.code), Date.now()).first<HelperRow & { room_created_at: number }>();
-    if (!helper || await roomExpired(db, helper.room_id, helper.room_created_at, Date.now())) return json({ error: 'That pairing link expired or was already used. Create a new one in your room.' }, 410);
+    const spent = 'That pairing link expired or was already used. Create a new one in your room.';
+    if (!helper) return json({ error: spent }, 410);
+    if (await roomExpired(db, helper.room_id, helper.room_created_at, Date.now())) { await deleteRoom(db, helper.room_id); return json({ error: spent }, 410); }
     const token = secret();
     const claim = await db.prepare("UPDATE helpers SET token_hash = ?, last_seen = ?, status = 'Helper connected.' WHERE id = ? AND token_hash IS NULL AND pair_expires > ?")
       .bind(await hash(token), Date.now(), helper.id, Date.now()).run();
@@ -29,7 +31,10 @@ async function handler(request: Request) {
   const helper = await db.prepare('SELECT * FROM helpers WHERE id = ? AND token_hash = ?').bind(body.id, await hash(token)).first<HelperRow>();
   if (!helper) return json({ error: 'The helper was disconnected. Pair it again from your room.' }, 403);
   const room = await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(helper.room_id).first<HelperRoom>();
-  if (!room || await roomExpired(db, room.id, room.created_at, Date.now())) return json({ error: 'This room has expired.' }, 410);
+  if (!room) return json({ error: 'This room has expired.' }, 410);
+  // A helper outlives the room it was paired to and goes on polling it, which is the one request still reaching
+  // these rows: let it be the one that takes them away.
+  if (await roomExpired(db, room.id, room.created_at, Date.now())) { await deleteRoom(db, room.id); return json({ error: 'This room has expired.' }, 410); }
   // A guest who rejoins gets a new member id, so their old helper serves nobody and neither they nor the host can see
   // it to unpair it. The host is exempt: a re-claiming host inherits the room's helper.
   if (helper.member_id !== room.host_id) {
