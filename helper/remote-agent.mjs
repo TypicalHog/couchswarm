@@ -134,10 +134,15 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     const index = windows.findIndex(window => piece >= window.from && piece <= window.to);
     if (index >= 0 && piece <= windows[index].from + span / 2) return;
     const stale = index >= 0 ? windows.splice(index, 1)[0] : windows.length >= READ_AHEAD_WINDOWS ? windows.shift() : null;
-    if (stale) { value.deselect(stale.from, stale.to); reassert(value); }
+    if (stale) value.deselect(stale.from, stale.to);
     const window = { from: piece, to: Math.min(served.to, piece + span) };
-    windows.push(window);
     value.select(window.from, window.to, 0);
+    // webtorrent fills every wire from its oldest selection first, so after a seek the region a viewer had left was
+    // fetched to the end of its window before anything past the new playhead. Selecting a range again moves it to
+    // the back, so re-selecting the other windows now puts this one in front of them, and also puts back whatever
+    // the deselect above took from a window that overlapped the stale one.
+    reassert(value);
+    windows.push(window);
   }
   async function load(room, signal) {
     // A destroyed torrent serves nobody, so a same-source switch reloads it instead of keeping it.

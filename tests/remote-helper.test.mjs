@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import dgram from 'node:dgram';
 import { once } from 'node:events';
 import { execFile } from 'node:child_process';
@@ -224,6 +224,61 @@ test('remote helper delivers magnet metadata and seekable multi-file bytes from 
   await closed;
   assert.deepEqual(await readdir(cacheRoot), []);
   assert.equal((await post(route, { action: 'status' }, host.token)).online, false);
+});
+
+test('the helper prefetches where a viewer has moved to before the region it left', { timeout: 45000 }, async t => {
+  const seed = new WebTorrent(offline), viewer = new WebTorrent(offline);
+  t.after(() => destroy(seed)); t.after(() => destroy(viewer));
+  const payload = Object.assign(randomBytes(96 * 16384), { name: 'movie.mkv' });
+  const seeded = await new Promise(resolve => seed.seed(payload, { name: payload.name, pieceLength: 16384, announce: [], store: MemoryStore }, resolve));
+  // Slow enough that a window is seconds of download, so which window the helper fills first can be seen.
+  seed.throttleUpload(65536);
+  const host = await post('/api/rooms', { source: `${seeded.magnetURI}&x.pe=127.0.0.1:${seed.torrentPort}` }, null, 201);
+  const room = `/api/rooms/${host.roomId}`, route = room + '/helper';
+  t.after(() => post(room, { action: 'leave' }, host.token).catch(() => {}));
+  const pair = await post(route, { action: 'pair' }, host.token);
+  const cacheRoot = await mkdtemp(path.join(tmpdir(), 'couchswarm-order-test-'));
+  let nativeClient;
+  // A sixteen-piece window, so the one at the start of the file is still being filled when the viewer moves.
+  const helper = createRemoteAgent({ cacheRoot, pollMs: 100, iceOverride: [], readAheadBytes: 16 * 16384, createClient: () => nativeClient = new WebTorrent(offline) });
+  t.after(async () => { await helper.stop(); if (path.dirname(cacheRoot) === tmpdir()) await rm(cacheRoot, { recursive: true, force: true }); });
+  await helper.pair(pair.pairingUrl);
+  let state;
+  for (let i = 0; i < 200; i++) {
+    state = await post(route, { action: 'status' }, host.token);
+    if (state.ready) break;
+    await sleep(100);
+  }
+  assert.equal(state.ready, true, 'the helper loaded the seeded torrent');
+  const peer = new Peer({ initiator: true, trickle: false, config: { iceServers: [] } });
+  peer.on('error', () => {}); peer.id = 'test-order-peer';
+  t.after(() => peer.destroy());
+  const connected = once(peer, 'connect');
+  const [offer] = await once(peer, 'signal');
+  const { peerId } = await post(route, { action: 'offer', mediaVersion: 0, offer }, host.token, 201);
+  for (let i = 0; i < 100; i++) {
+    const response = await post(route, { action: 'peer', peerId }, host.token);
+    if (response.answer) { peer.signal(response.answer); break; }
+    await sleep(100);
+  }
+  await connected;
+  const received = viewer.add(state.infoHash, { announce: [], store: MemoryStore, deselect: true, strategy: 'sequential' });
+  received.on('error', () => {});
+  if (!received.infoHash) await once(received, 'infoHash');
+  const ready = once(received, 'ready');
+  received.addPeer(peer);
+  await ready;
+  // A read selects only its own piece on the viewer, so everything else the helper fetches is its read-ahead.
+  const read = async piece => { for await (const chunk of received.files[0].createReadStream({ start: piece * 16384, end: piece * 16384 + 16383 })) void chunk; };
+  await read(0);
+  await read(60);
+  const native = nativeClient.torrents[0];
+  assert.ok(Array.from({ length: 16 }, (_, index) => index + 1).some(index => !native.bitfield.get(index)), 'the first window is unfinished when the viewer moves');
+  // Whatever was asked of the seeder before piece 60 arrived before it, so these were all asked for after the move.
+  const next = [];
+  native.on('verified', index => next.push(index));
+  for (let i = 0; i < 400 && next.length < 3; i++) await sleep(50);
+  assert.deepEqual(next.slice(0, 3).map(index => index > 60 && index <= 76), [true, true, true], `the helper went back to the window the viewer left: ${next.join(',')}`);
 });
 
 // Nothing else drives the encoding at remote-agent.mjs: every other agent test passes an empty iceOverride, and
