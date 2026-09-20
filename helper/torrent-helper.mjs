@@ -477,9 +477,11 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
         res.end(); return;
       }
       // RFC 9110 14.1.2: a suffix-length past the end of the file means the whole representation.
-      const suffixRange = /^\s*bytes\s*=\s*-(\d+)\s*$/.exec(req.headers.range || '');
+      const suffixRange = /^\s*bytes\s*=\s*-(\d+)\s*$/i.exec(req.headers.range || '');
       const header = suffixRange && Number(suffixRange[1]) >= file.length ? `bytes=0-${file.length - 1}` : req.headers.range;
-      let ranges = header ? rangeParser(file.length, header) : null;
+      // RFC 9110 14.1: range units are case-insensitive, and a unit the server does not know is ignored rather
+      // than refused — so an unsatisfiable range must reach the 416 below only once it is known to be in bytes.
+      let ranges = /^\s*bytes\s*=/i.test(header || '') ? rangeParser(file.length, header.replace(/^\s*bytes/i, 'bytes')) : null;
       if (ranges === -1) { res.writeHead(416, { 'Content-Range': `bytes */${file.length}` }); res.end(); return; }
       if (ranges && (!Array.isArray(ranges) || ranges.length !== 1 || ranges.type !== 'bytes')) ranges = null;
       const { start, end } = ranges?.[0] || { start: 0, end: file.length - 1 };

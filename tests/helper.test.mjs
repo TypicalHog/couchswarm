@@ -132,11 +132,12 @@ test('helper obtains magnet metadata over TCP and serves verified single-file ra
   }
   assert.equal((await env.call(`/seed/${first.id}`, { headers: { Range: 'bytes=999999-' } })).status, 416);
   assert.equal((await env.call(`/seed/${first.id}`, { headers: { Range: 'bytes=-999999' } })).status, 206, 'an oversized suffix range returns the whole representation');
-  for (const range of ['bytes=0-1, 4-5', 'bytes=abc']) {
+  assert.equal((await env.call(`/seed/${first.id}`, { headers: { Range: 'Bytes=0-8191' } })).status, 206, 'a range unit is case-insensitive');
+  for (const range of ['bytes=0-1, 4-5', 'bytes=abc', 'items=0-5', 'items=999999-']) {
     const response = await env.call(`/seed/${first.id}`, { headers: { Range: range } });
     assert.equal(response.status, 200, range);
     assert.equal(response.headers.get('content-range'), null, range);
-    assert.deepEqual(Buffer.from(await response.arrayBuffer()), Buffer.from(payload), 'a malformed or multi-range header returns the whole body');
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), Buffer.from(payload), 'a malformed header, a multi-range one, or a unit the helper does not serve returns the whole body');
   }
   assert.equal((await env.call(`/seed/${first.id}`, { method: 'POST' })).status, 405);
   const traversal = await env.call(`/seed/${first.id}/..%2f..%2fREADME.md`);
