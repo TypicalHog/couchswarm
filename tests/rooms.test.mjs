@@ -155,6 +155,9 @@ test('rejects malformed requests, rewinds at the end, and gates seats, moderatio
   const fullPath = `/api/rooms/${full.roomId}`;
   t.after(() => post(fullPath, { action: 'leave' }, full.token).catch(() => {}));
   const lapsed = await post(fullPath, { action: 'join', invite: full.invite, name: 'Lapsed' }, undefined, 201);
+  const away = await post('/api/rooms', { source: magnet }, undefined, 201);
+  const awayPath = `/api/rooms/${away.roomId}`;
+  t.after(() => post(awayPath, { action: 'leave' }, away.token).catch(() => {}));
   const quiet = await post('/api/rooms', { source: magnet }, undefined, 201);
   const quietPath = `/api/rooms/${quiet.roomId}`;
   t.after(() => post(quietPath, { action: 'leave' }, quiet.token).catch(() => {}));
@@ -186,6 +189,11 @@ test('rejects malformed requests, rewinds at the end, and gates seats, moderatio
   assert.match(seat.error, /This couch is full \(12 people\)/, 'a lapsed seat cannot be reclaimed while the room is full');
   const back = await post(fullPath, { action: 'join', invite: full.invite, name: 'Host again', hostKey: full.hostKey }, undefined, 201);
   assert.equal(back.memberId, full.memberId, 'a full couch never refuses the host their own seat');
+  for (let i = 0; i < 12; i++) await post(awayPath, { action: 'join', invite: away.invite, name: `Seat ${i}` }, undefined, 201);
+  const returned = await post(awayPath, { action: 'heartbeat', ready: false, buffered: 0, epoch: 0, mediaVersion: 0, duration: 120, sequence: 1 }, away.token);
+  const hostSeat = returned.members.find(member => member.id === away.memberId);
+  assert.ok(hostSeat, 'a lapsed host takes their own seat back even after guests have filled every other one');
+  assert.equal(hostSeat.epoch, returned.room.epoch, 'a host who comes back still buffering keeps their seat instead of watching from the side');
   quietState = await beatQuiet(quiet.token, 2);
   quietState = await post(quietPath, { action: 'seek', position: 30, revision: quietState.room.revision }, quiet.token);
   quietState = await beatQuiet(quiet.token, 3, true, 1);
