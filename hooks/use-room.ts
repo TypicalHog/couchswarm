@@ -69,7 +69,11 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   const bridged = useRef({ epoch: -1, until: 0, touches: 0 });
   const rtt = useRef(0);
   const best = useRef({ rtt: Infinity, at: 0 });
-  const staleControl = useRef(false);
+  // The revision a refused control was sent with, or -1 when none is outstanding. Judging the recovery against
+  // this tab's own snapshot instead missed the common case: the reply that took the room past that revision has
+  // usually landed before the 409 does, so no later heartbeat is newer and 'The room changed' sat under the
+  // player until the host pressed something else.
+  const staleControl = useRef(-1);
   // A transient control failure still self-heals, but a 1 Hz heartbeat must not wipe it before it is read.
   const controlError = useRef(0);
   const creating = useRef<Promise<boolean> | null>(null);
@@ -163,7 +167,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     }
     rtt.current = Math.max(roundTrip, rtt.current * 0.8);
     lastContact.current = received;
-    if (staleControl.current && current && data.room.revision > current.room.revision) { staleControl.current = false; setError(''); }
+    if (staleControl.current >= 0 && data.room.revision > staleControl.current) { staleControl.current = -1; setError(''); }
     live.current.snapshot = data;
     setSnapshot(data);
     setConnected(true);
@@ -348,14 +352,15 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     if (!state.session) return false;
     if (!state.snapshot) { setError('Still connecting to the room. Try again in a moment.'); return false; }
     setBusy(true); setError('');
+    const revision = state.snapshot.room.revision;
     const sent = performance.now();
     try {
-      const data = await request<Snapshot>(`/api/rooms/${state.session.roomId}`, { action, revision: state.snapshot.room.revision, ...extra }, state.session.token);
+      const data = await request<Snapshot>(`/api/rooms/${state.session.roomId}`, { action, revision, ...extra }, state.session.token);
       if (!accept(data, sent)) { setError('The room sent an unexpected reply. Try that again.'); return false; }
       const rotated = data as unknown as { invite?: string; hostKey?: string };
       if (rotated.invite) saveSession({ ...state.session, invite: rotated.invite, ...(rotated.hostKey ? { hostKey: rotated.hostKey } : {}) });
       return true;
-    } catch (err) { const status = (err as { status?: number }).status; staleControl.current = status === 409; if (status) setError((err as Error).message); else { controlError.current = performance.now() + 5000; setNetworkError((err as Error).message); } return false; }
+    } catch (err) { const status = (err as { status?: number }).status; staleControl.current = status === 409 ? revision : -1; if (status) setError((err as Error).message); else { controlError.current = performance.now() + 5000; setNetworkError((err as Error).message); } return false; }
     finally { setBusy(false); }
   };
 
