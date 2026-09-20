@@ -76,6 +76,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     let gotMetadata = false;
     let peerTimer: ReturnType<typeof setTimeout> | undefined;
     let helperTimer: ReturnType<typeof setTimeout> | undefined;
+    let cancelProbe: ReturnType<typeof setInterval> | undefined;
     let releaseLock: (() => void) | undefined;
     const abort = new AbortController();
     // Helper retry budgets are per movie, not per hook mount.
@@ -151,6 +152,15 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         ] } });
         client.on('error', () => fail('The torrent connection failed. Try a different torrent or reload the room.'));
         client.createServer({ controller: registration });
+        // The video worker drops its 5 s pull timeout only in the instance that answered this probe, and
+        // WebTorrent sends it once, from createServer. A worker the browser restarts under a live page starts
+        // with the timeout back on, and a piece that then takes longer leaves the read with no data, no close
+        // and no error. The worker answers the probe itself, so it never reaches the network.
+        const probe = () => { void fetch('/webtorrent/cancel/').then(response => response.body?.cancel()).catch(() => {}); };
+        cancelProbe = setInterval(probe, 15000);
+        // A tab coming back from frozen or discarded is the likeliest moment to be talking to a new worker.
+        document.addEventListener('visibilitychange', probe, { signal: abort.signal });
+        document.addEventListener('resume', probe, { signal: abort.signal });
         let helperFailed = false;
         const remote = session ? await connectRemoteHelper(session, mediaVersion, abort.signal, setStatus,
           own => {
@@ -360,6 +370,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
       clearInterval(tick);
       clearTimeout(peerTimer);
       clearTimeout(helperTimer);
+      clearInterval(cancelProbe);
       video.removeEventListener('error', mediaError);
       mkvPlayer?.destroy();
       video.pause();
