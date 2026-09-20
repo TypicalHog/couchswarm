@@ -23,9 +23,22 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
   const root = path.resolve(cacheRoot);
   const notify = message => { status = message; report({ status, peers: peers.size, torrentPeers: torrent?.numPeers || 0 }); };
   async function api(body) {
-    const response = await fetch(`${origin}/api/helper`, { method: 'POST', redirect: 'error',
-      headers: { 'Content-Type': 'application/json', ...(grant ? { Authorization: `Bearer ${grant.token}` } : {}) },
-      body: JSON.stringify({ ...body, ...(grant ? { id: grant.id } : {}) }), signal: AbortSignal.timeout(15000) });
+    let response;
+    try {
+      response = await fetch(`${origin}/api/helper`, { method: 'POST', redirect: 'error',
+        headers: { 'Content-Type': 'application/json', ...(grant ? { Authorization: `Bearer ${grant.token}` } : {}) },
+        body: JSON.stringify({ ...body, ...(grant ? { id: grant.id } : {}) }), signal: AbortSignal.timeout(15000) });
+    } catch (error) {
+      // A refused connection, an unknown host and an intercepted certificate all reject with the same two words,
+      // and the reason only lives on .cause; the launcher's log is fed from stderr, so name it there too.
+      const code = error?.cause?.code || error?.name || '';
+      console.error('Room website request failed:', code, error?.cause?.message || error?.message || '');
+      const { host } = new URL(origin);
+      throw new Error(/CERT|SELF_SIGNED|UNABLE_TO_(GET|VERIFY)/.test(code)
+        ? `Could not verify the certificate for ${host}. Antivirus HTTPS scanning or a company network may be intercepting the connection.`
+        : code === 'TimeoutError' || code === 'UND_ERR_CONNECT_TIMEOUT' ? `${host} did not answer in time. Try again.`
+        : `Could not reach ${host}. Check your internet connection and any firewall blocking CouchSwarm Helper.`);
+    }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       // The launcher window renders this verbatim, so a hostile origin gets neither a multi-line alarm block nor a
@@ -244,7 +257,10 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
   }
   return {
     async pair(link) {
-      const url = new URL(link.trim());
+      let url;
+      // Without this the two messages below are never reached: a link pasted without its scheme, or with chat text
+      // around it, leaves the launcher showing the two words 'Invalid URL'.
+      try { url = new URL(link.trim()); } catch { throw new Error('Copy the whole pairing link from your CouchSwarm room. It starts with https://.'); }
       if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))) throw new Error('Use an HTTPS CouchSwarm pairing link.');
       if (url.username || url.password) throw new Error('Invalid pairing link.');
       const code = new URLSearchParams(url.hash.slice(1)).get('helper');
