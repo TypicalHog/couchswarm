@@ -364,7 +364,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
       const period = failures && performance.now() - lastContact.current > PRESENCE_MS ? Math.min(8000, 1000 * 2 ** failures) * (.8 + Math.random() * .4) : live.current.snapshot?.room.source ? 1000 : 2000;
       if (!stopped && !leaving.current) timer = setTimeout(heartbeat, Math.max(0, period - (performance.now() - sent)));
     };
-    void claimSeat(session.roomId).then(ok => { if (stopped) return; setRefused(!ok); if (!ok) setError('This room is already open in another CouchSwarm tab.'); else void heartbeat(); });
+    void claimSeat(session.roomId).then(ok => { if (stopped) return; setRefused(!ok); if (!ok) setError('This room is already open in another CouchSwarm tab. Close that tab, then reload this page.'); else void heartbeat(); });
     return () => { stopped = true; clearTimeout(timer); };
   }, [session, request, accept, videoRef, localNow, checkSleep, outOfContact]);
 
@@ -427,7 +427,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   // lastSeen carries the server's clock, so presence is judged against the snapshot's own timestamp, as allReady does.
   const hostPresent = !!(room && snapshot && snapshot.members.some(m => m.id === room.hostId && m.lastSeen > snapshot.serverNow - PRESENCE_MS));
   const inviteStale = !!room?.inviteTag && hashed.invite === sessionInvite && room.inviteTag !== hashed.tag;
-  return { session, room, members: snapshot?.members || [], invitation, error: error || networkError, unsupported, busy, connected, armed, playhead,
+  return { session, room, members: snapshot?.members || [], invitation, error: error || networkError, unsupported, busy, connected, refused, armed, playhead,
     buffered, duration, countdown, media, isHost, everyoneReady, hostPresent, inviteStale, seatLost, create, join, control, enable, leave, clearError,
     inviteUrl: session ? `${typeof location === 'undefined' ? '' : location.origin}/?room=${session.roomId}#invite=${session.invite}` : '',
   };
