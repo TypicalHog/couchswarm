@@ -144,12 +144,24 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         }
         sessionStorage.removeItem('couchswarm:sw-reload');
         if (disposed) return;
+        // Every tracker announce carries WebRTC offers, and with no configuration of ours the bundled
+        // simple-peer reaches for its own Google and Twilio STUN: an operator who named their servers
+        // would still have each viewer's address gathered by two strangers on every announce. Ask the
+        // room for the same servers the helper connection uses; a failure leaves the swarm on host
+        // candidates rather than on somebody else's STUN.
+        let iceServers: RTCIceServer[] = [];
+        if (session) {
+          try { ({ iceServers } = await helperStatus(session, abort.signal)); }
+          catch { /* The room connection already reports connectivity failures. */ }
+          if (disposed) return;
+        }
         // Magnets often list only UDP trackers, which browsers cannot contact.
         // Shared WebSocket trackers let this client discover WebRTC seeders.
-        client = new TorrentClient({ tracker: { announce: [
+        const tracker = { announce: [
           'wss://tracker.openwebtorrent.com',
           'wss://tracker.webtorrent.dev',
-        ] } });
+        ], rtcConfig: { iceServers } };
+        client = new TorrentClient({ tracker });
         client.on('error', () => fail('The torrent connection failed. Try a different torrent or reload the room.'));
         client.createServer({ controller: registration });
         // The video worker drops its 5 s pull timeout only in the instance that answered this probe, and
