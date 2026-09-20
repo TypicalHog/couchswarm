@@ -494,8 +494,16 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
       video.load();
       // What this client verified is what the kept store holds, so the replacement need not hash it again.
       if (torrent?.bitfield) verified = { source, bitfield: torrent.bitfield.buffer.slice() };
-      if (client) teardownRef.current = new Promise<void>(resolve => client!.destroy(() => { releaseLock?.(); resolve(); }));
-      else releaseLock?.();
+      // webtorrent 3.0.21 re-arms the video worker's 20 s keepalive on the line after the end-of-stream cleanup
+      // that had just cleared it, and neither close nor destroy clears it again, so every client that served a
+      // stream to its end — the bytes=0-0 answer above ends one on every load — leaves a fetch timer behind.
+      // Stop it here, and once more after destroy, where a late port message could have armed another.
+      if (client) {
+        const server = (client as unknown as { _server?: { workerKeepAliveInterval?: ReturnType<typeof setInterval> } })._server;
+        const stopKeepAlive = () => clearInterval(server?.workerKeepAliveInterval);
+        stopKeepAlive();
+        teardownRef.current = new Promise<void>(resolve => client!.destroy(() => { stopKeepAlive(); releaseLock?.(); resolve(); }));
+      } else releaseLock?.();
     };
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- session identity is covered by roomId/token
   }, [source, fileIndex, mediaVersion, videoRef, session?.roomId, session?.token, attempt]);
