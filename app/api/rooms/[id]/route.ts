@@ -162,7 +162,7 @@ async function handler(request: Request, context: { params: Promise<{ id: string
       if (!stored.source || stored.duration <= 0 || !allReady(members, publicRoom(stored), now)) return json({ error: 'Wait for everyone to buffer before pressing play.' }, 409);
       if (stored.position >= stored.duration) {
         result = await db.prepare('UPDATE rooms SET playing = 0, position = 0, epoch = epoch + 1, revision = revision + 1, reason = ? WHERE id = ? AND revision = ? AND playing = 0')
-          .bind('Back to the start. Waiting for everyone to buffer.', id, stored.revision).run();
+          .bind('Back to the start. Press play once everyone is ready.', id, stored.revision).run();
       } else {
         result = await db.prepare('UPDATE rooms SET playing = 1, starts_at = ?, revision = revision + 1, reason = ? WHERE id = ? AND revision = ? AND playing = 0 AND NOT EXISTS (SELECT 1 FROM members WHERE room_id = ? AND last_seen > ? AND epoch != ? AND (ready = 0 OR epoch != ?))')
           .bind(now + 3000, 'Playing together.', id, stored.revision, id, now - PRESENCE_MS, SPECTATOR_EPOCH, stored.epoch).run();
