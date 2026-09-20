@@ -4,7 +4,7 @@ The website runs on Vercel with a persistent Turso/libSQL database. The Windows 
 
 ## 1. Publish the Windows download
 
-The locally built file is `public/downloads/CouchSwarm-Helper-win-x64.zip`. Extract the whole ZIP and open `helper-package/CouchSwarm Helper.exe`. This portable build includes Node 24 and all native dependencies; users do not install Node. It is currently unsigned.
+The locally built file is `public/downloads/CouchSwarm-Helper-win-x64.zip`. Extract the whole ZIP and open `helper-package/CouchSwarm Helper.exe`. This portable build includes Node 24 and all native dependencies; users do not install Node. The launcher needs .NET Framework 4.7.1 or later, which Windows 10 1803 and newer include; on an older host — LTSB 2016, 1507 or Server 2016 — Windows offers that install instead of starting. It is currently unsigned.
 
 Build a fresh package on Windows x64 using Node 24 LTS:
 
