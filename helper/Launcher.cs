@@ -325,7 +325,14 @@ class CouchSwarmHelper : Form {
         Shown += (s, e) => {
             // This fixed client size scales past a small work area at high DPI, putting the status card off-screen.
             var work = Screen.FromControl(this).WorkingArea;
-            if (Height > work.Height) { AutoScrollMinSize = ClientSize; AutoScroll = true; Height = work.Height; }
+            // The window is too tall, never too wide: a minimum width of the whole client makes the vertical
+            // bar squeeze it and WinForms adds a horizontal bar over the status card to scroll nothing.
+            if (Height > work.Height) {
+                AutoScrollMinSize = new Size(0, ClientSize.Height);
+                Width += SystemInformation.VerticalScrollBarWidth;
+                AutoScroll = true;
+                Height = work.Height;
+            }
             Align(); Cue(link, "Paste your pairing link here"); Cue(folder, DefaultFolder); link.Focus(); StartHelper();
         };
         FormClosing += (s, e) => {
