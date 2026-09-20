@@ -33,7 +33,9 @@ services:
       - "--total-quota=128"
       - "--max-bps=3000000"
       - "--bps-capacity=50000000"
-      - "--max-allocate-lifetime=600"
+      # A viewer connection the helper drops leaves its allocation behind: its ICE stack sends no
+      # zero-lifetime refresh, so the slot is only freed when the lifetime coturn granted runs out.
+      - "--max-allocate-lifetime=300"
       - "--denied-peer-ip=0.0.0.0-0.255.255.255"
       - "--denied-peer-ip=10.0.0.0-10.255.255.255"
       - "--denied-peer-ip=100.64.0.0-100.127.255.255"
