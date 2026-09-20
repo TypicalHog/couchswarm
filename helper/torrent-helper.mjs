@@ -18,6 +18,9 @@ const run = promisify(execFile);
 // A room holds MAX_SEATS people and the helper serves MAX_ROOM_TORRENTS rooms, so no honest
 // caller can need more leases than this; the cap only ever rejects abuse.
 const MAX_SESSIONS = MAX_ROOM_TORRENTS * MAX_SEATS;
+// A torrent past this is an archive, not a movie: hashing it costs minutes here and freezes every viewer's
+// tab for seconds. Mirrored by the browser's own check in hooks/use-torrent.ts.
+const MAX_TORRENT_FILES = 20000;
 // The dev server builds one helper per loopback origin; they share a cache root.
 let swept = false;
 const blocked = new BlockList();
@@ -351,6 +354,15 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
         }
       });
       torrent.on('error', error => fail(error?.code ? `The helper could not write its cache (${error.code}).` : 'The helper could not load this torrent. Check that it has online seeders.'));
+      torrent.once('metadata', () => {
+        if (entry.disposed) return;
+        if (torrent.files.length > MAX_TORRENT_FILES) { fail(`This torrent has ${torrent.files.length} files; CouchSwarm handles up to ${MAX_TORRENT_FILES}. Choose another torrent.`); return; }
+        // Hashing what the torrent already has on disk can outlast the discovery budget, and reporting that as
+        // seeders that never arrived sends the room after a torrent that was in fact loading. It gets its own.
+        clearTimeout(entry.timeout);
+        entry.timeout = setTimeout(() => fail('Checking this torrent’s files took too long. Choose another torrent.'), 600000);
+        entry.timeout.unref();
+      });
       entry.timeout = setTimeout(() => fail('No torrent metadata arrived after 90 seconds. This torrent may have no reachable seeders.'), 90000);
       entry.timeout.unref();
     } catch (error) {

@@ -30,6 +30,10 @@ function readFile(file: TorrentFile, hold: (stream: TorrentFileStream) => void) 
   });
 }
 
+// A torrent past this is an archive, not a movie: verifying it takes tens of seconds and the file picker it
+// lists is unusable. Mirrored by MAX_TORRENT_FILES in helper/torrent-helper.mjs.
+const MAX_TORRENT_FILES = 20000;
+
 // Adding a torrent against a kept store re-hashes every saved piece before the movie can start again, which
 // holds the whole room in buffering. Only one movie's store survives an add, so one remembered bitfield covers
 // every restart this tab can make; a reload starts without one and verifies as before.
@@ -352,7 +356,12 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         torrent.on('error', error => { torrentFailed = true; fail(/quota|storage/i.test(String(error))
           ? 'Your browser ran out of storage for this movie. Free up disk space or use another device.'
           : 'Could not load this torrent. Check the link; .torrent URLs must allow browser access (CORS).'); });
-        torrent.on('metadata', () => { gotMetadata = true; });
+        torrent.on('metadata', () => {
+          gotMetadata = true;
+          // Verifying this many pieces takes tens of seconds and the picker below would list every file.
+          if (torrent!.files.length > MAX_TORRENT_FILES)
+            fail(`This torrent has ${torrent!.files.length} files; CouchSwarm handles up to ${MAX_TORRENT_FILES}. Ask the host to choose another torrent.`);
+        });
         peerTimer = setTimeout(() => {
           if (disposed) return;
           const file = fileRef.current;
