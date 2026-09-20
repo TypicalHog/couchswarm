@@ -166,14 +166,17 @@ export function torrentPathIssue(torrent, root = '') {
     // fs-chunk-store strips these characters from the file name, so 'nul?.mkv' reaches the disk as
     // 'nul.mkv': every check below reads the name that is stored, not the one the torrent declares.
     const name = parts[parts.length - 1].replace(/[<>:"/\\|?*\p{Cc}]/gu, '');
-    if (!name) return 'This torrent has a folder name Windows cannot create. Choose another torrent.';
+    // Every folder part was judged by the loop above, so the name is all that is left to judge here, and a
+    // refusal that names a file rather than a folder is the one the host can act on.
+    if (!name) return 'This torrent has a file name Windows cannot create. Choose another torrent.';
     const stored = [...parts.slice(0, -1), name];
     // Win32 reroutes NUL.mkv as well as NUL, and folds away a trailing dot or space, so Node writes an
     // entry through \\?\ that nothing else on the machine can open, list or delete.
-    if (stored.some(part => deviceName(part) || /[. ]$/.test(part))) return 'This torrent has a folder name Windows cannot create. Choose another torrent.';
+    if (deviceName(name) || /[. ]$/.test(name)) return 'This torrent has a file name Windows cannot create. Choose another torrent.';
     // fsutil and every Win32 tool still stop at MAX_PATH, so a deep torrent in a deep folder is not writable sparse.
     if (root && path.join(root, ...stored).length > 250) return 'This torrent stores its files too deep for your download folder. Choose another torrent or a shorter folder.';
-    if (torrent.files.length > 1 && (/[#?%\p{Cc}]/u.test(file.path) || file.path.endsWith(' ')))
+    // A trailing space is not tested here: the name check above already refused every path that ends in one.
+    if (torrent.files.length > 1 && /[#?%\p{Cc}]/u.test(file.path))
       return 'This multi-file torrent has a filename WebTorrent cannot request as a web seed path. Choose another torrent.';
     // Folded a code point at a time: lowercasing the whole string applies Unicode's word-final rule, so a Σ before
     // '/' or a space becomes ς while the same word spelled with σ does not, and NTFS stores the two as one file.
