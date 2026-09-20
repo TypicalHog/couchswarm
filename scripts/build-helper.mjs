@@ -61,6 +61,9 @@ async function copyPackage(name, parent, optional = false) {
     recursive: true, filter: file => {
       const parts = path.relative(directory, file).split(path.sep);
       if (parts.includes('node_modules')) return false;
+      // Dependencies check in editor and tool folders — .idea, .history — that the helper never reads; only the
+      // parent parts are tested, so a package's own dotfiles still ship.
+      if (parts.slice(0, -1).some(part => part.startsWith('.'))) return false;
       if (parts.some(part => ['test', 'tests', '__tests__', 'example', 'examples', 'docs', 'coverage', '.github'].includes(part))) return false;
       const index = parts.indexOf('prebuilds');
       if (index >= 0 && parts.length > index + 1 && parts[index + 1] !== 'win32-x64') return false;
