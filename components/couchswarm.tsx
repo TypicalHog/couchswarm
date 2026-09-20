@@ -131,7 +131,15 @@ export default function CouchSwarm() {
   }, [feedback]);
   useEffect(() => { if (seekLost) { clearTimeout(seekTimer.current); nextSeek.current = null; setSeek(null); } }, [seekLost]);
   // The rejoin dialog portals to the body, outside the fullscreen player card, so it cannot paint until we leave.
-  useEffect(() => { if (swarm.invitation && document.fullscreenElement) void document.exitFullscreen().catch(() => {}); }, [swarm.invitation]);
+  // iPhone has no Element.requestFullscreen, so fullscreen() hands the movie to the native player instead, and
+  // document.fullscreenElement never sees that presentation: ask the element itself to come back down as well,
+  // or a guest whose seat was taken loses the picture with the dialog explaining it stuck behind the player.
+  useEffect(() => {
+    if (!swarm.invitation) return;
+    const video = videoRef.current as (HTMLVideoElement & { webkitDisplayingFullscreen?: boolean; webkitExitFullscreen?: () => void }) | null;
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+    else if (video?.webkitDisplayingFullscreen) video.webkitExitFullscreen?.();
+  }, [swarm.invitation]);
   useEffect(() => { const on = () => setIsFullscreen(!!document.fullscreenElement); document.addEventListener('fullscreenchange', on); return () => { document.removeEventListener('fullscreenchange', on); clearTimeout(hideTimer.current); }; }, []);
   // Space is the usual play key, but it also types, presses buttons and nudges sliders, so it reaches the
   // room only from an idle page. Re-bound each render so it always closes over the current room state.
