@@ -177,7 +177,14 @@ class Check : CheckBox {
 }
 
 class Mark : Control {
-    public Mark() { SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true); }
+    public Mark() {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        // A logo, not an input: keep it out of the tab cycle, where it was a stop that showed nothing and did nothing.
+        SetStyle(ControlStyles.Selectable, false);
+        TabStop = false;
+        AccessibleRole = AccessibleRole.Graphic;
+        AccessibleName = "CouchSwarm";
+    }
     protected override void OnPaint(PaintEventArgs e) {
         e.Graphics.Clear(Parent.BackColor);
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
