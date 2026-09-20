@@ -26,6 +26,18 @@
       "find": "void ensureSegmentTask(nextIndex).catch((err) => {\n                emitSegmentState(nextIndex, 'error', { message: String(err) });",
       "replace": "void ensureSegmentTask(nextIndex).catch((err) => {\n                if (err instanceof DOMException && err.name === 'AbortError') return;\n                emitSegmentState(nextIndex, 'error', { message: String(err) });",
       "count": 1
+    },
+    {
+      "find": "demux = await demuxFn();",
+      "replace": "demux = await demuxFn();\n    if (demux.audioSink && !demux.audioCodec) throw new Error('unsupported-audio');",
+      "count": 1
+    }
+  ],
+  "pipeline/demux.js": [
+    {
+      "find": "audioTrack = await input.getPrimaryAudioTrack();",
+      "replace": "audioTrack = (await input.getAudioTracks()).find(track => track.codec) ?? await input.getPrimaryAudioTrack();",
+      "count": 1
     }
   ],
   "pipeline/segment-plan.js": [

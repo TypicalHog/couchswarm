@@ -148,6 +148,63 @@ test('a movie whose video starts seconds in still fills its first segment', { ti
   } finally { demux.dispose(); }
 });
 
+test('an MKV whose first audio track is DTS plays on the track behind it', { timeout: 60000 }, async () => {
+  // mediabunny does not map A_DTS, A_TRUEHD or A_MPEG/L2, so the primary audio track of such a release has
+  // no codec: playsvideo muxes its packets with no decoder config and the whole room gets a raw TypeError.
+  // A_DTS is the same length as A_AAC, so rewriting the first CodecID in place needs no size fix-ups.
+  const clip = await demuxFile(fileURLToPath(new URL('./fixtures/h264-aac.mp4', import.meta.url)));
+  const videoPackets = await collectPacketsInRange(clip.videoSink, 0, 2, { startFromKeyframe: true });
+  const audioPackets = await collectPacketsInRange(clip.audioSink, 0, 2);
+  const target = new BufferTarget();
+  const output = new Output({ format: new MkvOutputFormat(), target });
+  const video = new EncodedVideoPacketSource(clip.videoCodec);
+  const first = new EncodedAudioPacketSource(clip.audioCodec);
+  const second = new EncodedAudioPacketSource(clip.audioCodec);
+  output.addVideoTrack(video);
+  output.addAudioTrack(first);
+  output.addAudioTrack(second);
+  await output.start();
+  for (const packet of videoPackets) await video.add(packet, { decoderConfig: clip.videoDecoderConfig });
+  for (const packet of audioPackets) {
+    await first.add(packet, { decoderConfig: clip.audioDecoderConfig });
+    await second.add(packet.clone({}), { decoderConfig: clip.audioDecoderConfig });
+  }
+  video.close(); first.close(); second.close();
+  await output.finalize();
+  clip.dispose();
+  const movie = Buffer.from(target.buffer);
+  const codecId = movie.indexOf('A_AAC', 0, 'latin1');
+  assert.ok(codecId > 0, 'the fixture must carry an A_AAC CodecID to rewrite');
+  movie.write('A_DTS', codecId, 'latin1');
+
+  const unpatched = await demuxBlob(new Blob([movie]));
+  try { assert.equal(unpatched.audioCodec, null, 'the unpatched demuxer must still pick the unidentified track'); }
+  finally { unpatched.dispose(); }
+
+  // The webpack loader applies scripts/playsvideo-patches.json to the module the browser runs; run the
+  // patched source here so a playsvideo upgrade that moved the line is caught outside a production build.
+  const patches = JSON.parse(await readFile(new URL('../scripts/playsvideo-patches.json', import.meta.url), 'utf8'));
+  let code = await readFile(new URL('./pipeline/demux.js', playsvideo), 'utf8');
+  for (const { find, replace, count } of patches['pipeline/demux.js']) {
+    assert.equal(code.split(find).length - 1, count, 'the patched demux source moved');
+    code = code.replaceAll(find, replace);
+  }
+  // A data: module resolves neither bare nor relative specifiers, so point both at the files it would reach.
+  code = code.replace("from 'mediabunny'", `from '${import.meta.resolve('mediabunny')}'`)
+    .replace("from './subtitle.js'", `from '${new URL('./pipeline/subtitle.js', playsvideo).href}'`);
+  const { demuxBlob: demuxPatched } = await import(`data:text/javascript,${encodeURIComponent(code)}`);
+  const patched = await demuxPatched(new Blob([movie]));
+  try {
+    assert.equal(patched.audioCodec, 'aac');
+    assert.ok(patched.audioDecoderConfig, 'the chosen track must carry a decoder config to mux with');
+  } finally { patched.dispose(); }
+
+  // With nothing else to fall back to, the worker refuses by name rather than throwing out of the muxer.
+  const workerCode = await readFile(new URL('./worker.js', playsvideo), 'utf8');
+  const refusal = patches['worker.js'].find(patch => patch.replace.includes('unsupported-audio'));
+  assert.equal(workerCode.split(refusal.find).length - 1, refusal.count, 'the patched worker source moved');
+});
+
 test('the bundled audio WASM actually decodes MP3 and produces AAC', { timeout: 30000 }, async () => {
   const wasmBinary = await readFile(new URL('./vendor/ffmpeg-core-audio/ffmpeg-core.wasm', playsvideo));
   // Supply the worker's location to the browser-targeted Emscripten factory;

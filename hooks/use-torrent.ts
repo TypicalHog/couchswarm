@@ -375,6 +375,12 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
                 if (/worker crashed|CompileError|dynamically imported module/i.test(detail?.message || '')) {
                   fail('The MKV player files could not be loaded — this site may have been updated. Reload this page and rejoin.'); return;
                 }
+                // The demuxer cannot identify DTS, TrueHD or MP2, and muxing a track with no decoder config
+                // throws a raw TypeError at everyone in the room. The engine names the case instead; the
+                // browser cannot open the container either, so there is nothing to fall back to.
+                if (/unsupported-audio/.test(detail?.message || '')) {
+                  fail('This movie’s audio (DTS, TrueHD or MP2) cannot be converted in the browser. Ask the host for a version with AAC, AC-3, E-AC-3, MP3, FLAC, or Opus audio.'); return;
+                }
                 // Loading by URL leaves the engine only its remux path to evaluate, so it refuses codecs this
                 // browser plays itself — VP8 video, or LPCM and Vorbis audio it will not convert. Hand the file
                 // to the element rather than refuse the movie for the whole room. Set before the teardown, so
