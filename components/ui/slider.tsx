@@ -17,6 +17,8 @@ function Slider({
   const thumbCount = Array.isArray(source) ? source.length : 1;
 
   return (
+    // base-ui gives Root role="group", so a name here is read out again just before the thumb announces the same
+    // one. Only the focusable range input below is named.
     <SliderPrimitive.Root
       className={cn('data-horizontal:w-full data-vertical:h-full', className)}
       data-slot="slider"
@@ -25,7 +27,6 @@ function Slider({
       min={min}
       max={max}
       thumbAlignment="edge"
-      aria-label={ariaLabel}
       {...props}
     >
       <SliderPrimitive.Control className="data-vertical:min-h-40 relative flex w-full touch-none items-center select-none data-disabled:opacity-50 data-vertical:h-full data-vertical:w-auto data-vertical:flex-col">
