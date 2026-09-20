@@ -274,6 +274,10 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         }
         torrent = client.add(added, { strategy: 'sequential', deselect: true, destroyStoreOnDestroy: false, storeCacheSlots: 8, bitfield: verified?.source === source ? verified.bitfield : undefined, ...carried }, value => {
           if (disposed) return;
+          // WebTorrent names this browser's store directory after the torrent, and a name holding a slash is
+          // one the file system refuses. Nothing notices until the first piece is written, which is long after
+          // this movie looked like it was loading, so refuse the name here instead.
+          if (/[\\/]/.test(value.name)) { fail('This torrent’s name contains a slash or backslash, which browsers cannot store. Ask the host for another torrent.'); return; }
           // The store survives teardown so a reconnect resumes; nothing else holds one while this tab
           // owns the media lock, so reclaim every other movie here.
           void (async () => {
@@ -353,8 +357,12 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           const add = () => { if (!disposed) torrent!.addPeer(remote.peer); };
           if (torrent.infoHash) add(); else torrent.once('infoHash', add);
         }
-        torrent.on('error', error => { torrentFailed = true; fail(/quota|storage/i.test(String(error))
+        // A failure before metadata is a torrent that could not be fetched; after it, the link was fine and
+        // the bytes could not be stored, so telling the room to check the link sends it after another torrent
+        // the helper is already serving.
+        torrent.on('error', error => { torrentFailed = true; fail(/quota|storage/i.test(String(error)) || (error as { name?: string }).name === 'QuotaExceededError'
           ? 'Your browser ran out of storage for this movie. Free up disk space or use another device.'
+          : gotMetadata ? 'This browser could not save this movie. Reconnect to try again, or ask the host for another torrent.'
           : 'Could not load this torrent. Check the link; .torrent URLs must allow browser access (CORS).'); });
         torrent.on('metadata', () => {
           gotMetadata = true;
