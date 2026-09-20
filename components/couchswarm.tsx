@@ -96,8 +96,10 @@ export default function CouchSwarm() {
     : isFullscreen && hasSource && !isPlaying ? room?.reason || '' : '';
   // canPlay already requires the host, so both the button and the space bar reach the room only for them.
   const togglePlayback = () => {
-    if (!canPlay || Date.now() - lastToggle.current < 400) return;
-    lastToggle.current = Date.now();
+    // Wall time can step backwards - an NTP correction after a resume, say - and every toggle from then until the
+    // clock catches up reads as one that has just happened. performance.now() only ever moves forward.
+    if (!canPlay || performance.now() - lastToggle.current < 400) return;
+    lastToggle.current = performance.now();
     void swarm.control(isPlaying ? 'pause' : 'play');
   };
 
