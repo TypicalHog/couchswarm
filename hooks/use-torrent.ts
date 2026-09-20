@@ -501,7 +501,12 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     void start();
     const tick = setInterval(() => {
       if (!torrent || disposed) return;
-      setStats(s => ({ ...s, speed: torrent!.downloadSpeed, peers: torrent!.numPeers, progress: fileRef.current?.progress ?? 0 }));
+      // A paused room ticks 0 B/s and 0 peers for as long as it sits there, and a new object every second
+      // commits the whole page — player, members, dialogs and all — over numbers that have not moved.
+      setStats(s => {
+        const speed = torrent!.downloadSpeed, peers = torrent!.numPeers, progress = fileRef.current?.progress ?? 0;
+        return s.speed === speed && s.peers === peers && s.progress === progress ? s : { ...s, speed, peers, progress };
+      });
       if (video.error) return;
       if (fileRef.current && fileRef.current.downloaded > 0 && (!isMkv(fileRef.current.name) || mkvNative || mkvPlayer?.phase === 'ready')) setStatus('Buffering your seat…');
     }, 1000);
