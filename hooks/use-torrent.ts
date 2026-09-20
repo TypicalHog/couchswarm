@@ -65,6 +65,8 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     let client: WebTorrent | undefined;
     let torrent: Torrent | undefined;
     let mkvPlayer: PlaysVideoEngine | undefined;
+    // Set when the MKV engine gave up and the file was handed to the video element instead.
+    let mkvNative = false;
     let torrentFailed = false;
     let gotMetadata = false;
     let peerTimer: ReturnType<typeof setTimeout> | undefined;
@@ -227,6 +229,15 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
             fail('This browser cannot play MKV video. Ask the host for an MP4 or WebM version, or watch in Chrome or Edge.'); return;
           }
           file.select();
+          const playNatively = () => {
+            // A codec the browser cannot decode is dropped at demux and the audio plays on: no media error,
+            // just a picture that never arrives. Metadata is the first moment a missing track shows.
+            video.addEventListener('loadedmetadata', () => {
+              if (!disposed && !video.videoWidth) fail('Your browser cannot decode this video’s picture. Ask the host for a version with H.264 video, or watch on a device that supports this codec.');
+            }, { once: true, signal: abort.signal });
+            file.streamTo(video);
+            setLoadedVersion(mediaVersion);
+          };
           if (isMkv(file.name)) {
             setStatus('Preparing MKV playback…');
             void import('playsvideo').then(({ PlaysVideoEngine }) => {
@@ -236,25 +247,26 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
                 if (!disposed) { setStatus('Buffering your seat…'); setLoadedVersion(mediaVersion); }
               });
               mkvPlayer.addEventListener('error', event => {
-                if (torrentFailed) return;
+                if (torrentFailed || disposed || mkvNative) return;
                 const detail = (event as CustomEvent<{ message?: string }>).detail;
-                fail(/worker crashed|CompileError|dynamically imported module/i.test(detail?.message || '')
-                  ? 'The MKV player files could not be loaded — this site may have been updated. Reload this page and rejoin.'
-                  : `MKV playback could not start. ${detail?.message || 'This device may not support the video codec.'}`);
+                if (/worker crashed|CompileError|dynamically imported module/i.test(detail?.message || '')) {
+                  fail('The MKV player files could not be loaded — this site may have been updated. Reload this page and rejoin.'); return;
+                }
+                // Loading by URL leaves the engine only its remux path to evaluate, so it refuses codecs this
+                // browser plays itself — VP8 video, or LPCM and Vorbis audio it will not convert. Hand the file
+                // to the element rather than refuse the movie for the whole room. Set before the teardown, so
+                // an error the engine raises on its way out is no longer ours.
+                mkvNative = true;
+                mkvPlayer?.destroy();
+                mkvPlayer = undefined;
+                setStatus('Buffering your seat…');
+                playNatively();
               });
               // Range requests stay local to WebTorrent's service worker. Video
               // is remuxed and audio converted on demand in this participant's browser.
               mkvPlayer.loadUrl(new URL(file.streamURL, location.href).href);
             }).catch(() => fail('The MKV player could not load. Reload the room and try again.'));
-          } else {
-            // A codec the browser cannot decode is dropped at demux and the audio plays on: no media error,
-            // just a picture that never arrives. Metadata is the first moment a missing track shows.
-            video.addEventListener('loadedmetadata', () => {
-              if (!disposed && !video.videoWidth) fail('Your browser cannot decode this video’s picture. Ask the host for a version with H.264 video, or watch on a device that supports this codec.');
-            }, { once: true, signal: abort.signal });
-            file.streamTo(video);
-            setLoadedVersion(mediaVersion);
-          }
+          } else playNatively();
         });
         if (remote) {
           torrent.on('wire', value => {
@@ -286,7 +298,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
             return;
           }
           // An MKV cannot start until its index, which sits at the end of the file, has arrived.
-          if (isMkv(file.name) && mkvPlayer?.phase !== 'ready') setStatus('Still preparing this MKV. Playback cannot start until the end of the file arrives from the swarm.');
+          if (isMkv(file.name) && !mkvNative && mkvPlayer?.phase !== 'ready') setStatus('Still preparing this MKV. Playback cannot start until the end of the file arrives from the swarm.');
         }, 25_000);
       } catch (err) { fail(err instanceof Error ? err.message : 'Unable to start torrent streaming.'); }
     }
@@ -295,12 +307,13 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
       if (!torrent || disposed) return;
       setStats(s => ({ ...s, speed: torrent!.downloadSpeed, peers: torrent!.numPeers, progress: fileRef.current?.progress ?? 0 }));
       if (video.error) return;
-      if (fileRef.current && fileRef.current.downloaded > 0 && (!isMkv(fileRef.current.name) || mkvPlayer?.phase === 'ready')) setStatus('Buffering your seat…');
+      if (fileRef.current && fileRef.current.downloaded > 0 && (!isMkv(fileRef.current.name) || mkvNative || mkvPlayer?.phase === 'ready')) setStatus('Buffering your seat…');
     }, 1000);
-    // The MKV engine owns media errors while it chooses or recovers its playback path.
+    // The MKV engine owns media errors while it chooses or recovers its playback path; once it has handed the
+    // file to the element, the element's errors are read like any other video's.
     const mediaError = () => {
       if (torrentFailed) return;
-      if (fileRef.current && isMkv(fileRef.current.name)) {
+      if (fileRef.current && isMkv(fileRef.current.name) && !mkvNative) {
         if (mkvPlayer?.phase !== 'ready' || !video.error) return;
         fail(`Your browser stopped decoding this video (error ${video.error.code}). Reconnect to the movie or try a version with H.264 video.`);
         return;
