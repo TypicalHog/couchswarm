@@ -316,7 +316,12 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
             if (helperFailed) fail(`${own ? 'Your' : 'The host’s'} helper is available again. Reconnect to the movie to use it.`);
             else setAttempt(value => value + 1);
           };
+          // A hidden tab asks a third as often, which is worth having on a phone in a pocket; what is not
+          // worth having is the guest inheriting that wait when they come back to the tab.
+          let pending = false;
+          const arm = () => { pending = true; helperTimer = setTimeout(() => void watch(), document.hidden ? 30000 : 15000); };
           const watch = async () => {
+            pending = false;
             // The helper dialog polls this same status on a timer of its own, so stop as soon as the upgrade
             // can no longer fire: once this stream has bytes there is nothing left for a second poller to do.
             if (fileRef.current?.downloaded && !lostHelper.current) return;
@@ -335,9 +340,16 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
               }
             }
             catch { /* The room connection already reports connectivity failures. */ }
-            if (!disposed) helperTimer = setTimeout(() => void watch(), document.hidden ? 30000 : 15000);
+            if (!disposed) arm();
           };
-          helperTimer = setTimeout(() => void watch(), document.hidden ? 30000 : 15000);
+          // Only a poll that is still pending is brought forward: every way out of watch() above leaves
+          // nothing armed, so a loop that stopped on purpose is not started again by a returning guest.
+          document.addEventListener('visibilitychange', () => {
+            if (document.hidden || !pending) return;
+            clearTimeout(helperTimer);
+            void watch();
+          }, { signal: abort.signal });
+          arm();
         }
         // A magnet's xs and as hints are fetched the moment the torrent is added — no metadata, no peers
         // needed — so a room's magnet could hand the host's chosen server every viewer's IP and point their
