@@ -60,7 +60,8 @@ h1 { margin:8px 0 0; font-size:clamp(28px,3vw,36px); letter-spacing:-1.4px; font
 .icon-button { display:grid; place-items:center; background:transparent; padding:6px; border:0; color:#a4b09d; border-radius:5px; position:relative; } .icon-button::after { content:""; position:absolute; inset:-7px; } .icon-button:hover:not(:disabled) { color:var(--primary); background:#c2f28a0a; }
 .play-button { display:inline-flex; gap:8px; align-items:center; background:var(--primary); color:#1a2b10; border:0; border-radius:6px; padding:10px 15px; font-size:14px; font-weight:650; min-width:134px; justify-content:center; }
 .control-hint { display:flex; align-items:center; gap:7px; color:#99a891; font-size:12px; }
-.room-info { display:flex; align-items:center; gap:14px; margin-top:22px; padding-bottom:22px; border-bottom:1px solid var(--border); }
+.room-info { display:flex; flex-wrap:wrap; align-items:center; gap:14px; margin-top:22px; padding-bottom:22px; border-bottom:1px solid var(--border); }
+.piece-bar { flex:1 0 100%; display:block; width:100%; height:8px; border-radius:4px; background:#2c352b; box-shadow:inset 0 0 0 1px #ffffff0a; }
 .file-icon { display:grid; place-items:center; width:42px; height:46px; background:#20271f; border:1px solid #323d2d; border-radius:8px; color:#b4c5a5; flex-shrink:0; }
 .file-info { min-width:0; flex:1; } .file-info h2 { font-size:16px; font-weight:500; margin:0 0 5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .file-info p { font-size:12px; color:#9da995; margin:0; }
 .readiness { margin-top:22px; border:1px solid #35422d; background:#1b2418; border-radius:10px; padding:17px 20px; display:flex; align-items:center; gap:13px; }

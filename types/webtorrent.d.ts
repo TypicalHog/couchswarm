@@ -22,6 +22,8 @@ declare module 'webtorrent/dist/webtorrent.min.js' {
     // Present once metadata has arrived: one bit per piece, marking what this client verified in the store.
     bitfield?: { buffer: Uint8Array; get(index: number): boolean };
     pieceLength: number; destroyed: boolean;
+    // One entry per piece, which is null once that piece has verified and carries the bytes still to come until then.
+    pieces: ({ length: number; missing: number } | null)[];
     // Piece ranges, both ends included. Selections that touch are merged into one that starts at the lower end.
     select(start: number, end: number, priority: number): void;
     deselect(start: number, end: number): void;

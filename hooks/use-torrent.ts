@@ -5,6 +5,7 @@ import type { Torrent, TorrentFile, TorrentFileStream } from 'webtorrent/dist/we
 import type { PlaysVideoEngine } from 'playsvideo';
 import { isMkv, videoFiles } from '@/lib/video-files';
 import { followReads } from '@/lib/follow-reads';
+import { pieceStates } from '@/lib/piece-state';
 import { decodeSubtitle, subtitleFiles, toWebVTT } from '@/lib/subtitles';
 import { connectHelper } from '@/lib/torrent-helper';
 import { connectRemoteHelper, helperStatus } from '@/lib/remote-helper';
@@ -105,6 +106,8 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
   const [helperPending, setHelperPending] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const fileRef = useRef<TorrentFile | null>(null);
+  // The piece bar reads this on a timer of its own: a state per piece is far too much to hand React every second.
+  const piecesRef = useRef<{ torrent: Torrent; file: TorrentFile } | null>(null);
   const retriedHelper = useRef(0);
   const retriedUpgrade = useRef(false);
   // A restart that lost its helper may adopt the returning one even though the kept store already holds bytes.
@@ -140,6 +143,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     // A subtitle chosen for the last movie would index a file list this one does not have.
     if (movieRef.current !== movie) { movieRef.current = movie; retriedHelper.current = 0; retriedUpgrade.current = false; lostHelper.current = false; setSubtitle(null); }
     fileRef.current = null;
+    piecesRef.current = null;
     subtitleRef.current = [];
     seedUrlRef.current = '';
     setLoadedVersion(-1);
@@ -423,6 +427,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           if (!videos.length) { fail('No video found. Choose a torrent containing an MKV, MP4, M4V, MOV, or WebM video.'); return; }
           if (!file) { fail(`The host chose video #${fileIndex + 1}, but this torrent has ${videos.length}. Ask the host to pick again.`); return; }
           fileRef.current = file;
+          piecesRef.current = { torrent: value, file };
           const follow = followReads(value, file);
           // WebTorrent treats an end of 0 as absent and streams the whole file against a Content-Length of 1.
           file.on('iterator', ({ iterator, req }, replace) => {
@@ -647,6 +652,11 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     };
   }, [subtitle, picked, videoRef, listed]);
 
+  const readPieces = useCallback(() => {
+    const held = piecesRef.current;
+    return held ? pieceStates(held.torrent, held.file) : null;
+  }, []);
+
   const reconnect = useCallback(() => { retriedHelper.current = 0; retriedUpgrade.current = false; setAttempt(value => value + 1); }, []);
   // Unpairing only changes what this tab streams from if it was streaming from that helper. Rebuilding the
   // pipeline for a helper that had already stopped empties the video for nothing, and the ready:false the next
@@ -670,5 +680,5 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     return true;
   }, [chooseSubtitle]);
 
-  return { status, error, files, stats, loadedVersion, helper, helperPending, reconnect, reconnectIfOwnHelper, subtitles, subtitle, setSubtitle: chooseSubtitle, uploadSubtitle, subtitleError, subtitleBusy };
+  return { status, error, files, stats, loadedVersion, helper, helperPending, reconnect, reconnectIfOwnHelper, readPieces, subtitles, subtitle, setSubtitle: chooseSubtitle, uploadSubtitle, subtitleError, subtitleBusy };
 }
