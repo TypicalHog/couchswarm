@@ -16,6 +16,16 @@
       "find": "console.log(`[worker] ${msg}`);",
       "replace": "if (/^(error|WARN)/.test(msg)) console.log(`[worker] ${msg}`);",
       "count": 1
+    },
+    {
+      "find": "const result = await processSegmentWithAbort(makeProcessorConfig(), index);",
+      "replace": "const result = await processSegmentWithAbort(makeProcessorConfig(), index, segmentAbortControllers.get(index)?.signal);",
+      "count": 1
+    },
+    {
+      "find": "void ensureSegmentTask(nextIndex).catch((err) => {\n                emitSegmentState(nextIndex, 'error', { message: String(err) });",
+      "replace": "void ensureSegmentTask(nextIndex).catch((err) => {\n                if (err instanceof DOMException && err.name === 'AbortError') return;\n                emitSegmentState(nextIndex, 'error', { message: String(err) });",
+      "count": 1
     }
   ],
   "adapters/wasm-ffmpeg.js": [
