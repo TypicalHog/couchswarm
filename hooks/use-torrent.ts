@@ -9,8 +9,9 @@ import { connectHelper } from '@/lib/torrent-helper';
 import { connectRemoteHelper, helperStatus } from '@/lib/remote-helper';
 import type { Session } from '@/lib/sync';
 
-// A read parks on a piece that a destroyed torrent will never deliver, and only destroying the stream ends
-// that wait, so the caller is handed the stream to abandon rather than a promise that could outlive the room.
+// A read parks on a piece that a destroyed torrent will never deliver, and destroying the stream only releases
+// the pieces it selected — streamx holds back 'close' while the read is parked — so the caller is handed the
+// stream to abandon and has to settle its own wait rather than await a promise that could outlive the room.
 function readFile(file: TorrentFile, hold: (stream: TorrentFileStream) => void) {
   return new Promise<Uint8Array>((resolve, reject) => {
     const chunks: Uint8Array[] = [];
@@ -24,7 +25,7 @@ function readFile(file: TorrentFile, hold: (stream: TorrentFileStream) => void) 
         resolve(bytes);
       })
       .on('error', reject)
-      // Reached when the stream is abandoned; after a resolve above this settles nothing.
+      // Reached once an abandoned stream is free to close; after a resolve above this settles nothing.
       .on('close', () => reject(new Error('This subtitle could not be read from the torrent.'))));
   });
 }
@@ -39,8 +40,10 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
   const [subtitleError, setSubtitleError] = useState('');
   const [subtitleBusy, setSubtitleBusy] = useState(false);
   const subtitleRef = useRef<TorrentFile[]>([]);
-  // A pick made while the torrent effect is restarting waits for the new client's list instead of failing.
-  const waitingForList = useRef(false);
+  // A pick that has not attached a track yet is re-run once a restarted torrent lists its files: the list it
+  // indexes is emptied on every torrent effect run, and a read parked on a piece the old client will never
+  // deliver cannot settle itself. A pick that already shows is left alone.
+  const pendingPick = useRef(false);
   const [listed, setListed] = useState(0);
   const [stats, setStats] = useState({ speed: 0, peers: 0, progress: 0, filename: '', size: 0 });
   const [loadedVersion, setLoadedVersion] = useState(-1);
@@ -208,7 +211,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           // Naming the subtitles costs nothing; their bytes are only read once somebody picks one.
           subtitleRef.current = subtitleFiles(value.files);
           setSubtitles(subtitleRef.current.map(file => ({ name: file.name, path: file.path })));
-          if (waitingForList.current) setListed(value => value + 1);
+          if (pendingPick.current) setListed(value => value + 1);
           const file = videos[fileIndex];
           if (!videos.length) { fail('No video found. Choose a torrent containing an MKV, MP4, WebM, M4V, or OGV video.'); return; }
           if (!file) { fail(`The host chose video #${fileIndex + 1}, but this torrent has ${videos.length}. Ask the host to pick again.`); return; }
@@ -334,21 +337,24 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     let track: HTMLTrackElement | undefined;
     let stream: TorrentFileStream | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let expire: ((error: Error) => void) | undefined;
     void (async () => {
       setSubtitleError('');
       // Set on the way in, so abandoning a slow read for another subtitle or for Off cannot latch it true.
       setSubtitleBusy(subtitle !== null);
+      pendingPick.current = subtitle !== null;
       if (subtitle === null) return;
-      // A sidecar nobody is seeding never arrives, and the swarm cannot say how long it would take.
-      timer = setTimeout(() => { expired = true; stream?.destroy(); }, 30_000);
+      // A sidecar nobody is seeding never arrives, and the swarm cannot say how long it would take. Destroying
+      // the stream releases its pieces but leaves the read parked, so the budget rejects the wait itself.
+      timer = setTimeout(() => { expired = true; stream?.destroy(); expire?.(new Error('expired')); }, 30_000);
       try {
         const file = typeof subtitle === 'number' ? subtitleRef.current[subtitle] : subtitle;
         // A restarting torrent empties the list this index points into, and the entry is still there once the
         // new client lists its files: keep the pick on 'Loading…' rather than failing it.
-        waitingForList.current = !file && !subtitleRef.current.length;
-        if (waitingForList.current) return;
+        if (!file && !subtitleRef.current.length) return;
         if (!file) throw new Error('That subtitle is no longer part of this torrent.');
-        const bytes = file instanceof File ? await file.arrayBuffer() : await readFile(file, value => { stream = value; });
+        const bytes = file instanceof File ? await file.arrayBuffer()
+          : await Promise.race([readFile(file, value => { stream = value; }), new Promise<never>((_, reject) => { expire = reject; })]);
         if (disposed) return;
         const vtt = toWebVTT(decodeSubtitle(bytes), file.name);
         // A file the picker could not parse would otherwise attach an empty track and show nothing at all.
@@ -363,6 +369,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         const show = () => { if (track?.track) track.track.mode = 'showing'; };
         track.addEventListener('load', show, { once: true });
         queueMicrotask(show);
+        pendingPick.current = false;
         setSubtitleBusy(false);
       } catch (err) {
         if (disposed) return;

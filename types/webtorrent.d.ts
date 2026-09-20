@@ -1,6 +1,7 @@
 declare module 'webtorrent/dist/webtorrent.min.js' {
   // Reading a file selects only the pieces the read covers and releases them when the stream ends, so a
-  // destroyed stream is the only way to abandon a read: the promise forms never settle once the torrent is gone.
+  // destroyed stream is the only way to abandon a read: the promise forms never settle once the torrent is
+  // gone. Destroying it releases the pieces but does not end a parked read either — that wait never settles.
   export interface TorrentFileStream {
     on(event: 'data', listener: (chunk: Uint8Array) => void): TorrentFileStream;
     on(event: 'end' | 'close', listener: () => void): TorrentFileStream;
