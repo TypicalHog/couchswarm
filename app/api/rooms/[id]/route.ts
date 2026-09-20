@@ -12,7 +12,7 @@ type StoredRoom = {
   file_index: number; media_version: number; epoch: number; revision: number;
   playing: number; position: number; starts_at: number; duration: number; reason: string; created_at: number;
 };
-type StoredMember = { id: string; name: string; ready: number; buffered: number; epoch: number; last_seen: number };
+type StoredMember = { id: string; name: string; ready: number; armed: number; buffered: number; epoch: number; last_seen: number };
 
 function publicRoom(row: StoredRoom): Room {
   return { id: row.id, hostId: row.host_id, source: row.source, fileIndex: row.file_index,
@@ -39,7 +39,7 @@ async function handler(request: Request, context: { params: Promise<{ id: string
   // all three from a single snapshot in one hop, which is why the body and the hash are taken first.
   const [roomRow, actorRow, hostRow] = await db.batch([
     db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id),
-    db.prepare('SELECT id, ready, buffered, epoch, last_seen, report_sequence FROM members WHERE room_id = ? AND token_hash = ? AND last_seen > 0').bind(id, tokenHash),
+    db.prepare('SELECT id, ready, armed, buffered, epoch, last_seen, report_sequence FROM members WHERE room_id = ? AND token_hash = ? AND last_seen > 0').bind(id, tokenHash),
     // A host who left carries the last_seen = 0 marker, not a timestamp, and the lease below must read them as
     // gone: without that test its arithmetic rewinds the room to its last play or seek.
     db.prepare('SELECT last_seen FROM members WHERE id = (SELECT host_id FROM rooms WHERE id = ?) AND last_seen > 0').bind(id),
@@ -69,7 +69,7 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     const reclaim = typeof body.hostKey === 'string' && body.hostKey.length === 64 && await hash(body.hostKey) === stored.host_key_hash;
     const memberId = reclaim ? stored.host_id : crypto.randomUUID();
     if (reclaim) {
-      await db.prepare('UPDATE members SET token_hash = ?, name = ?, ready = 0, buffered = 0, epoch = -1, last_seen = ?, report_sequence = 0 WHERE id = ?')
+      await db.prepare('UPDATE members SET token_hash = ?, name = ?, ready = 0, armed = 0, buffered = 0, epoch = -1, last_seen = ?, report_sequence = 0 WHERE id = ?')
         .bind(await hash(token), name, now, memberId).run();
     } else {
       const result = await db.prepare('INSERT INTO members (id, room_id, token_hash, name, last_seen, joined_at) SELECT ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ?')
@@ -89,7 +89,7 @@ async function handler(request: Request, context: { params: Promise<{ id: string
   }
   if (!tokenHash) return json({ error: 'Reopen your invite link to join this room.' }, 401);
   // Leaving is final: the last_seen = 0 marker retires the token with the seat, so a copy of it opens nothing here.
-  const actor = actorRow.results[0] as { id: string; ready: number; buffered: number; epoch: number; last_seen: number; report_sequence: number } | undefined;
+  const actor = actorRow.results[0] as { id: string; ready: number; armed: number; buffered: number; epoch: number; last_seen: number; report_sequence: number } | undefined;
   if (!actor) return json({ error: 'Your seat has expired. Join the room again.' }, 401);
 
   // Evaluate the old lease before a returning host can renew it.
@@ -104,9 +104,9 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     }
   }
 
-  const memberQuery = () => db.prepare('SELECT id, name, ready, buffered, epoch, last_seen FROM members WHERE room_id = ? AND last_seen > ? ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, rowid')
+  const memberQuery = () => db.prepare('SELECT id, name, ready, armed, buffered, epoch, last_seen FROM members WHERE room_id = ? AND last_seen > ? ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, rowid')
     .bind(id, Date.now() - PRESENCE_MS, stored!.host_id);
-  const seated = (rows: StoredMember[]): Member[] => rows.map(m => ({ id: m.id, name: m.name, ready: !!m.ready, buffered: m.buffered, epoch: m.epoch, lastSeen: m.last_seen }));
+  const seated = (rows: StoredMember[]): Member[] => rows.map(m => ({ id: m.id, name: m.name, ready: !!m.ready, armed: !!m.armed, buffered: m.buffered, epoch: m.epoch, lastSeen: m.last_seen }));
   const readMembers = async () => seated((await memberQuery().all<StoredMember>()).results);
 
   let invite = '', hostKey = '', roomChanged = false, couch: Member[] | null = null;
@@ -115,12 +115,13 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     const duration = number(body.duration, 0, 604800);
     const epoch = number(body.epoch, -1, 1e9);
     const ready = body.ready === true ? 1 : 0;
+    const armed = body.armed === true ? 1 : 0;
     const buffered = number(body.buffered, 0, 604800);
     // A seat reporting every second all evening is most of what a room costs, so a report that would store the
     // values already on the row is counted and never written: the clock still moves every 3 s against a 12 s
     // presence window, and a buffered second nobody can see is not worth a write. A member the room has moved
     // past, or one whose epoch changed, matches none of this and goes through the statement below.
-    let accepted = actor.ready === ready && actor.epoch === epoch && Math.trunc(actor.buffered) === Math.trunc(buffered)
+    let accepted = actor.ready === ready && actor.armed === armed && actor.epoch === epoch && Math.trunc(actor.buffered) === Math.trunc(buffered)
       && actor.last_seen > now - 3000 && actor.report_sequence < body.sequence;
     if (!accepted) {
       // A lapsed seat comes back as a spectator (never the host, who owns the timeline) and only retakes its seat by
@@ -130,8 +131,8 @@ async function handler(request: Request, context: { params: Promise<{ id: string
       // The couch travels with the report: inside the one write transaction the list already sees the row this
       // statement has just stamped, and the reply at the end needs both anyway.
       const [report, listed] = await db.batch([
-        db.prepare('UPDATE members SET ready = ?, buffered = ?, epoch = CASE WHEN ? OR ((? OR epoch != ?) AND last_seen > ?) THEN ? ELSE ? END, last_seen = ?, report_sequence = ? WHERE id = ? AND (report_sequence < ? OR (last_seen > 0 AND last_seen < ?)) AND (last_seen > ? OR ? = ? OR (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ?)')
-          .bind(ready, buffered, actor.id === stored.host_id ? 1 : 0, ready && epoch === stored.epoch ? 1 : 0, SPECTATOR_EPOCH, now - PRESENCE_MS, epoch, SPECTATOR_EPOCH, now, body.sequence,
+        db.prepare('UPDATE members SET ready = ?, armed = ?, buffered = ?, epoch = CASE WHEN ? OR ((? OR epoch != ?) AND last_seen > ?) THEN ? ELSE ? END, last_seen = ?, report_sequence = ? WHERE id = ? AND (report_sequence < ? OR (last_seen > 0 AND last_seen < ?)) AND (last_seen > ? OR ? = ? OR (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ?)')
+          .bind(ready, armed, buffered, actor.id === stored.host_id ? 1 : 0, ready && epoch === stored.epoch ? 1 : 0, SPECTATOR_EPOCH, now - PRESENCE_MS, epoch, SPECTATOR_EPOCH, now, body.sequence,
             actor.id, body.sequence, now - 2000, now - PRESENCE_MS, actor.id, stored.host_id, id, now - PRESENCE_MS, MAX_SEATS),
         memberQuery(),
       ]);

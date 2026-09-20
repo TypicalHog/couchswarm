@@ -54,7 +54,7 @@ test('buffer readiness measures playable time at the target, not total downloade
 });
 
 test('a stale epoch, absent host, or unready guest closes the shared play gate', () => {
-  const host = { id: 'host', name: 'Host', ready: true, buffered: 8, progress: .1, epoch: 3, lastSeen: 20000 };
+  const host = { id: 'host', name: 'Host', ready: true, armed: true, buffered: 8, progress: .1, epoch: 3, lastSeen: 20000 };
   const guest = { ...host, id: 'guest' };
   assert.equal(allReady([host, guest], room, 20000), true);
   assert.equal(allReady([host, { ...guest, epoch: 2 }], room, 20000), false);

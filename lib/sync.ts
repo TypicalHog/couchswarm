@@ -20,7 +20,10 @@ export type Room = {
   inviteTag?: string;
 };
 export type Member = {
-  id: string; name: string; ready: boolean; buffered: number;
+  // ready folds in everything that has to be true before a member can watch, so a seat that never unlocked
+  // playback is indistinguishable from one still filling its buffer. armed reports that half on its own, which
+  // is the half the host can do nothing about but ask.
+  id: string; name: string; ready: boolean; armed: boolean; buffered: number;
   epoch: number; lastSeen: number;
 };
 export type Snapshot = { room: Room; members: Member[]; serverNow: number; serverReceivedAt: number };

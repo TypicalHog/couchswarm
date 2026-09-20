@@ -332,7 +332,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
       pending.current = true;
       try {
         const data = await request<Snapshot>(`/api/rooms/${session.roomId}`, { action: current ? 'heartbeat' : 'snapshot',
-          ready, buffered: ahead, epoch: current?.epoch ?? -1,
+          ready, armed: state.armed, buffered: ahead, epoch: current?.epoch ?? -1,
           mediaVersion: state.media.loadedVersion, duration: video && Number.isFinite(video.duration) ? video.duration : 0,
           sequence: ++sequence.current,
         }, session.token);
