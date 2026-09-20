@@ -59,6 +59,20 @@ async function reclaimStore() {
 // lists is unusable. Mirrored by MAX_TORRENT_FILES in helper/torrent-helper.mjs.
 const MAX_TORRENT_FILES = 20000;
 
+// Whatever is picked is read whole, decoded into a string of its own and copied again, so a movie chosen by
+// mistake in the upload dialog freezes the tab for seconds. No real subtitle comes near this.
+const MAX_SUBTITLE_BYTES = 8_000_000;
+
+// The pick effect and the upload check below have to accept and refuse exactly the same files, so both parse
+// through here. A file the picker could not parse would otherwise attach an empty track and show nothing at
+// all. A .vtt is passed through untouched, so its arrow spacing is the author's and WebVTT allows none at all:
+// look for a cue timing rather than for the spaced arrow only the conversions write.
+function toSubtitleCues(bytes: AllowSharedBufferSource, name: string) {
+  const vtt = toWebVTT(decodeSubtitle(bytes, navigator.languages), name);
+  if (!/\d{2}\.\d+[ \t]*-->/.test(vtt)) throw new Error('No subtitles could be read out of that file.');
+  return vtt;
+}
+
 // Adding a torrent against a kept store re-hashes every saved piece before the movie can start again, which
 // holds the whole room in buffering. Only one movie's store survives an add, so one remembered bitfield covers
 // every restart this tab can make; a reload starts without one and verifies as before.
@@ -591,18 +605,12 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         // new client lists its files: keep the pick on 'Loading…' rather than failing it.
         if (!file && !subtitleRef.current.length) return;
         if (!file) throw new Error('That subtitle is no longer part of this torrent.');
-        // Whatever is picked is read whole, decoded into a string of its own and copied again, so a movie chosen
-        // by mistake in the upload dialog freezes the tab for seconds. No real subtitle comes near this.
-        if ((file instanceof File ? file.size : file.length) > 8_000_000) throw new Error('That file is too large to be a subtitle.');
+        if ((file instanceof File ? file.size : file.length) > MAX_SUBTITLE_BYTES) throw new Error('That file is too large to be a subtitle.');
         const bytes = file instanceof File ? await file.arrayBuffer()
           : await Promise.race([readFromHelper(seedUrlRef.current, file).then(served => served ?? readFile(file, value => { stream = value; })),
             new Promise<never>((_, reject) => { expire = reject; })]);
         if (disposed) return;
-        const vtt = toWebVTT(decodeSubtitle(bytes, navigator.languages), file.name);
-        // A file the picker could not parse would otherwise attach an empty track and show nothing at all. A
-        // .vtt is passed through untouched, so its arrow spacing is the author's and WebVTT allows none at all:
-        // look for a cue timing rather than for the spaced arrow only the conversions above write.
-        if (!/\d{2}\.\d+[ \t]*-->/.test(vtt)) throw new Error('No subtitles could be read out of that file.');
+        const vtt = toSubtitleCues(bytes, file.name);
         url = URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }));
         track = document.createElement('track');
         track.kind = 'subtitles';
@@ -633,5 +641,22 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
 
   const reconnect = useCallback(() => { retriedHelper.current = 0; retriedUpgrade.current = false; setAttempt(value => value + 1); }, []);
   const chooseSubtitle = useCallback((next: number | File | null) => { setSubtitle(next); setPicked(count => count + 1); }, []);
-  return { status, error, files, stats, loadedVersion, helper, helperPending, reconnect, subtitles, subtitle, setSubtitle: chooseSubtitle, subtitleError, subtitleBusy };
+
+  // The effect's cleanup pulls the attached <track> the moment the pick changes, so committing an upload before
+  // reading it means a file that turns out not to be a subtitle leaves the viewer with no subtitles at all and
+  // the picker naming the file that failed. Parse it first, and only commit a pick the effect can attach. Says
+  // whether it took, so a refused file does not displace the upload already on the list.
+  const uploadSubtitle = useCallback(async (file: File) => {
+    try {
+      if (file.size > MAX_SUBTITLE_BYTES) throw new Error('That file is too large to be a subtitle.');
+      toSubtitleCues(await file.arrayBuffer(), file.name);
+    } catch (err) {
+      setSubtitleError(err instanceof Error ? err.message : 'That subtitle could not be loaded.');
+      return false;
+    }
+    chooseSubtitle(file);
+    return true;
+  }, [chooseSubtitle]);
+
+  return { status, error, files, stats, loadedVersion, helper, helperPending, reconnect, subtitles, subtitle, setSubtitle: chooseSubtitle, uploadSubtitle, subtitleError, subtitleBusy };
 }

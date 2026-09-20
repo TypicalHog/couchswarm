@@ -8,8 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 const LISTED = 500;
 
 // Everyone picks their own, so this stays enabled for guests: nothing here is room state.
-export function SubtitleSelection({ subtitles, value, busy, error, onChange }:
-  { subtitles: { name: string; path: string }[]; value: number | File | null; busy: boolean; error: string; onChange: (next: number | File | null) => void }) {
+export function SubtitleSelection({ subtitles, value, busy, error, onChange, onUpload }:
+  { subtitles: { name: string; path: string }[]; value: number | File | null; busy: boolean; error: string;
+    onChange: (next: number | File | null) => void; onUpload: (file: File) => Promise<boolean> }) {
   const uploadRef = useRef<HTMLInputElement>(null);
   // Kept here so the file stays on the list after trying one of the torrent's own, rather than only while it is chosen.
   const [uploaded, setUploaded] = useState<File | null>(null);
@@ -30,7 +31,7 @@ export function SubtitleSelection({ subtitles, value, busy, error, onChange }:
     <button type="button" className="quiet-button" onClick={() => uploadRef.current?.click()}><Upload size={14}/> Upload</button>
     {/* The file never leaves this device, so everyone else keeps whatever they chose for themselves. */}
     <input ref={uploadRef} type="file" accept=".srt,.vtt,.ass,.ssa" hidden aria-label="Upload a subtitle file"
-      onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) { setUploaded(file); onChange(file); } }}/>
+      onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void onUpload(file).then(ok => { if (ok) setUploaded(file); }); }}/>
     {error && <div id="subtitle-error" className="error" role="alert">{error}</div>}
   </div>;
 }
