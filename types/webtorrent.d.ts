@@ -10,6 +10,8 @@ declare module 'webtorrent/dist/webtorrent.min.js' {
   }
   export interface TorrentFile {
     name: string; path: string; length: number; downloaded: number; progress: number;
+    // Where the file starts in the torrent's bytes, which is what places it among the pieces.
+    offset: number;
     streamURL: string;
     select(): void; streamTo(video: HTMLVideoElement): void;
     createReadStream(): TorrentFileStream;
@@ -18,7 +20,11 @@ declare module 'webtorrent/dist/webtorrent.min.js' {
   export interface Torrent {
     infoHash?: string;
     // Present once metadata has arrived: one bit per piece, marking what this client verified in the store.
-    bitfield?: { buffer: Uint8Array };
+    bitfield?: { buffer: Uint8Array; get(index: number): boolean };
+    pieceLength: number; destroyed: boolean;
+    // Piece ranges, both ends included. Selections that touch are merged into one that starts at the lower end.
+    select(start: number, end: number, priority: number): void;
+    deselect(start: number, end: number): void;
     once(event: string, listener: (...args: unknown[]) => void): Torrent;
     addPeer(peer: unknown): boolean;
     name: string; files: TorrentFile[]; downloadSpeed: number; numPeers: number;

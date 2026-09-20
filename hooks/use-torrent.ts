@@ -4,6 +4,7 @@ import type WebTorrent from 'webtorrent/dist/webtorrent.min.js';
 import type { Torrent, TorrentFile, TorrentFileStream } from 'webtorrent/dist/webtorrent.min.js';
 import type { PlaysVideoEngine } from 'playsvideo';
 import { isMkv, videoFiles } from '@/lib/video-files';
+import { followReads } from '@/lib/follow-reads';
 import { decodeSubtitle, subtitleFiles, toWebVTT } from '@/lib/subtitles';
 import { connectHelper } from '@/lib/torrent-helper';
 import { connectRemoteHelper, helperStatus } from '@/lib/remote-helper';
@@ -422,9 +423,10 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           if (!videos.length) { fail('No video found. Choose a torrent containing an MKV, MP4, M4V, MOV, or WebM video.'); return; }
           if (!file) { fail(`The host chose video #${fileIndex + 1}, but this torrent has ${videos.length}. Ask the host to pick again.`); return; }
           fileRef.current = file;
+          const follow = followReads(value, file);
           // WebTorrent treats an end of 0 as absent and streams the whole file against a Content-Length of 1.
           file.on('iterator', ({ iterator, req }, replace) => {
-            if (!/^bytes=0-0$/.test(req.headers.range || '')) return;
+            if (!/^bytes=0-0$/.test(req.headers.range || '')) { follow(req.headers.range || ''); return; }
             replace((async function* () { for await (const chunk of iterator) { yield chunk.subarray(0, 1); return; } })());
           });
           setStats(s => ({ ...s, filename: file.name, size: file.length }));
