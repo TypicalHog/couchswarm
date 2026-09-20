@@ -22,13 +22,20 @@ export async function connectHelper(session: Session, source: string, mediaVersi
   const lease = await response.json().catch(() => ({})) as { id: string; source: string; mediaVersion: number; error?: string };
   if (!response.ok) throw Object.assign(new Error(lease.error || 'The torrent helper could not connect.'), { status: response.status });
   let released = false;
+  // A page entering the back/forward cache is coming back to this very lease, so only a teardown gives it up.
+  const teardown = (event: PageTransitionEvent) => { if (!event.persisted) release(); };
   const release = () => {
     if (released) return;
     released = true;
     signal.removeEventListener('abort', release);
+    window.removeEventListener('pagehide', teardown);
     void fetch(`${base}/sessions/${lease.id}`, { method: 'DELETE', keepalive: true }).catch(() => {});
   };
   signal.addEventListener('abort', release, { once: true });
+  // A reload or a tab close never runs effect cleanup, so without this the lease waits out the helper's idle
+  // sweep - about two and a half minutes against a cap of 24 shared by every room that helper serves, which a
+  // roomful reloading at once fills on the spot. keepalive is what lets the DELETE outlive the page.
+  window.addEventListener('pagehide', teardown);
   if (signal.aborted) { release(); signal.throwIfAborted(); }
   try {
     if (lease.source !== source || lease.mediaVersion !== mediaVersion) throw new Error('The room changed while the helper was connecting.');
