@@ -28,6 +28,7 @@
     "helper": "node helper/server.mjs",
     "helper:desktop": "node helper/desktop.mjs",
     "build:helper": "node scripts/build-helper.mjs",
+    "build:helper:linux": "node scripts/build-helper.mjs linux-x64",
     "dev": "next dev --webpack --port 3001",
     "build": "node scripts/migrate-database.mjs && next build --webpack",
     "start": "next start",
