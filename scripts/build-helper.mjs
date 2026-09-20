@@ -3,7 +3,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Build the Windows x64 helper on Windows x64.');
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -72,8 +72,20 @@ execFileSync(path.join(process.env.WINDIR, 'Microsoft.NET', 'Framework64', 'v4.0
 // .NET Framework gates UI Automation live regions (the status label) behind these switches.
 await fs.writeFile(path.join(stage, 'CouchSwarm Helper.exe.config'), '<?xml version="1.0" encoding="utf-8"?>\r\n<configuration>\r\n  <runtime>\r\n    <AppContextSwitchOverrides value="Switch.UseLegacyAccessibilityFeatures=false;Switch.UseLegacyAccessibilityFeatures.2=false;Switch.UseLegacyAccessibilityFeatures.3=false" />\r\n  </runtime>\r\n</configuration>\r\n');
 await fs.writeFile(path.join(stage, 'README.txt'), `CouchSwarm Helper for Windows 10/11 x64\r\n\r\n1. Extract this entire ZIP.\r\n2. Open CouchSwarm Helper.exe. No Node.js installation is needed.\r\n3. In your room, choose Connect your helper, then Create pairing link.\r\n4. Paste that private link into the helper and connect.\r\n5. Keep the helper and room tab open while watching. Guests only need the room link.\r\n\r\nDownloads are kept in %LOCALAPPDATA%\\CouchSwarm\\downloads, or in the folder you choose.\r\nOnly the parts the room watched are downloaded, so a movie you stop early is kept incomplete.\r\nClear "Keep downloads when I close" to delete the movie when you stop sharing or close the app.\r\nThe helper uses as much disk space as the movie needs and uploads movie pieces to room viewers and torrent peers.\r\nBuild ${appVersion} (Node ${version}). This build is unsigned.\r\nThird-party license notices are in THIRD-PARTY-NOTICES.txt and runtime\\LICENSE.\r\n`);
-execFileSync(path.join(stage, 'runtime', 'node.exe'), ['--use-system-ca', '--input-type=module', '-e', "import WebTorrent from 'webtorrent'; import Peer from '@thaunknown/simple-peer'; import './helper/remote-agent.mjs'; const client = new WebTorrent({dht:false,tracker:false,lsd:false,natUpnp:false,natPmp:false,utp:false}); client.destroy(); console.log('Packaged native runtime OK');"], { cwd: app, stdio: 'inherit', windowsHide: true });
-const desktop = execFileSync(path.join(stage, 'runtime', 'node.exe'), ['--use-system-ca', 'helper/desktop.mjs'], { cwd: app, input: '{"action":"stop"}\n', encoding: 'utf8', timeout: 20000, windowsHide: true });
+// Node walks up out of the stage into this repo's own node_modules, so a package left off the list above still
+// loads in the smoke runs below and only fails on a user's extracted copy. Confine both runs to what was staged.
+// The hook file lives in work/ beside AssemblyInfo.cs, so it never reaches the package.
+const confine = path.join(root, 'work', 'confine.mjs');
+await fs.writeFile(confine, `import { registerHooks } from 'node:module';
+const app = ${JSON.stringify(pathToFileURL(app + path.sep).href)};
+registerHooks({ resolve(specifier, context, next) {
+  const resolved = next(specifier, context);
+  if (!resolved.url.startsWith('node:') && !resolved.url.startsWith(app)) throw new Error('Unstaged module ' + specifier + ' resolved outside the package: ' + resolved.url);
+  return resolved;
+} });
+`);
+execFileSync(path.join(stage, 'runtime', 'node.exe'), ['--use-system-ca', '--import', pathToFileURL(confine).href, '--input-type=module', '-e', "import WebTorrent from 'webtorrent'; import Peer from '@thaunknown/simple-peer'; import './helper/remote-agent.mjs'; const client = new WebTorrent({dht:false,tracker:false,lsd:false,natUpnp:false,natPmp:false,utp:false}); client.destroy(); console.log('Packaged native runtime OK');"], { cwd: app, stdio: 'inherit', windowsHide: true });
+const desktop = execFileSync(path.join(stage, 'runtime', 'node.exe'), ['--use-system-ca', '--import', pathToFileURL(confine).href, 'helper/desktop.mjs'], { cwd: app, input: '{"action":"stop"}\n', encoding: 'utf8', timeout: 20000, windowsHide: true });
 if (!desktop.split('\n').filter(Boolean).map(line => JSON.parse(line)).some(value => value.stopped)) throw new Error('Packaged desktop IPC did not stop cleanly.');
 await fs.rm(output, { force: true });
 // Compress-Archive stores '\' separators, which Info-ZIP reads as filenames; inbox bsdtar writes the '/' the ZIP format requires.
