@@ -47,7 +47,11 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       // sentence that reads as the app speaking.
       const said = typeof data.error === 'string' ? data.error.replace(/\s+/g, ' ').trim().slice(0, 160) : '';
       const error = new Error(said ? `The room website says: ${said}` : 'The website could not be reached.');
-      error.status = response.status; throw error;
+      error.status = response.status;
+      // The room API explains every refusal it sends, so a 403 or 410 with no message came from a firewall or proxy
+      // in front of it and must not retire the pairing.
+      error.revoked = !!said && (response.status === 403 || response.status === 410);
+      throw error;
     }
     return data;
   }
@@ -259,7 +263,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       report({ status, peers: peers.size, torrentPeers: torrent?.numPeers || 0, relayAvailable: data.relayAvailable });
     } catch (error) {
       if (closed) return;
-      if (error.status === 403 || error.status === 410) { notify(error.message); await stop(false); report({ status: error.message, stopped: true }); return; }
+      if (error.revoked) { notify(error.message); await stop(false); report({ status: error.message, stopped: true }); return; }
       if (Date.now() - lastContact > 30000) { for (const peer of peers.values()) peer.destroy(); peers.clear(); }
       if (status !== 'Reconnecting to the room…') previousStatus = status;
       notify('Reconnecting to the room…');
