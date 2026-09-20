@@ -23,7 +23,7 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-That serves `http://localhost:3001` and needs no environment: the schema is applied before the dev server starts, into `.local/rooms.db` unless `TURSO_DATABASE_URL` names another database. `drizzle/0000_init.sql` is the whole schema, so a database that has fallen behind is fixed by deleting the `.local` folder and letting the next start recreate it; that discards every room it holds. Streaming uses a service worker, so use HTTPS or localhost; plain HTTP on a LAN address cannot stream torrents. CouchSwarm needs Chrome or Edge 116+, Firefox 124+, or Safari 17.4+; older browsers are refused with a message instead of failing mid-stream.
+That serves `http://localhost:3001` and needs no environment: the schema is applied before the dev server starts, into `.local/rooms.db` unless `TURSO_DATABASE_URL` names another database. Migrations added under `drizzle/` are applied on the next start, so a database that has fallen behind catches up with its rooms intact; only a start that fails with `Applied migration changed` needs `.local/rooms.db` deleted and recreated, and that discards every room it holds. Streaming uses a service worker, so use HTTPS or localhost; plain HTTP on a LAN address cannot stream torrents. CouchSwarm needs Chrome or Edge 116+, Firefox 124+, or Safari 17.4+; older browsers are refused with a message instead of failing mid-stream.
 
 ## Local development helper
 
