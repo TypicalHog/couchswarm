@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
-import { allReady, bufferedAhead, estimateServerNow, hasBuffer, PRESENCE_MS, ROOM_TTL_MS, timelinePosition, validSource, type Session, type Snapshot } from '@/lib/sync';
+import { allReady, bufferedAhead, estimateServerNow, hasBuffer, PRESENCE_MS, ROOM_TTL_MS, SPECTATOR_EPOCH, timelinePosition, validSource, type Session, type Snapshot } from '@/lib/sync';
 import { useTorrent } from '@/hooks/use-torrent';
 
 const seats = new Map<string, Promise<boolean>>();
@@ -281,6 +281,10 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
       const now = current ? localNow() : 0;
       const target = current ? timelinePosition(current, now) : 0;
       const ahead = video ? bufferedAhead(video.buffered, target) : 0;
+      // A viewer whose presence lapsed comes back as a spectator, and the first ready beat seats them back in the
+      // room's epoch. The in-playback threshold is 3 s, so they would join with none of the margin everyone else
+      // started with and their next beat could pause the room for all of them: buffer like the rest of the couch.
+      const spectating = state.snapshot?.members.find(m => m.id === session.memberId)?.epoch === SPECTATOR_EPOCH;
       const ready = !!(current && video && anchor.current.server && state.armed && !state.media.error && state.media.loadedVersion === current.mediaVersion
         && appliedEpoch.current === current.epoch
         // A hard resync into data this element already holds still raises seeking and drops readyState for a few
@@ -292,7 +296,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
         // reply to this very request seeks it back, so buffer at the target still counts as ready. One sitting
         // at its own end has nowhere further to go, which is all the room asks of it at the wrap.
         && (Math.abs(video.currentTime - target) < 1.5 || (outOfContact() && ahead > 0) || (video.ended && target >= video.duration - 0.2))
-        && hasBuffer(ahead, target, video.duration, current.playing));
+        && hasBuffer(ahead, target, video.duration, current.playing && !spectating));
       const sent = performance.now();
       pending.current = true;
       try {
