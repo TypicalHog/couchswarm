@@ -22,9 +22,16 @@ function bytes(value: number) {
   if (value < 1073741824) return `${(value / 1048576).toFixed(1)} MB`;
   return `${(value / 1073741824).toFixed(2)} GB`;
 }
+// A deploy replaces the hashed chunk names, so a room open across one asks for a picker chunk this site no
+// longer serves. Rendering that failure in place of the picker keeps the rest of the room — the heartbeat
+// that holds this seat included — rather than handing the whole page to the error boundary.
+function PickerUpdated() {
+  return <div className="error" role="alert">CouchSwarm was updated while this room was open. <button className="quiet-button" onClick={() => location.reload()}>Reload this page</button> to choose a video or subtitle. Your seat is kept.</div>;
+}
+const updated = () => PickerUpdated as never;
 // Only multi-file torrents need the picker, so its base-ui Select stays out of the first-load bundle.
-const VideoSelection = dynamic(() => import('@/components/video-selection').then(m => m.VideoSelection), { ssr: false });
-const SubtitleSelection = dynamic(() => import('@/components/subtitle-selection').then(m => m.SubtitleSelection), { ssr: false });
+const VideoSelection = dynamic(() => import('@/components/video-selection').then(m => m.VideoSelection).catch(updated), { ssr: false });
+const SubtitleSelection = dynamic(() => import('@/components/subtitle-selection').then(m => m.SubtitleSelection).catch(updated), { ssr: false });
 
 export default function CouchSwarm() {
   const videoRef = useRef<HTMLVideoElement>(null);

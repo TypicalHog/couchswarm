@@ -48,7 +48,10 @@ export async function connectRemoteHelper(session: Session, mediaVersion: number
   // at the price of Node polyfill aliases for the whole app.
   // Its constructor builds a peer id from Uint8Array methods that browsers we support may not have yet.
   await import('@/lib/uint8-polyfill');
-  const { default: SimplePeer } = await import('@thaunknown/simple-peer');
+  const { default: SimplePeer } = await import('@thaunknown/simple-peer')
+    // A deploy the open room did not reload for no longer serves this chunk. Say so rather than letting the
+    // caller file it as an unreachable helper and fall back to browser peers.
+    .catch(() => { throw Object.assign(new Error('The helper connection files could not be loaded — this site may have been updated. Reload this page and rejoin.'), { stale: true }); });
   if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
   const peer = new SimplePeer({ initiator: true, trickle: false, config: { iceServers: status.iceServers } });
   peer.id = crypto.randomUUID();

@@ -148,7 +148,9 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
             // after serving, so allow a few reconnects before giving up.
             if (retriedHelper.current < 3) { retriedHelper.current++; setAttempt(value => value + 1); return; }
             fail(`${own ? 'Your' : 'The host’s'} helper disconnected. Reconnect to the movie to try again.`);
-          }).catch(err => { if (abort.signal.aborted) throw err; helperFailed = retriedUpgrade.current; retriedUpgrade.current = true; setStatus('Helper unavailable, using browser peers…'); return null; }) : null;
+          // A stale chunk is not a helper that could not be reached: it tells the viewer to reload instead of
+          // spending this movie's one upgrade attempt on a browser-only stream.
+          }).catch(err => { if (abort.signal.aborted || (err as { stale?: boolean }).stale) throw err; helperFailed = retriedUpgrade.current; retriedUpgrade.current = true; setStatus('Helper unavailable, using browser peers…'); return null; }) : null;
         if (remote) setHelper({ host: !remote.own });
         const bridge = session && !remote ? await connectHelper(session, source, mediaVersion, abort.signal, value => {
           if (disposed) return;
