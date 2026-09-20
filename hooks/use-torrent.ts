@@ -30,6 +30,16 @@ function readFile(file: TorrentFile, hold: (stream: TorrentFileStream) => void) 
   });
 }
 
+// The helper serves the torrent's own files over HTTP too, and WebTorrent builds its web seed URLs out of the
+// raw torrent path: a subtitle whose path holds '#', '?' or '%' is asked for under a truncated name, answered
+// 404, and — with nobody else holding the file — waits out the pick's whole budget for a file the helper has.
+// Ask for it here with every path segment encoded; whatever the helper cannot answer is left to the swarm.
+function readFromHelper(seedUrl: string, file: TorrentFile) {
+  if (!seedUrl) return Promise.resolve(null);
+  return fetch(`${seedUrl}/${file.path.split('/').map(encodeURIComponent).join('/')}`)
+    .then(async response => response.ok ? new Uint8Array(await response.arrayBuffer()) : null).catch(() => null);
+}
+
 // Nothing outside the next torrent's add callback ever frees this browser's movie store, so a viewer who left
 // the room kept the whole download as site data. A tab showing no movie, with no room in its address bar to
 // rejoin, is the moment that store is certainly nobody's: take the same lock a stream takes — a tab still
@@ -86,6 +96,8 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
   const lostHelper = useRef(false);
   const movieRef = useRef('');
   const sourceRef = useRef('');
+  // Where the subtitle effect, which has no torrent of its own, can see the standalone helper's seed URL.
+  const seedUrlRef = useRef('');
   const teardownRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
@@ -111,6 +123,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     if (movieRef.current !== movie) { movieRef.current = movie; retriedHelper.current = 0; retriedUpgrade.current = false; lostHelper.current = false; setSubtitle(null); }
     fileRef.current = null;
     subtitleRef.current = [];
+    seedUrlRef.current = '';
     setLoadedVersion(-1);
     setHelper(null);
     setHelperPending(false);
@@ -267,6 +280,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         }).catch(err => { if (abort.signal.aborted || (err as { status?: number }).status === 200) throw err; helperFailed = retriedUpgrade.current; retriedUpgrade.current = true; return fallBack(err); }) : null;
         if (disposed) return;
         if (bridge) {
+          seedUrlRef.current = bridge.seedUrl;
           let misses = 0;
           const heartbeat = async () => {
             try { await bridge.status(); misses = 0; }
@@ -564,7 +578,8 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         // by mistake in the upload dialog freezes the tab for seconds. No real subtitle comes near this.
         if ((file instanceof File ? file.size : file.length) > 8_000_000) throw new Error('That file is too large to be a subtitle.');
         const bytes = file instanceof File ? await file.arrayBuffer()
-          : await Promise.race([readFile(file, value => { stream = value; }), new Promise<never>((_, reject) => { expire = reject; })]);
+          : await Promise.race([readFromHelper(seedUrlRef.current, file).then(served => served ?? readFile(file, value => { stream = value; })),
+            new Promise<never>((_, reject) => { expire = reject; })]);
         if (disposed) return;
         const vtt = toWebVTT(decodeSubtitle(bytes, navigator.languages), file.name);
         // A file the picker could not parse would otherwise attach an empty track and show nothing at all. A

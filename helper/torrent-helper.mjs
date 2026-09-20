@@ -162,6 +162,8 @@ export function torrentPathIssue(torrent, root = '') {
   for (const file of torrent.files)
     if (slashed(file).split('/').slice(0, -1).some(part => /[<>:"|?*\p{Cc}]/u.test(part) || deviceName(part) || /[. ]$/.test(part)))
       return 'This torrent has a folder name Windows cannot create. Choose another torrent.';
+  const [video] = servedRanges(torrent);
+  const span = new Set(video ? filesIn(torrent, [video]) : []);
   for (const file of writtenFiles(torrent)) {
     const parts = file.path.replaceAll('\\', '/').split('/');
     if (parts.slice(0, -1).some(part => /[<>:"|?*\p{Cc}]/u.test(part))) return 'This torrent has a folder name Windows cannot create. Choose another torrent.';
@@ -178,7 +180,10 @@ export function torrentPathIssue(torrent, root = '') {
     // fsutil and every Win32 tool still stop at MAX_PATH, so a deep torrent in a deep folder is not writable sparse.
     if (root && path.join(root, ...stored).length > 250) return 'This torrent stores its files too deep for your download folder. Choose another torrent or a shorter folder.';
     // A trailing space is not tested here: the name check above already refused every path that ends in one.
-    if (torrent.files.length > 1 && /[#?%\p{Cc}]/u.test(file.path))
+    // Only the video's own pieces are asked for as a web seed path, and every file sharing one is asked for
+    // with them, so a character WebTorrent cannot put in that URL stalls the movie. A subtitle beside the
+    // span is read from the helper over HTTP with its path encoded, so its name costs the movie nothing.
+    if (torrent.files.length > 1 && span.has(file) && /[#?%\p{Cc}]/u.test(file.path))
       return 'This multi-file torrent has a filename WebTorrent cannot request as a web seed path. Choose another torrent.';
     // Folded a code point at a time: lowercasing the whole string applies Unicode's word-final rule, so a Σ before
     // '/' or a space becomes ς while the same word spelled with σ does not, and NTFS stores the two as one file.
