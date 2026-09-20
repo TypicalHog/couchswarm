@@ -266,7 +266,10 @@ Copyright (c) 2026 TypicalHog
 Third-party files
 
 The licence choice above covers CouchSwarm itself. It does not cover these
-checked-in test fixtures, which stay under their upstream terms:
+checked-in files, which stay under their upstream terms:
 
 - tests/fixtures/h264-aac.mp4 — MIT, Copyright (c) 2026 Kyle Graehl (tests/fixtures/LICENSE.playsvideo)
 - tests/fixtures/sfx.mp3 — BSD-3-Clause, Copyright (c) web-platform-tests contributors (tests/fixtures/LICENSE.wpt.md)
+- the sofa icon in public/favicon.svg, public/favicon.ico, public/apple-touch-icon.png and
+  app/opengraph-image.tsx, drawn from Lucide's sofa — ISC, Copyright (c) 2026 Lucide Icons
+  and Contributors (public/LICENSE.lucide)
