@@ -11,3 +11,13 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:offline
+      # A throwaway file database: the build migrates whatever TURSO_DATABASE_URL points at, and a
+      # future repo secret must never let a pull request migrate the production one.
+      - run: npm run build
+        env: { NEXT_TELEMETRY_DISABLED: '1', TURSO_DATABASE_URL: 'file:.ci/rooms.db' }
+      - run: |
+          npx next start --port 3001 &
+          for i in $(seq 1 60); do curl -sf -o /dev/null http://localhost:3001/ && break; sleep 1; done
+          npm run test:rooms
+          npm run test:remote
+        env: { TURSO_DATABASE_URL: 'file:.ci/rooms.db' }
