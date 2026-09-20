@@ -342,7 +342,19 @@ class CouchSwarmHelper : Form {
                 quitting = true;
                 Enabled = false;
                 Say(keep.Checked ? "Closing the helper. Downloaded movies stay in your folder." : "Closing the helper and clearing temporary movie data…", Skin.Muted);
-                helper.StandardInput.Close();
+                try { helper.StandardInput.Close(); } catch {}
+                // The helper gives its own stop 15 seconds, but a pool thread stuck on a folder that stopped
+                // answering keeps node.exe alive past that and Exited never fires, leaving a disabled window
+                // nobody can close. Give it a little longer than the helper does, then end it here.
+                var deadline = new System.Windows.Forms.Timer { Interval = 20000 };
+                deadline.Tick += (s2, e2) => {
+                    deadline.Stop();
+                    try { if (!helper.HasExited) helper.Kill(); } catch {}
+                    // Kill does not guarantee Exited either, so stop waiting for it.
+                    helper = null;
+                    Close();
+                };
+                deadline.Start();
             }
         };
         LoadSettings();
