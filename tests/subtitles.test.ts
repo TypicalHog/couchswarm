@@ -30,6 +30,19 @@ test('cue text is otherwise carried through verbatim', () => {
   assert.match(toWebVTT('1\n00:00:01,000 --> 00:00:02,000\n<i>Hello</i>, world\n', 'a.srt'), /^<i>Hello<\/i>, world$/m);
 });
 
+test('a cue keeps the tags a browser renders and escapes every other angle bracket', () => {
+  const cue = (text: string) => toWebVTT(`1\n00:00:01,000 --> 00:00:02,000\n${text}\n`, 'a.srt');
+  // A browser reads an unescaped '<' as the start of a tag and drops the cue text up to the next '>'.
+  assert.match(cue('I <3 you'), /^I &lt;3 you$/m);
+  assert.match(cue('<laughs> ok'), /^&lt;laughs> ok$/m);
+  const lines = cue('5 < 10 and a<b\nsecond line');
+  assert.match(lines, /^5 &lt; 10 and a&lt;b$/m);
+  assert.match(lines, /^second line$/m, 'the rest of the cue survives the escape');
+  assert.match(cue('<i>a</i> <v Bob>b</v> <c.loud>c</c> <00:00:01.500>d'), /^<i>a<\/i> <v Bob>b<\/v> <c\.loud>c<\/c> <00:00:01\.500>d$/m);
+  assert.match(cue('<font color="red">Red</font> text'), /^Red text$/m, 'a browser drops font tags, so they are not printed as text either');
+  assert.match(toWebVTT('[Events]\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,I <3 you too', 'a.ass'), /^I &lt;3 you too$/m);
+});
+
 test('an ASS dialogue becomes a plain-text cue', () => {
   const out = toWebVTT([
     '[Events]',

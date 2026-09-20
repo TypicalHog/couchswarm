@@ -23,8 +23,14 @@ const DIALOGUE = /^Dialogue:\s*[^,]*,([^,]+),([^,]+),(?:[^,]*,){6}(.*)$/;
 const clock = (h: string, m: string, s: string, ms: string) =>
   `${h.padStart(2, '0')}:${m.padStart(2, '0')}:${s.padStart(2, '0')}.${ms.padEnd(3, '0')}`;
 
-// WebVTT reads an arrow in cue text as the start of the next cue, which would swallow every cue after it.
-const escapeArrows = (line: string) => line.replaceAll('-->', '--&gt;');
+// WebVTT reads an arrow in cue text as the start of the next cue, which would swallow every cue after it,
+// and any '<' as the start of a tag, which swallows the rest of the cue up to the next '>' — so 'I <3 you'
+// renders as 'I '. Keep the tags a browser really renders and escape every other '<'.
+const CUE_TAG = /<\/?(?:c|i|b|u|v|ruby|rt|lang)(?:[.\s][^<>]*)?>|<\d{1,2}:\d{2}(?::\d{2})?\.\d{3}>|-->|</gi;
+const escapeCue = (line: string) => line
+  // <font color=…> is common in SRT and browsers drop it today, so drop it here too rather than print it.
+  .replace(/<\/?font\b[^>]*>/gi, '')
+  .replace(CUE_TAG, match => match === '<' ? '&lt;' : match === '-->' ? '--&gt;' : match);
 
 // ASS counts hundredths where WebVTT counts thousandths.
 function assClock(value: string) {
@@ -46,7 +52,7 @@ export function toWebVTT(text: string, filename: string) {
       // A vector drawing keeps its coordinates in the text field and would render as visible gibberish.
       if (!dialogue || /\\p[1-9]/.test(dialogue[3])) continue;
       const start = assClock(dialogue[1]), end = assClock(dialogue[2]);
-      const cue = escapeArrows(dialogue[3].replace(/\{[^}]*\}/g, '').replaceAll('\\h', ' ').replace(/\\[Nn]/g, '\n')).trim();
+      const cue = escapeCue(dialogue[3].replace(/\{[^}]*\}/g, '').replaceAll('\\h', ' ').replace(/\\[Nn]/g, '\n')).trim();
       if (start && end && cue) cues.push(`${start} --> ${end}\n${cue}`);
     }
     return `WEBVTT\n\n${cues.join('\n\n')}\n`;
@@ -57,7 +63,7 @@ export function toWebVTT(text: string, filename: string) {
     const timing = TIMING.exec(line);
     return timing
       ? `${clock(timing[1], timing[2], timing[3], timing[4])} --> ${clock(timing[5], timing[6], timing[7], timing[8])}`
-      : escapeArrows(line);
+      : escapeCue(line);
   });
   return `WEBVTT\n\n${lines.join('\n')}\n`;
 }
