@@ -69,7 +69,7 @@ CouchSwarm has no accounts and collects nothing for itself, but a room does hold
 - Indexed MKVs use their cue table to start and seek without scanning the entire movie. MKVs with missing or damaged cues can need a longer initial scan.
 - `.torrent` URLs and web seeds must permit browser requests (CORS).
 - The largest compatible video is selected first. When a torrent holds more than one video — a season pack, say — a **Video in this torrent** dropdown appears under the player listing each file by name, with its full path as a tooltip; the host picks, and the whole room switches together.
-- Keep the tab open. Downloaded pieces are uploaded to other peers; leaving keeps this client's torrent store so a reconnect resumes where it stopped, and anything a closed tab left behind is cleaned up the next time you open a movie. Only one CouchSwarm movie tab can run per browser profile; a second tab is refused with "This movie is already open in another CouchSwarm tab."
+- Keep the tab open. Downloaded pieces are uploaded to other peers; leaving keeps this client's torrent store so a reconnect resumes where it stopped, and anything a closed tab left behind is cleaned up the next time you open a movie. Only one CouchSwarm movie tab can run per browser profile, and a room can be open in only one tab; a second tab is refused with a message saying another tab already has the movie — or the room — open, and telling you to close that tab first.
 
 ## Checks
 
