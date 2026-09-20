@@ -61,8 +61,9 @@ export function HelperConnection({ session, isHost, reconnect, needed, open, onO
   // The status describes the helper this browser streams from; `mineOnline` reports this participant's own helper, which may not be the one selected.
   const running = !!status?.mineOnline;
   const hostServing = !!status?.paired && !status.own;
-  // Everyone gets a next step: the host to start theirs, a guest to stop depending on the host's.
-  const hint = running ? ''
+  // Everyone gets a next step: the host to start theirs, a guest to stop depending on the host's. Nobody gets
+  // one before the first status lands, or while they keep failing: every branch below would be a guess.
+  const hint = running || !status ? ''
     : hostServing ? status!.online
       ? 'Streaming through your host’s helper. Run your own to download straight from torrent peers.'
       : 'Waiting for your host’s helper. You can run your own instead.'
