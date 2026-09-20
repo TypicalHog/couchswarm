@@ -59,7 +59,11 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     client = undefined;
     directory = undefined;
     if (previousClient && !previousClient.destroyed) await new Promise(resolve => previousClient.destroy(resolve));
-    if (!keepDownloads && previousDirectory && path.dirname(previousDirectory) === root) await rm(previousDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).catch(() => {});
+    // Reports whether the temporary cache really went: a directory something still holds open is the one case the
+    // caller has advice for, and it is the only step here that can fail.
+    if (!keepDownloads && previousDirectory && path.dirname(previousDirectory) === root)
+      return rm(previousDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }).then(() => true, () => false);
+    return true;
   }
   // A later poll sees the room's version differ from desiredVersion and loads again.
   function scheduleRetry() {
@@ -137,10 +141,11 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       if (closed || client !== currentClient || torrent !== value) return;
       console.error('Torrent failed:', error?.stack || error || 'closed without an error');
       if (Date.now() - readyAt > 300000) attempts = 0;
-      void clearTorrent().then(() => {
+      void clearTorrent().then(cleared => {
         if (closed || generation !== own) return; // a newer load owns the status now
-        if (attempts < 3) { notify(`${describe(error)} Reconnecting…`); scheduleRetry(); } else notify(`${describe(error)} Choose the movie again in the room to retry.`);
-      }).catch(() => { if (!closed && generation === own) notify('Torrent stopped. Close the helper before clearing its temporary cache.'); });
+        if (!cleared) notify('Torrent stopped. Close the helper before clearing its temporary cache.');
+        else if (attempts < 3) { notify(`${describe(error)} Reconnecting…`); scheduleRetry(); } else notify(`${describe(error)} Choose the movie again in the room to retry.`);
+      });
     };
     client.on('error', error => { cause = error; failed(error); });
     value.on('error', error => { cause = error; failed(error); });
