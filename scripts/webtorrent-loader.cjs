@@ -32,6 +32,16 @@ const patches = [
     replace: 'i.port1.onmessage=e=>{0!==e.data?n(e.data):t(e.data),',
     count: 1,
   },
+  // Adding a torrent reads every piece back before it is ready, and the store opens each one with
+  // create: true, so a movie nothing is saved for has an empty file written per piece and then throws 'does
+  // not exist' on each — seconds of it before playback can start on a few thousand pieces, and the files stay
+  // for every later file switch, helper upgrade and Reconnect to walk again. A read must not create: a piece
+  // that was never written is simply absent, which is the answer verification already acts on.
+  {
+    find: 'if(!this.files||this.chunks[e]){const t=await this._getChunkHandle(e);',
+    replace: 'if(!this.files||this.chunks[e]){const t=this.chunks[e]??await(await this.chunksDirPromise).getFileHandle(e).then(q=>this.chunks[e]=q,()=>null);if(!t)throw new Error("Index "+e+" does not exist");',
+    count: 1,
+  },
 ];
 module.exports = function (code) {
   for (const { find, replace, count } of patches) {
