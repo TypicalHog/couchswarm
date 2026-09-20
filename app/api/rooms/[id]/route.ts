@@ -29,7 +29,21 @@ async function handler(request: Request, context: { params: Promise<{ id: string
   const serverReceivedAt = Date.now();
   const { id } = await context.params;
   const db = getDb();
-  let stored = await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<StoredRoom>();
+  let body;
+  try { body = await readBody(request); } catch { return json({ error: 'Invalid room request.' }, 400); }
+  const token = request.headers.get('Authorization')?.replace(/^Bearer /, '') || '';
+  const tokenHash = /^[a-f0-9]{64}$/.test(token) ? await hash(token) : '';
+  // The room, the caller's own row and the host's lease are three reads nearly every request makes, and libSQL
+  // sends each statement on its own: three round trips to Turso before the work starts. One read batch answers
+  // all three from a single snapshot in one hop, which is why the body and the hash are taken first.
+  const [roomRow, actorRow, hostRow] = await db.batch([
+    db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id),
+    db.prepare('SELECT id, ready, buffered, epoch, last_seen, report_sequence FROM members WHERE room_id = ? AND token_hash = ? AND last_seen > 0').bind(id, tokenHash),
+    // A host who left carries the last_seen = 0 marker, not a timestamp, and the lease below must read them as
+    // gone: without that test its arithmetic rewinds the room to its last play or seek.
+    db.prepare('SELECT last_seen FROM members WHERE id = (SELECT host_id FROM rooms WHERE id = ?) AND last_seen > 0').bind(id),
+  ], 'read');
+  let stored = roomRow.results[0] as StoredRoom | undefined;
   if (!stored) return json({ error: 'This room does not exist. Check your invite link.' }, 404);
   if (await roomExpired(db, id, stored.created_at, Date.now())) {
     await db.batch([
@@ -40,9 +54,8 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     ]);
     return json({ error: 'This room has expired. Create a new room for tonight.' }, 410);
   }
-  let body;
-  try { body = await readBody(request); } catch { return json({ error: 'Invalid room request.' }, 400); }
   const now = Date.now();
+  const hostLease = hostRow.results[0] as { last_seen: number } | undefined;
   // Every action below must be named here, or it is refused before any authority check runs.
   if (typeof body.action !== 'string' || !['join', 'snapshot', 'heartbeat', 'leave', 'source', 'file', 'play', 'pause', 'seek', 'kick', 'rotate'].includes(body.action)) return json({ error: 'Unknown room action.' }, 400);
   if (body.action === 'join') {
@@ -54,7 +67,7 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     // a join-then-leave loop otherwise passes both this and the seat cap and grows the table as fast as it can post.
     const recent = await db.prepare('SELECT COUNT(*) AS n FROM members WHERE room_id = ? AND joined_at > ?').bind(id, now - 60_000).first<{ n: number }>();
     if ((recent?.n ?? 0) >= 24) return json({ error: 'Too many joins. Try again in a minute.' }, 429);
-    const host = stored.playing ? await db.prepare('SELECT last_seen FROM members WHERE id = ? AND last_seen > 0').bind(stored.host_id).first<{ last_seen: number }>() : null;
+    const host = stored.playing ? hostLease : null;
     // The host comes back to the seat they already own, never to a new one: the room can never resume without
     // them, so a full couch must not refuse them, and the room's helper stays bound to that member id.
     const reclaim = typeof body.hostKey === 'string' && body.hostKey.length === 64 && await hash(body.hostKey) === stored.host_key_hash;
@@ -78,21 +91,16 @@ async function handler(request: Request, context: { params: Promise<{ id: string
       .bind(timelinePosition(publicRoom(stored), pausedAt), away && !reclaim ? HOST_AWAY : 'A friend joined. Waiting for their buffer.', id, stored.revision).run();
     return json({ roomId: id, memberId, token, invite: body.invite }, 201);
   }
-  const token = request.headers.get('Authorization')?.replace(/^Bearer /, '') || '';
-  if (!/^[a-f0-9]{64}$/.test(token)) return json({ error: 'Reopen your invite link to join this room.' }, 401);
+  if (!tokenHash) return json({ error: 'Reopen your invite link to join this room.' }, 401);
   // Leaving is final: the last_seen = 0 marker retires the token with the seat, so a copy of it opens nothing here.
-  const actor = await db.prepare('SELECT id, ready, buffered, epoch, last_seen, report_sequence FROM members WHERE room_id = ? AND token_hash = ? AND last_seen > 0')
-    .bind(id, await hash(token)).first<{ id: string; ready: number; buffered: number; epoch: number; last_seen: number; report_sequence: number }>();
+  const actor = actorRow.results[0] as { id: string; ready: number; buffered: number; epoch: number; last_seen: number; report_sequence: number } | undefined;
   if (!actor) return json({ error: 'Your seat has expired. Join the room again.' }, 401);
 
   // Evaluate the old lease before a returning host can renew it.
   let lapsed = false;
   if (stored.playing) {
-    // A host who left carries the last_seen = 0 marker, not a timestamp: read them as gone, or the lease
-    // arithmetic below rewinds the room to its last play or seek.
-    const host = await db.prepare('SELECT last_seen FROM members WHERE id = ? AND last_seen > 0').bind(stored.host_id).first<{ last_seen: number }>();
-    if (!host || host.last_seen <= now - PRESENCE_MS) {
-      const stoppedAt = host ? Math.min(now, host.last_seen + PRESENCE_MS) : now;
+    if (!hostLease || hostLease.last_seen <= now - PRESENCE_MS) {
+      const stoppedAt = hostLease ? Math.min(now, hostLease.last_seen + PRESENCE_MS) : now;
       await db.prepare('UPDATE rooms SET playing = 0, position = ?, revision = revision + 1, reason = ? WHERE id = ? AND revision = ?')
         .bind(timelinePosition(publicRoom(stored), stoppedAt), HOST_AWAY, id, stored.revision).run();
       stored = (await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<StoredRoom>())!;
@@ -100,13 +108,12 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     }
   }
 
-  const readMembers = async (): Promise<Member[]> => {
-    const { results } = await db.prepare('SELECT id, name, ready, buffered, epoch, last_seen FROM members WHERE room_id = ? AND last_seen > ? ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, rowid')
-      .bind(id, Date.now() - PRESENCE_MS, stored!.host_id).all<StoredMember>();
-    return results.map(m => ({ id: m.id, name: m.name, ready: !!m.ready, buffered: m.buffered, epoch: m.epoch, lastSeen: m.last_seen }));
-  };
+  const memberQuery = () => db.prepare('SELECT id, name, ready, buffered, epoch, last_seen FROM members WHERE room_id = ? AND last_seen > ? ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, rowid')
+    .bind(id, Date.now() - PRESENCE_MS, stored!.host_id);
+  const seated = (rows: StoredMember[]): Member[] => rows.map(m => ({ id: m.id, name: m.name, ready: !!m.ready, buffered: m.buffered, epoch: m.epoch, lastSeen: m.last_seen }));
+  const readMembers = async () => seated((await memberQuery().all<StoredMember>()).results);
 
-  let invite = '', hostKey = '', roomChanged = false;
+  let invite = '', hostKey = '', roomChanged = false, couch: Member[] | null = null;
   if (body.action === 'heartbeat') {
     if (typeof body.sequence !== 'number' || !Number.isSafeInteger(body.sequence) || body.sequence < 0) return json({ error: 'Invalid report.' }, 400);
     const duration = number(body.duration, 0, 604800);
@@ -124,9 +131,15 @@ async function handler(request: Request, context: { params: Promise<{ id: string
       // reporting ready at the epoch the room is on: a tab that wakes with an old snapshot is ready for a scene the
       // room has left, and seating it there would pause everyone. It cannot take a seat the room no longer has —
       // except the host's own seat, which the room can never resume without.
-      const report = await db.prepare('UPDATE members SET ready = ?, buffered = ?, epoch = CASE WHEN ? OR ((? OR epoch != ?) AND last_seen > ?) THEN ? ELSE ? END, last_seen = ?, report_sequence = ? WHERE id = ? AND (report_sequence < ? OR (last_seen > 0 AND last_seen < ?)) AND (last_seen > ? OR ? = ? OR (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ?)')
-        .bind(ready, buffered, actor.id === stored.host_id ? 1 : 0, ready && epoch === stored.epoch ? 1 : 0, SPECTATOR_EPOCH, now - PRESENCE_MS, epoch, SPECTATOR_EPOCH, now, body.sequence,
-          actor.id, body.sequence, now - 2000, now - PRESENCE_MS, actor.id, stored.host_id, id, now - PRESENCE_MS, MAX_SEATS).run();
+      // The couch travels with the report: inside the one write transaction the list already sees the row this
+      // statement has just stamped, and the reply at the end needs both anyway.
+      const [report, listed] = await db.batch([
+        db.prepare('UPDATE members SET ready = ?, buffered = ?, epoch = CASE WHEN ? OR ((? OR epoch != ?) AND last_seen > ?) THEN ? ELSE ? END, last_seen = ?, report_sequence = ? WHERE id = ? AND (report_sequence < ? OR (last_seen > 0 AND last_seen < ?)) AND (last_seen > ? OR ? = ? OR (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ?)')
+          .bind(ready, buffered, actor.id === stored.host_id ? 1 : 0, ready && epoch === stored.epoch ? 1 : 0, SPECTATOR_EPOCH, now - PRESENCE_MS, epoch, SPECTATOR_EPOCH, now, body.sequence,
+            actor.id, body.sequence, now - 2000, now - PRESENCE_MS, actor.id, stored.host_id, id, now - PRESENCE_MS, MAX_SEATS),
+        memberQuery(),
+      ]);
+      couch = seated(listed.results as StoredMember[]);
       accepted = !!report.meta.changes;
       // This seat is gone, but the tab keeps asking for it and takes it back the moment one frees up, so the
       // code lets the client say that instead of reading the refusal as a connection it has to repair.
@@ -207,7 +220,7 @@ async function handler(request: Request, context: { params: Promise<{ id: string
   // Only this request can have moved the room on; a guest heartbeat re-reading it is a round trip for nothing.
   if (roomChanged) stored = (await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<StoredRoom>())!;
   let room = publicRoom(stored);
-  const members = await readMembers();
+  const members = couch ?? await readMembers();
   if (room.playing && (!allReady(members, room, Date.now()) || timelinePosition(room, Date.now()) >= room.duration)) {
     const hostPresent = members.some(m => m.id === room.hostId);
     const ended = room.duration > 0 && timelinePosition(room, Date.now()) >= room.duration;

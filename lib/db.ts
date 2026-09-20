@@ -3,7 +3,10 @@ import { EXPIRY_GRACE_MS, ROOM_TTL_MS } from '@/lib/sync';
 
 export type RunResult = { meta: { changes: number } };
 export type Stmt = { bind(...values: unknown[]): Stmt; first<T>(): Promise<T | null>; all<T>(): Promise<{ results: T[] }>; run(): Promise<RunResult> };
-export type Db = { prepare(sql: string): Stmt; batch(statements: Stmt[]): Promise<RunResult[]> };
+// A batch answers every statement in one round trip, reads included: 'read' opens a read-only transaction,
+// so a handler can take several rows from one consistent snapshot without paying a hop for each.
+export type BatchResult = RunResult & { results: unknown[] };
+export type Db = { prepare(sql: string): Stmt; batch(statements: Stmt[], mode?: 'read' | 'write'): Promise<BatchResult[]> };
 
 export function getDb(): Db {
   return getDatabase();

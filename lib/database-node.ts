@@ -25,5 +25,5 @@ class Statement {
 }
 export function getDatabase(): Db {
   return { prepare: (sql: string) => new Statement(sql),
-    batch: async (statements: Statement[]) => (await connection().batch(statements, 'write')).map(result) };
+    batch: async (statements: Statement[], mode: 'read' | 'write' = 'write') => (await connection().batch(statements, mode)).map(result) };
 }
