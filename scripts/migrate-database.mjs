@@ -35,8 +35,10 @@ try {
       .map((sql) => sql.trim())
       .filter(Boolean);
     // libSQL prepares only the first statement of a chunk and discards the rest without erroring.
+    // Blanking string literals first keeps a quoted ';' from tripping the guard, and a quoted '--' from
+    // hiding the statement behind it from both the guard and libSQL.
     for (const statement of statements)
-      if (/;\s*\S/.test(statement.replace(/--[^\n]*/g, '')))
+      if (/;\s*\S/.test(statement.replace(/'(?:[^']|'')*'/g, "''").replace(/--[^\n]*/g, '')))
         throw new Error(`${name}: separate statements with --> statement-breakpoint, not ';'`);
     try {
       // migrate() turns foreign keys off before BEGIN, which batch() cannot do, and the bookkeeping
