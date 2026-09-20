@@ -20,7 +20,7 @@
     "test:mkv": "node --test tests/mkv.test.mjs",
     "test:helper": "node --test tests/helper.test.mjs tests/remote-wire.test.mjs",
     "test:migrate": "node --test tests/migrate.test.mjs",
-    "test:patches": "node --test tests/playsvideo-patches.test.mjs",
+    "test:patches": "node --test tests/playsvideo-patches.test.mjs tests/webtorrent-patches.test.mjs",
     "test:remote": "node --test tests/remote-helper.test.mjs",
     "test:relay": "node scripts/check-relay.mjs",
     "test:suites": "node -e \"const scripts=JSON.stringify(require('./package.json').scripts);const missing=require('fs').readdirSync('tests').filter(f=>(f.endsWith('.test.ts')||f.endsWith('.test.mjs'))&&!scripts.includes('tests/'+f));if(missing.length){console.error('No npm script runs: '+missing.join(', '));process.exit(1);}\"",
