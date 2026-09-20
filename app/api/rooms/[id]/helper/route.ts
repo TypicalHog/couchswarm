@@ -40,6 +40,7 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     status: helper?.status || 'Connect a helper to reach ordinary torrent peers.',
     infoHash: ready ? helper!.info_hash : '',
     downloadUrl: process.env.COUCHSWARM_HELPER_DOWNLOAD_URL || '',
+    downloadUrlLinux: process.env.COUCHSWARM_HELPER_DOWNLOAD_URL_LINUX || '',
     ...await iceConfiguration(memberId) });
   if (body.action === 'pair' && isOnline(mine)) return json({ error: 'Your helper is connected. Disconnect it before pairing another one.' }, 409);
   if (body.action === 'pair' || body.action === 'unpair') {

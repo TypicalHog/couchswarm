@@ -1,6 +1,6 @@
 import type { Session } from '@/lib/sync';
 
-export type HelperStatus = { paired: boolean; online: boolean; ready: boolean; own: boolean; mine: boolean; mineOnline: boolean; mineStatus: string; status: string; infoHash: string; downloadUrl: string; iceServers: RTCIceServer[]; relayAvailable: boolean };
+export type HelperStatus = { paired: boolean; online: boolean; ready: boolean; own: boolean; mine: boolean; mineOnline: boolean; mineStatus: string; status: string; infoHash: string; downloadUrl: string; downloadUrlLinux: string; iceServers: RTCIceServer[]; relayAvailable: boolean };
 export async function helperRequest<T>(session: Session, body: object, signal?: AbortSignal): Promise<T> {
   const bounded = signal ? AbortSignal.any([signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000);
   const response = await fetch(`/api/rooms/${session.roomId}/helper`, { method: 'POST',

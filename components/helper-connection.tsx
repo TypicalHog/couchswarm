@@ -13,6 +13,13 @@ export function HelperConnection({ session, isHost, reconnectIfOwnHelper, needed
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Both builds are always offered; this only decides which comes first, so it can settle after hydration and a
+  // wrong guess costs a visitor nothing. Android reports Linux in its user agent and runs neither build.
+  const [linuxFirst, setLinuxFirst] = useState(false);
+  useEffect(() => {
+    const platform = (navigator as Navigator & { userAgentData?: { platform: string } }).userAgentData?.platform || navigator.userAgent;
+    setLinuxFirst(/linux/i.test(platform) && !/android/i.test(platform));
+  }, []);
   useEffect(() => {
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
@@ -70,11 +77,15 @@ export function HelperConnection({ session, isHost, reconnectIfOwnHelper, needed
       : 'Waiting for your host’s helper. You can run your own instead.'
     : isHost ? 'Start your helper so this room can reach ordinary torrent peers. Your friends only need the room link.'
     : 'Nobody is running a helper yet. Run your own to reach ordinary torrent peers.';
+  // A site may publish either build or both, and each one's warnings are only true on its own platform.
+  const windowsDownload = status?.downloadUrl ? <><a className="outline-button" href={status.downloadUrl}><Download size={16}/> Download for Windows</a><p>Extract the ZIP, then open CouchSwarm Helper.exe. This build isn’t code-signed yet, so Windows SmartScreen says “unknown publisher”: choose More info, then Run anyway. When your first movie loads, Windows may also ask whether “Node.js JavaScript Runtime” — the helper’s bundled runtime — can use your network; allow it on private networks so torrent peers can reach you too.</p></> : null;
+  const linuxDownload = status?.downloadUrlLinux ? <><a className="outline-button" href={status.downloadUrlLinux}><Download size={16}/> Download for Linux</a><p>Extract the tarball, then run ./couchswarm-helper from a terminal. It carries its own Node, so there is nothing to install.</p></> : null;
   return <div className="helper-connection">
     <button className={`helper-button ${needed && !running ? 'primary-button' : 'outline-button'}`} onClick={() => onOpenChange(true)}><MonitorPlay size={16}/>{running ? 'Helper connected' : 'Connect your helper'}</button>
     {hint && <p className="helper-note">{hint}</p>}
-    <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="modal"><DialogHeader><DialogTitle>Your movie-night helper</DialogTitle><DialogDescription>{isHost ? 'Run the helper on your Windows computer and keep it open while you watch. Your friends only need the room link.' : 'Run the helper on your Windows computer to download from torrent peers yourself instead of through your host. Keep it open while you watch.'}</DialogDescription></DialogHeader>
-      <ol className="helper-steps"><li>{status?.downloadUrl ? <><a className="outline-button" href={status.downloadUrl}><Download size={16}/> Download for Windows</a><p>Extract the ZIP, then open CouchSwarm Helper.exe. This build isn’t code-signed yet, so Windows SmartScreen says “unknown publisher”: choose More info, then Run anyway. When your first movie loads, Windows may also ask whether “Node.js JavaScript Runtime” — the helper’s bundled runtime — can use your network; allow it on private networks so torrent peers can reach you too.</p></> : <span>The helper download isn’t configured for this site yet. Build it from the CouchSwarm source with npm run build:helper, or ask the site owner for the ZIP.</span>}</li>
+    <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="modal"><DialogHeader><DialogTitle>Your movie-night helper</DialogTitle><DialogDescription>{isHost ? 'Run the helper on your computer and keep it open while you watch. Your friends only need the room link.' : 'Run the helper on your computer to download from torrent peers yourself instead of through your host. Keep it open while you watch.'}</DialogDescription></DialogHeader>
+      <ol className="helper-steps"><li>{windowsDownload || linuxDownload ? linuxFirst ? <>{linuxDownload}{windowsDownload}</> : <>{windowsDownload}{linuxDownload}</>
+        : <span>The helper download isn’t configured for this site yet. Build it from the CouchSwarm source with npm run build:helper or npm run build:helper:linux, or ask the site owner for it.</span>}</li>
         <li>{status?.mineOnline ? <p>Your helper is already connected. Use “Disconnect helper” below before pairing another computer.</p> : <><button className="primary-button" aria-busy={busy} onClick={() => { if (!busy) void pair(); }}>{pairingUrl ? 'Create a fresh pairing link' : 'Create pairing link'}<Link2 size={16}/></button><p>Paste this private link into the helper. It works once and expires in {Math.round(PAIR_TTL_MS / 60000)} minutes.</p></>}</li></ol>
       {pairingUrl && <><div className="invite-link"><input className="text-input" aria-label="Private helper pairing link" readOnly value={pairingUrl} onFocus={event => event.target.select()}/><button className="primary-button" onClick={async () => { try { await navigator.clipboard.writeText(pairingUrl); setCopied(true); } catch { setError('Select the link and copy it manually.'); } }}>{copied ? 'Copied' : 'Copy'}</button></div><output className="sr-only" aria-live="polite" aria-atomic="true">{copied ? 'Pairing link copied' : ''}</output></>}
       <output className="helper-note">{running ? status.mineStatus : 'Waiting for your helper.'}</output>
