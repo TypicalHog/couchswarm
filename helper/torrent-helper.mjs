@@ -135,6 +135,12 @@ const deviceName = part => /^(con|prn|aux|nul|conin\$|conout\$|com[0-9¹²³]|lp
 // web seed URLs.
 export function torrentPathIssue(torrent, root = '') {
   const seen = new Set();
+  // fs-chunk-store makes a file's parent folder before it so much as reads it, and the startup hash check reads every
+  // file, so the folders of files the helper never serves are created too. A kept download is then left holding a
+  // folder like 'aux' that Explorer, cmd and PowerShell all refuse to remove.
+  for (const file of torrent.files)
+    if (slashed(file).split('/').slice(0, -1).some(part => /[<>:"|?*\p{Cc}]/u.test(part) || deviceName(part) || /[. ]$/.test(part)))
+      return 'This torrent has a folder name Windows cannot create. Choose another torrent.';
   for (const file of servedFiles(torrent)) {
     const parts = file.path.replaceAll('\\', '/').split('/');
     if (parts.slice(0, -1).some(part => /[<>:"|?*\p{Cc}]/u.test(part))) return 'This torrent has a folder name Windows cannot create. Choose another torrent.';

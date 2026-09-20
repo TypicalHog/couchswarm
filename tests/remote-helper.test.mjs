@@ -373,6 +373,30 @@ test('a kept download gets its own subfolder and outlives the helper', { timeout
   assert.deepEqual(await readdir(cacheRoot), kept, 'stopping the helper leaves a kept download where the user can find it');
 });
 
+test('a torrent is refused before its folders reach the disk', { timeout: 30000 }, async t => {
+  const seed = new WebTorrent(offline);
+  t.after(() => destroy(seed));
+  // 'aux' lies past the video span, so only screening every file catches it, and the hash check would have made it
+  // before the old post-ready check ran.
+  const payload = [Object.assign(Buffer.alloc(16384, 31), { name: 'Fixture/movie.mp4' }),
+    Object.assign(Buffer.alloc(100, 7), { name: 'Fixture/aux/extra.txt' })];
+  const seeded = await new Promise(resolve => seed.seed(payload, { name: 'Fixture', pieceLength: 16384, announce: [], store: MemoryStore }, resolve));
+  const host = await post('/api/rooms', { source: `${seeded.magnetURI}&x.pe=127.0.0.1:${seed.torrentPort}` }, null, 201);
+  const room = `/api/rooms/${host.roomId}`, route = room + '/helper';
+  t.after(() => post(room, { action: 'leave' }, host.token).catch(() => {}));
+  const pair = await post(route, { action: 'pair' }, host.token);
+  const cacheRoot = await mkdtemp(path.join(tmpdir(), 'couchswarm-folder-test-'));
+  const reports = [];
+  const helper = createRemoteAgent({ cacheRoot, keepDownloads: true, pollMs: 100, iceOverride: [], report: value => reports.push(value),
+    createClient: () => new WebTorrent(offline) });
+  t.after(async () => { await helper.stop(); if (path.dirname(cacheRoot) === tmpdir()) await rm(cacheRoot, { recursive: true, force: true }); });
+  await helper.pair(pair.pairingUrl);
+  for (let i = 0; i < 200 && !reports.some(value => /folder name Windows cannot create/.test(value.status)); i++) await sleep(100);
+  assert.ok(reports.some(value => /folder name Windows cannot create/.test(value.status)), reports.at(-1)?.status);
+  assert.deepEqual(await readdir(path.join(cacheRoot, `torrent-${seeded.infoHash}`)), [],
+    'the torrent is judged before anything opens a file, so no folder Windows cannot remove is left behind');
+});
+
 // CS1-S41: a revoked pairing must stop the agent from its own poll, so this case needs its own
 // helper — an unpaired room reports online === false whether or not the agent ever said goodbye.
 test('a revoked pairing stops the helper from its own poll', { timeout: 20000 }, async t => {

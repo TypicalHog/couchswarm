@@ -162,6 +162,12 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       const finish = error => { clearTimeout(timeout); signal.removeEventListener('abort', stopped); value.off('metadata', found); value.off('ready', ready); value.off('error', finish); value.off('close', stopped); if (error) reject(error); else resolve(); };
       // Checking a kept download against its hashes can outlast the discovery budget, so it gets its own.
       const found = () => {
+        // The hash check that starts the moment this handler returns reads every file, and fs-chunk-store makes a
+        // file's parent folder before it reads it, so the paths have to be judged now: a kept download would
+        // otherwise be left holding a folder Windows itself cannot remove. WebTorrent stops here when the torrent
+        // is gone, and finish() runs first so the 'close' it causes is not reported as a torrent that stopped.
+        const issue = torrentPathIssue(value, directory);
+        if (issue) { finish(new Error(issue)); value.destroy(); return; }
         clearTimeout(timeout);
         timeout = setTimeout(() => reject(new Error('Checking the movie files on disk took too long.')), 600000);
         if (!signal.aborted) notify('Checking the movie files on disk…');
@@ -174,8 +180,6 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       if (value.ready) ready();
     });
     if (closed || signal.aborted) return;
-    const issue = torrentPathIssue(value, directory);
-    if (issue) throw new Error(issue);
     await markSparse(value, signal);
     if (closed || signal.aborted) return;
     if (value.destroyed) throw new Error(describe(cause));
