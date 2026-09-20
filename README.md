@@ -49,6 +49,16 @@ Paste a magnet or HTTPS `.torrent` URL, create the room, and share the invite li
 
 Rooms support 12 active participants and expire 24 hours after they are created, once no one is on the couch. Invite secrets and participant credentials are hashed in the room database (Turso on Vercel, a local libSQL file in development). Each tab keeps its own access credential and the room invite in session storage; a host also keeps a re-claim key in local storage until they leave. Invitees cannot control playback. Room APIs use revision checks and heartbeat sequence numbers to reject stale updates. Clients poll every second and pause if contact is lost for 3.5 seconds (a little longer on slow connections); small drift is corrected with playback speed and larger drift by seeking. Network timing means this is best-effort synchronization, not a frame-accurate guarantee.
 
+## Data and privacy
+
+CouchSwarm has no accounts and collects nothing for itself, but a room does hold and hand on more than the video. What is kept where:
+
+- Room database (Turso on Vercel, `.local/rooms.db` in development): the room name, the torrent source, the name each participant chose, hashed invite secrets, participant credentials and helper pairing tokens, the helper's own status text, and — while a guest is connecting to a paired helper — the WebRTC offer and answer that set that connection up, which name the participants' IP addresses. All of it goes when the room is cleaned up, as described above.
+- Your browser: the room invite and this tab's access credential in session storage, a host's re-claim key in local storage until they leave, and the torrent store described under Torrent requirements.
+- The helper's computer: the movie in the download folder, `%LOCALAPPDATA%/CouchSwarm/settings.json`, and `%LOCALAPPDATA%/CouchSwarm/helper.log`.
+- The relay: a TURN server sees the IP addresses of the clients it relays between, and the temporary username it is given carries the member or helper id it was minted for.
+- Everyone else: torrent peers, trackers and the DHT see the IP address and the info hash of whoever is in the swarm, browser or helper, as they do for any torrent client. Connection setup asks a STUN server for a public address — Google's unless `COUCHSWARM_STUN_URLS` names another — and a Vercel deployment with Analytics and Speed Insights enabled collects whatever Vercel documents for those.
+
 ## Torrent requirements
 
 - Browsers connect to WebRTC-compatible peers and web seeds. The local helper acts as a web seed and connects to traditional (non-WebRTC) torrent peers over TCP, discovering them via UDP trackers and DHT; without a helper, a WebTorrent-capable seeder or reachable web seed must already be available.
