@@ -172,8 +172,11 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     value.on('close', () => queueMicrotask(() => failed(cause)));
     await new Promise((resolve, reject) => {
       let timeout = setTimeout(() => reject(new Error('No torrent metadata arrived. Check that this torrent has online seeders.')), 90000);
-      const finish = error => { clearTimeout(timeout); signal.removeEventListener('abort', stopped); value.off('metadata', found); value.off('ready', ready); value.off('error', finish); value.off('close', stopped); if (error) reject(error); else resolve(); };
-      // Checking a kept download against its hashes can outlast the discovery budget, so it gets its own.
+      // Checking a kept download against its hashes can outlast the discovery budget, so it gets its own, and every
+      // piece that verifies re-arms it: a slow drive still working through the movie has to be waited for, not given
+      // up on and then hashed from piece 0 again by each retry.
+      const rearm = () => { clearTimeout(timeout); timeout = setTimeout(() => reject(new Error('Checking the movie files on disk took too long.')), 600000); };
+      const finish = error => { clearTimeout(timeout); signal.removeEventListener('abort', stopped); value.off('metadata', found); value.off('ready', ready); value.off('error', finish); value.off('close', stopped); value.off('verified', rearm); if (error) reject(error); else resolve(); };
       const found = () => {
         // The hash check that starts the moment this handler returns reads every file, and fs-chunk-store makes a
         // file's parent folder before it reads it, so the paths have to be judged now: a kept download would
@@ -181,8 +184,8 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
         // is gone, and finish() runs first so the 'close' it causes is not reported as a torrent that stopped.
         const issue = torrentPathIssue(value, directory);
         if (issue) { finish(new Error(issue)); value.destroy(); return; }
-        clearTimeout(timeout);
-        timeout = setTimeout(() => reject(new Error('Checking the movie files on disk took too long.')), 600000);
+        rearm();
+        value.on('verified', rearm);
         if (!signal.aborted) notify('Checking the movie files on disk…');
       };
       const ready = () => finish();
