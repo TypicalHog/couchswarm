@@ -70,7 +70,8 @@ async function handler(request: Request, context: { params: Promise<{ id: string
   const token = request.headers.get('Authorization')?.replace(/^Bearer /, '') || '';
   if (!/^[a-f0-9]{64}$/.test(token)) return json({ error: 'Reopen your invite link to join this room.' }, 401);
   // Leaving is final: the last_seen = 0 marker retires the token with the seat, so a copy of it opens nothing here.
-  const actor = await db.prepare('SELECT id FROM members WHERE room_id = ? AND token_hash = ? AND last_seen > 0').bind(id, await hash(token)).first<{ id: string }>();
+  const actor = await db.prepare('SELECT id, ready, buffered, epoch, last_seen, report_sequence FROM members WHERE room_id = ? AND token_hash = ? AND last_seen > 0')
+    .bind(id, await hash(token)).first<{ id: string; ready: number; buffered: number; epoch: number; last_seen: number; report_sequence: number }>();
   if (!actor) return json({ error: 'Your seat has expired. Join the room again.' }, 401);
 
   // Evaluate the old lease before a returning host can renew it.
@@ -97,17 +98,23 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     if (typeof body.sequence !== 'number' || !Number.isSafeInteger(body.sequence) || body.sequence < 0) return json({ error: 'Invalid report.' }, 400);
     const duration = number(body.duration, 0, 604800);
     const epoch = number(body.epoch, -1, 1e9);
-    // A lapsed seat rejoins as a spectator until it reports ready (never the host, who owns the timeline), and cannot take a seat the room no longer has — except the host's own seat, which the room can never resume without.
-    const report = await db.prepare('UPDATE members SET ready = ?, buffered = ?, epoch = CASE WHEN ? OR (epoch != ? AND last_seen > ?) THEN ? ELSE ? END, last_seen = ?, report_sequence = ? WHERE id = ? AND (report_sequence < ? OR (last_seen > 0 AND last_seen < ?)) AND (last_seen > ? OR ? = ? OR (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ?)')
-      .bind(body.ready === true ? 1 : 0, number(body.buffered, 0, 604800), body.ready === true || actor.id === stored.host_id ? 1 : 0, SPECTATOR_EPOCH, now - PRESENCE_MS, epoch, SPECTATOR_EPOCH, now, body.sequence,
-        actor.id, body.sequence, now - 2000, now - PRESENCE_MS, actor.id, stored.host_id, id, now - PRESENCE_MS, MAX_SEATS).run();
-    if (!report.meta.changes) {
-      const me = await db.prepare('SELECT last_seen FROM members WHERE id = ?').bind(actor.id).first<{ last_seen: number }>();
-      // A member who left can never report again, so tell a tab still holding that token to rejoin instead of answering it with someone else's room.
-      if (me && me.last_seen === 0) return json({ error: 'Your seat has expired. Join the room again.' }, 401);
-      if (me && me.last_seen > 0 && me.last_seen <= now - PRESENCE_MS) return json({ error: `This couch is full (${MAX_SEATS} people). Try again when a seat opens.` }, 409);
+    const ready = body.ready === true ? 1 : 0;
+    const buffered = number(body.buffered, 0, 604800);
+    // A seat reporting every second all evening is most of what a room costs, so a report that would store the
+    // values already on the row is counted and never written: the clock still moves every 3 s against a 12 s
+    // presence window, and a buffered second nobody can see is not worth a write. A member the room has moved
+    // past, or one whose epoch changed, matches none of this and goes through the statement below.
+    let accepted = actor.ready === ready && actor.epoch === epoch && Math.trunc(actor.buffered) === Math.trunc(buffered)
+      && actor.last_seen > now - 3000 && actor.report_sequence < body.sequence;
+    if (!accepted) {
+      // A lapsed seat rejoins as a spectator until it reports ready (never the host, who owns the timeline), and cannot take a seat the room no longer has — except the host's own seat, which the room can never resume without.
+      const report = await db.prepare('UPDATE members SET ready = ?, buffered = ?, epoch = CASE WHEN ? OR (epoch != ? AND last_seen > ?) THEN ? ELSE ? END, last_seen = ?, report_sequence = ? WHERE id = ? AND (report_sequence < ? OR (last_seen > 0 AND last_seen < ?)) AND (last_seen > ? OR ? = ? OR (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ?)')
+        .bind(ready, buffered, ready || actor.id === stored.host_id ? 1 : 0, SPECTATOR_EPOCH, now - PRESENCE_MS, epoch, SPECTATOR_EPOCH, now, body.sequence,
+          actor.id, body.sequence, now - 2000, now - PRESENCE_MS, actor.id, stored.host_id, id, now - PRESENCE_MS, MAX_SEATS).run();
+      accepted = !!report.meta.changes;
+      if (!accepted && actor.last_seen <= now - PRESENCE_MS) return json({ error: `This couch is full (${MAX_SEATS} people). Try again when a seat opens.` }, 409);
     }
-    if (report.meta.changes && actor.id === stored.host_id && duration > 0 && body.mediaVersion === stored.media_version)
+    if (accepted && actor.id === stored.host_id && duration > 0 && body.mediaVersion === stored.media_version)
       roomChanged = !!(await db.prepare('UPDATE rooms SET duration = ? WHERE id = ? AND media_version = ? AND duration != ? AND (playing = 0 OR duration = 0 OR ? >= duration)')
         .bind(duration, id, stored.media_version, duration, duration).run()).meta.changes;
   } else if (body.action === 'leave') {
