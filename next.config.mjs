@@ -31,6 +31,12 @@ const nextConfig = {
       test: resource => Object.hasOwn(patched, resource.replaceAll('\\', '/').split('/playsvideo/dist/')[1] ?? ''),
       use: path.join(here, 'scripts/playsvideo-loader.cjs'),
     });
+    // WebTorrent's browser build is one minified file carrying fsa-chunk-store inside it, so the rule names
+    // that file rather than reading a table of them.
+    config.module.rules.push({
+      test: resource => resource.replaceAll('\\', '/').endsWith('/webtorrent/dist/webtorrent.min.js'),
+      use: path.join(here, 'scripts/webtorrent-loader.cjs'),
+    });
     return config;
   },
 };
