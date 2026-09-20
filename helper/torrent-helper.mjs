@@ -56,14 +56,18 @@ const publicHost = async value => {
   return addresses.length > 0 && addresses.every(({ address }) => publicAddress(address));
 };
 
+// A source the helper refuses outright. The agent retries a failed load three times, so a refusal that a second
+// attempt would reach the same way says so here rather than leaving the agent to guess from the wording.
+const refusal = message => Object.assign(new Error(message), { permanent: true });
+
 async function fetchTorrent(url, signal) {
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
-  if (isIP(hostname) && !publicAddress(hostname)) throw new Error('Torrent URLs must use public internet addresses.');
+  if (isIP(hostname) && !publicAddress(hostname)) throw refusal('Torrent URLs must use public internet addresses. Choose another torrent.');
   return new Promise((resolve, reject) => {
     const request = get(url, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
       lookup(host, options, callback) {
         lookup(host, { all: true }).then(addresses => {
-          if (!addresses.length || addresses.some(({ address }) => !publicAddress(address))) throw new Error('Torrent URLs must use public internet addresses.');
+          if (!addresses.length || addresses.some(({ address }) => !publicAddress(address))) throw refusal('Torrent URLs must use public internet addresses. Choose another torrent.');
           // Pin the checked addresses into this connection to prevent DNS rebinding.
           if (options.all) callback(null, addresses);
           else callback(null, addresses[0].address, addresses[0].family);
@@ -73,8 +77,9 @@ async function fetchTorrent(url, signal) {
       try {
         const status = response.statusCode ?? 0;
         // Redirects are not followed, so the address checked above stays the one this connection uses.
-        if (status >= 300 && status < 400) throw new Error('The torrent URL must return the file directly, without a redirect.');
-        if (status !== 200) throw new Error(`The torrent URL returned HTTP ${status}. Check that the link still works.`);
+        if (status >= 300 && status < 400) throw refusal('The torrent URL must return the file directly, without a redirect. Choose another torrent.');
+        // A server that is briefly down can answer the next attempt; everything else already said its final word.
+        if (status !== 200) throw Object.assign(new Error(`The torrent URL returned HTTP ${status}. Check that the link still works.`), { permanent: status < 500 });
         resolve(await readLimited(response, 4 * 1024 * 1024, 'That .torrent file is larger than 4 MiB. Choose another torrent.'));
       } catch (error) { response.destroy(); reject(error); }
     });
@@ -187,7 +192,7 @@ async function readLimited(stream, limit, message = 'Request is too large.') {
   let size = 0;
   for await (const chunk of stream) {
     size += chunk.length;
-    if (size > limit) throw new Error(message);
+    if (size > limit) throw refusal(message);
     chunks.push(Buffer.from(chunk));
   }
   return Buffer.concat(chunks);
@@ -199,11 +204,11 @@ export async function torrentSource(source, signal) {
     parsed = await parseTorrent(source);
   } else {
     const url = new URL(source);
-    if (url.protocol !== 'https:' || url.username || url.password || !/\.torrent$/i.test(url.pathname)) throw new Error('Use a magnet or HTTPS .torrent URL.');
+    if (url.protocol !== 'https:' || url.username || url.password || !/\.torrent$/i.test(url.pathname)) throw refusal('Use a magnet or HTTPS .torrent URL.');
     const bytes = await fetchTorrent(url, signal);
     // A login page or an empty body reaches the parser, whose own text names a bencode delimiter or a null read.
     try { parsed = await parseTorrent(bytes); }
-    catch (error) { console.error('Torrent parse failed:', error.message); throw new Error('That link did not return a valid .torrent file. Choose another torrent.'); }
+    catch (error) { console.error('Torrent parse failed:', error.message); throw refusal('That link did not return a valid .torrent file. Choose another torrent.'); }
   }
   // This helper retrieves data from torrent peers. Do not let metadata URLs,
   // web seeds, trackers or peer hints turn it into an arbitrary HTTP/file proxy

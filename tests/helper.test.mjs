@@ -256,3 +256,10 @@ test('torrentPathIssue rejects only the paths Windows cannot store', { timeout: 
   for (const entry of ['com.mkv', 'Contact.mkv', 'nullify.mkv', 'console/x.mkv'])
     assert.equal(torrentPathIssue(torrentOf(entry)), '', entry);
 });
+
+test('a source the helper refuses outright says it will not come out differently', { timeout: 5000 }, async () => {
+  // The agent retries a failed load three times and only stops when the error says to, so a refusal that has
+  // already made its final decision has to carry the flag rather than be recognised by its wording.
+  for (const source of ['https://127.0.0.1/private.torrent', 'http://example.com/movie.torrent', 'https://example.com/movie.mp4'])
+    await assert.rejects(torrentSource(source), error => error.permanent === true, source);
+});

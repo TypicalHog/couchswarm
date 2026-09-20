@@ -190,7 +190,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
     } catch (error) {
       // The room must never see a local filesystem path; the launcher window still does.
       report({ status: error.message, peers: connectedPeers(), torrentPeers: 0 });
-      throw new Error('The helper cannot write to its download folder. Stop sharing, then choose another folder in the helper.');
+      throw Object.assign(new Error('The helper cannot write to its download folder. Stop sharing, then choose another folder in the helper.'), { permanent: true });
     }
     directory = created;
     if (closed || signal.aborted) return;
@@ -227,7 +227,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
         // otherwise be left holding a folder Windows itself cannot remove. WebTorrent stops here when the torrent
         // is gone, and finish() runs first so the 'close' it causes is not reported as a torrent that stopped.
         const issue = torrentPathIssue(value, directory);
-        if (issue) { finish(new Error(issue)); value.destroy(); return; }
+        if (issue) { finish(Object.assign(new Error(issue), { permanent: true })); value.destroy(); return; }
         rearm();
         value.on('verified', rearm);
         if (!signal.aborted) notify('Checking the movie files on disk…');
@@ -281,10 +281,15 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
           })().catch(async error => {
             await clearTorrent();
             if (closed || controller.signal.aborted) return;
-            const retry = attempts < 3 && !/public internet addresses|magnet or HTTPS|Choose another torrent/.test(error.message);
+            // What can be retried is decided where the error is thrown, not by matching its wording here: an
+            // unwritable folder read as transient and was tried three times, and a refusal that was reworded
+            // would have changed side silently.
+            const retry = attempts < 3 && !error.permanent;
             // Filesystem errors carry local paths, which the room must never see.
             const message = error.code ? describe(error) : error.message;
-            notify(retry ? `${message} Retrying…` : `${message} Choose the movie again in the room to retry.`, true);
+            // Picking the same movie again would only re-run a load that cannot come out differently, so the
+            // offer to retry belongs to failures that ran out of attempts. A refusal carries its own advice.
+            notify(retry ? `${message} Retrying…` : error.permanent ? message : `${message} Choose the movie again in the room to retry.`, true);
             if (retry) scheduleRetry();
           }).finally(() => { if (loadAbort === controller) loadingSource = null; });
         }
