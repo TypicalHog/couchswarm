@@ -130,6 +130,8 @@ test('rejects malformed requests, rewinds at the end, and gates seats, moderatio
   state = await call({ action: 'kick', memberId: guest.memberId, revision: state.room.revision });
   assert.equal(state.members.some(member => member.id === guest.memberId), false);
   await post(path, { action: 'snapshot' }, guest.token, 401);
+  const readmitted = await post(path, { action: 'join', invite: host.invite, name: 'Guest' }, undefined, 201);
+  assert.notEqual(readmitted.memberId, guest.memberId, 'removing someone does not revoke the link they hold, so they come back to a new seat until the host resets it');
   state = await call({ action: 'rotate', revision: state.room.revision });
   assert.match(state.invite, /^[a-f0-9]{64}$/);
   await post(path, { action: 'join', invite: host.invite, name: 'Stale link' }, undefined, 403);

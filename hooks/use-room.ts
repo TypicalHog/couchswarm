@@ -258,7 +258,10 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
           try { sessionStorage.removeItem(`couchswarm:${session.roomId}`); } catch { /* Storage blocked: nothing to clear. */ }
           const invite = new URLSearchParams(location.hash.slice(1)).get('invite');
           setSession(null); setSnapshot(null); setConnected(false);
-          if (status === 401 && invite) setInvitation({ roomId: session.roomId, invite }); else setError((err as Error).message);
+          // The dialog that comes back is the one a first-time invitee sees, so without a reason beside it a seat
+          // that was just taken away reads as a fresh welcome.
+          if (status === 401 && invite) { setInvitation({ roomId: session.roomId, invite }); setError('You are no longer in this room. You can join again with the same link.'); }
+          else setError((err as Error).message);
           return;
         }
         failures++;
