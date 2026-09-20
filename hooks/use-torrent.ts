@@ -30,6 +30,21 @@ function readFile(file: TorrentFile, hold: (stream: TorrentFileStream) => void) 
   });
 }
 
+// Nothing outside the next torrent's add callback ever frees this browser's movie store, so a viewer who left
+// the room kept the whole download as site data. A tab showing no movie, with no room in its address bar to
+// rejoin, is the moment that store is certainly nobody's: take the same lock a stream takes — a tab still
+// watching holds it — and drop every movie. Settles rather than rejects, because start() waits on it.
+async function reclaimStore() {
+  try {
+    await navigator.locks.request('couchswarm:media', { ifAvailable: true }, async lock => {
+      if (!lock) return;
+      const root = await navigator.storage.getDirectory();
+      for await (const key of (root as unknown as { keys(): AsyncIterable<string> }).keys())
+        await root.removeEntry(key, { recursive: true }).catch(() => {});
+    });
+  } catch { /* No lock manager or no storage: there is nothing here to reclaim. */ }
+}
+
 // A torrent past this is an archive, not a movie: verifying it takes tens of seconds and the file picker it
 // lists is unusable. Mirrored by MAX_TORRENT_FILES in helper/torrent-helper.mjs.
 const MAX_TORRENT_FILES = 20000;
@@ -101,6 +116,8 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     setStats({ speed: 0, peers: 0, progress: 0, filename: '', size: 0 });
     setStatus(source ? 'Finding your movie…' : '');
     const fail = (message: string) => { if (!disposed) { setError(message); setStatus(''); } };
+    // A room keeps its id in the address bar, so a tab with no movie and no room there has left one.
+    if (!source && !new URLSearchParams(location.search).get('room')) teardownRef.current = reclaimStore();
 
     async function start() {
       if (!source || !video) return;
