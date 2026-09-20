@@ -101,6 +101,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     let gotMetadata = false;
     let peerTimer: ReturnType<typeof setTimeout> | undefined;
     let helperTimer: ReturnType<typeof setTimeout> | undefined;
+    let healthyTimer: ReturnType<typeof setTimeout> | undefined;
     let cancelProbe: ReturnType<typeof setInterval> | undefined;
     let releaseLock: (() => void) | undefined;
     const abort = new AbortController();
@@ -242,7 +243,13 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           // A stale chunk is not a helper that could not be reached: it tells the viewer to reload instead of
           // spending this movie's one upgrade attempt on a browser-only stream.
           }).catch(err => { if (abort.signal.aborted || (err as { stale?: boolean }).stale) throw err; helperFailed = retriedUpgrade.current; retriedUpgrade.current = true; return fallBack(err); }) : null;
-        if (remote) setHelper({ host: !remote.own });
+        if (remote) {
+          setHelper({ host: !remote.own });
+          // The reconnect budget above is spent by every drop in one movie, so an evening of brief Wi-Fi
+          // hiccups used it up and stopped the film the fourth time one landed. A leg that has stayed up this
+          // long has earned it back; one that flaps inside the minute still gives up after three.
+          healthyTimer = setTimeout(() => { retriedHelper.current = 0; }, 60_000);
+        }
         // Cleared after the helper is reported, so the two never read false at the same moment. Every way
         // out of the attempt — connected, unpaired mid-wait, offline too long, failed — passes here.
         setHelperPending(false);
@@ -495,6 +502,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
       clearInterval(tick);
       clearTimeout(peerTimer);
       clearTimeout(helperTimer);
+      clearTimeout(healthyTimer);
       clearInterval(cancelProbe);
       video.removeEventListener('error', mediaError);
       mkvPlayer?.destroy();
