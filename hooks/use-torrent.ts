@@ -267,11 +267,20 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         }).catch(err => { if (abort.signal.aborted || (err as { status?: number }).status === 200) throw err; helperFailed = retriedUpgrade.current; retriedUpgrade.current = true; return fallBack(err); }) : null;
         if (disposed) return;
         if (bridge) {
+          let misses = 0;
           const heartbeat = async () => {
-            try { await bridge.status(); }
+            try { await bridge.status(); misses = 0; }
             catch (err) {
+              const code = (err as { status?: number }).status;
+              // A timed-out poll, a dropped connection or a 5xx from the proxy in front of the helper is a
+              // blip, and the paired helper's heartbeat rides out four of them before giving up. Only an
+              // answer the helper gave itself ends the movie on the spot.
+              if ((code === undefined || code >= 500) && ++misses < 4) {
+                if (!disposed) helperTimer = setTimeout(() => void heartbeat(), 5000);
+                return;
+              }
               bridge.release();
-              const reported = err instanceof Error && (err as { status?: number }).status !== undefined ? err.message : '';
+              const reported = err instanceof Error && code !== undefined ? err.message : '';
               if (!disposed) fail(reported || 'The torrent helper disconnected. Reconnect to the movie to try again.');
               return;
             }
