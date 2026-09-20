@@ -10,6 +10,10 @@ test('SRT cues are re-emitted in the WebVTT timestamp grammar', () => {
   assert.match(toWebVTT('0:00:01,5 --> 0:1:02,00\nx', 'a.srt'), /^00:00:01\.500 --> 00:01:02\.000$/m);
   assert.match(toWebVTT('00:00:01,000-->00:00:02,000\nx', 'a.srt'), /^00:00:01\.000 --> 00:00:02\.000$/m);
   assert.match(toWebVTT('00:00:01.000 --> 00:00:02.000\nx', 'a.srt'), /^00:00:01\.000 --> 00:00:02\.000$/m);
+  assert.match(toWebVTT(' 00:00:01,000 --> 00:00:02,000\nx', 'a.srt'), /^00:00:01\.000 --> 00:00:02\.000$/m,
+    'a timing line a retiming tool indented still times its cue');
+  assert.match(toWebVTT('00:00:01,0004 --> 00:00:02,999\nx', 'a.srt'), /^00:00:01\.000 --> 00:00:02\.999$/m,
+    'WebVTT counts thousandths, so a fourth fraction digit is dropped rather than the cue');
   assert.ok(!toWebVTT('00:00:01,000 --> 00:00:02,000  X1:040 X2:600 Y1:460 Y2:480\nHi', 'a.srt').includes('X1:040'),
     'SRT cue coordinates are not valid WebVTT cue settings');
 });

@@ -16,7 +16,9 @@ export function decodeSubtitle(bytes: AllowSharedBufferSource) {
   catch { return new TextDecoder('windows-1252').decode(bytes); }
 }
 
-const TIMING = /^(\d+):(\d{1,2}):(\d{1,2})[.,](\d{1,3}) *--> *(\d+):(\d{1,2}):(\d{1,2})[.,](\d{1,3})/;
+// A leading space and a fourth fraction digit both come out of retiming and OCR tools. A line opening with a
+// timestamp and an arrow is never dialogue, so accepting either costs nothing and saves the cue below it.
+const TIMING = /^\s*(\d+):(\d{1,2}):(\d{1,2})[.,](\d+) *--> *(\d+):(\d{1,2}):(\d{1,2})[.,](\d+)/;
 // An SRT converted from an ASS keeps override tags such as {\an8} or {\i1}, and WebVTT has no syntax for them,
 // so a browser prints them. Only a brace block that opens with a backslash goes, which leaves a brace someone
 // actually said alone; stopping the class at the next brace keeps the scan linear on a hostile line.
@@ -27,7 +29,7 @@ const SRT_OVERRIDE = /\{\\[^{}]*\}/g;
 const DIALOGUE = /^Dialogue:[^,]*,([^,]+),([^,]+),(?:[^,]*,){6}([\s\S]*)$/;
 
 const clock = (h: string, m: string, s: string, ms: string) =>
-  `${h.padStart(2, '0')}:${m.padStart(2, '0')}:${s.padStart(2, '0')}.${ms.padEnd(3, '0')}`;
+  `${h.padStart(2, '0')}:${m.padStart(2, '0')}:${s.padStart(2, '0')}.${ms.slice(0, 3).padEnd(3, '0')}`;
 
 // WebVTT reads an arrow in cue text as the start of the next cue, which would swallow every cue after it,
 // and any '<' as the start of a tag, which swallows the rest of the cue up to the next '>' — so 'I <3 you'
