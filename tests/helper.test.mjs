@@ -185,6 +185,9 @@ test('helper rejects private-network metadata URLs and expires inactive viewers'
   env.setSource('https://127.0.0.1/private.torrent');
   const local = await env.open();
   assert.match((await env.ready(local.id)).error, /public internet/);
+  env.setSource('https://localhost/private.torrent');
+  const named = await env.open();
+  assert.match((await env.ready(named.id)).error, /public internet/, 'a hostname that resolves privately is rejected by the connection lookup');
   assert.equal((await env.call(`/seed/${local.id}`)).status, 503);
   // The sweep ticks every idleMs and releases when idle exceeds it, so release lands by seen + 2 * idleMs.
   await new Promise(resolve => setTimeout(resolve, 3100));
