@@ -83,8 +83,11 @@ export const videoFiles = files => files.filter(file => /\.(mkv|mp4|webm|m4v|ogv
 export function videoSpanFiles(torrent) {
   const videos = videoFiles(torrent.files);
   if (!videos.length) return [];
-  const from = Math.floor(Math.min(...videos.map(file => file.offset)) / torrent.pieceLength) * torrent.pieceLength;
-  const to = Math.ceil(Math.max(...videos.map(file => file.offset + file.length)) / torrent.pieceLength) * torrent.pieceLength;
+  // A torrent can list more files than a spread can carry as arguments, so walk them instead.
+  let first = Infinity, last = 0;
+  for (const file of videos) { first = Math.min(first, file.offset); last = Math.max(last, file.offset + file.length); }
+  const from = Math.floor(first / torrent.pieceLength) * torrent.pieceLength;
+  const to = Math.ceil(last / torrent.pieceLength) * torrent.pieceLength;
   return torrent.files.filter(file => file.offset + file.length > from && file.offset < to);
 }
 
@@ -305,17 +308,24 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
       };
       client.on('error', () => fail('The helper lost its torrent connection. Reconnect to try again.'));
       const torrent = entry.torrent = client.add(parsed, { path: directory, strategy: 'sequential', deselect: true, destroyStoreOnDestroy: true }, async torrent => {
-        if (entry.disposed) return;
-        clearTimeout(entry.timeout);
-        if (!videoFiles(torrent.files).length) { fail('This torrent does not contain an MKV, MP4, WebM, M4V, or OGV video.'); return; }
-        const issue = torrentPathIssue(torrent, directory);
-        if (issue) { fail(issue); return; }
-        // entry.ready unlocks the read endpoint, which drives the first store write, so flag the files first.
-        await markSparse(torrent, entry.abort.signal);
-        if (entry.disposed) return;
-        entry.ready = true;
-        // Reads select only the requested pieces. Avoid a full background movie
-        // download when everybody already has enough buffer or leaves the room.
+        // Nothing awaits this callback, so a throw here would be an unhandled rejection that takes the
+        // whole helper down, and with it every other viewer it is serving.
+        try {
+          if (entry.disposed) return;
+          clearTimeout(entry.timeout);
+          if (!videoFiles(torrent.files).length) { fail('This torrent does not contain an MKV, MP4, WebM, M4V, or OGV video.'); return; }
+          const issue = torrentPathIssue(torrent, directory);
+          if (issue) { fail(issue); return; }
+          // entry.ready unlocks the read endpoint, which drives the first store write, so flag the files first.
+          await markSparse(torrent, entry.abort.signal);
+          if (entry.disposed) return;
+          entry.ready = true;
+          // Reads select only the requested pieces. Avoid a full background movie
+          // download when everybody already has enough buffer or leaves the room.
+        } catch (error) {
+          console.error('Torrent setup failed:', error);
+          fail('The helper could not load this torrent.');
+        }
       });
       torrent.on('error', error => fail(error?.code ? `The helper could not write its cache (${error.code}).` : 'The helper could not load this torrent. Check that it has online seeders.'));
       entry.timeout = setTimeout(() => fail('No torrent metadata arrived after 90 seconds. This torrent may have no reachable seeders.'), 90000);
