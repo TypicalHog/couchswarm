@@ -108,6 +108,8 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
   const fileRef = useRef<TorrentFile | null>(null);
   // The piece bar reads this on a timer of its own: a state per piece is far too much to hand React every second.
   const piecesRef = useRef<{ torrent: Torrent; file: TorrentFile } | null>(null);
+  // The piece the player last read from, which is the only thing that knows where in the file it is.
+  const readingRef = useRef(-1);
   const retriedHelper = useRef(0);
   const retriedUpgrade = useRef(false);
   // A restart that lost its helper may adopt the returning one even though the kept store already holds bytes.
@@ -144,6 +146,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     if (movieRef.current !== movie) { movieRef.current = movie; retriedHelper.current = 0; retriedUpgrade.current = false; lostHelper.current = false; setSubtitle(null); }
     fileRef.current = null;
     piecesRef.current = null;
+    readingRef.current = -1;
     subtitleRef.current = [];
     seedUrlRef.current = '';
     setLoadedVersion(-1);
@@ -431,7 +434,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           const follow = followReads(value, file);
           // WebTorrent treats an end of 0 as absent and streams the whole file against a Content-Length of 1.
           file.on('iterator', ({ iterator, req }, replace) => {
-            if (!/^bytes=0-0$/.test(req.headers.range || '')) { follow(req.headers.range || ''); return; }
+            if (!/^bytes=0-0$/.test(req.headers.range || '')) { readingRef.current = follow(req.headers.range || ''); return; }
             replace((async function* () { for await (const chunk of iterator) { yield chunk.subarray(0, 1); return; } })());
           });
           setStats(s => ({ ...s, filename: file.name, size: file.length }));
@@ -656,11 +659,12 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     const held = piecesRef.current;
     return held ? pieceStates(held.torrent, held.file) : null;
   }, []);
-  // What the room asks when the player's own buffer has stopped short: how much of the movie after this position
-  // is already saved, and therefore playable whatever the browser has decided to hold in the element.
-  const readStoredAhead = useCallback((position: number, duration: number) => {
+  // What the room asks when the player's own buffer has stopped short: how much of the movie past where the
+  // player is reading is already saved, and therefore playable whatever the browser has decided to hold.
+  const readStoredAhead = useCallback((duration: number) => {
     const held = piecesRef.current;
-    return held ? storedAhead(pieceStates(held.torrent, held.file), held.file, held.torrent.pieceLength, position, duration) : 0;
+    if (!held || !(duration > 0) || !(held.file.length > 0)) return 0;
+    return storedAhead(pieceStates(held.torrent, held.file), held.file, held.torrent.pieceLength, readingRef.current, duration / held.file.length);
   }, []);
 
   const reconnect = useCallback(() => { retriedHelper.current = 0; retriedUpgrade.current = false; setAttempt(value => value + 1); }, []);

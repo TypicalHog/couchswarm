@@ -28,6 +28,15 @@ test('a read past pieces the background download has not reached restarts it the
   assert.equal(calls.length, 2, 'the next read from the same place moves nothing');
 });
 
+test('each read answers the piece it starts in, which is where the player is', () => {
+  const { follow } = fake([2, 3]);
+  assert.equal(follow('bytes=0-'), 2, 'the file starts inside piece 2');
+  assert.equal(follow('bytes=14-'), 3, 'answered even when the download does not move');
+  assert.equal(follow('bytes=55-'), 8);
+  assert.equal(follow('bytes=900-'), 11, 'a read past the end of the file is clamped to its last piece');
+  assert.equal(follow('not a range'), -1);
+});
+
 test('a read behind the background download brings it back', () => {
   const { calls, follow } = fake();
   follow('bytes=55-');

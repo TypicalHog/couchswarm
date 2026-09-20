@@ -26,33 +26,34 @@ test('a piece counts as arriving only once some of it is here and none of it has
 });
 
 // A 90-byte file against a 90-second movie, so a byte is a second and the arithmetic is readable.
-const saved = (verified: number[]) => storedAhead(pieceStates(torrent(verified), file), file, 10, 0, 90);
+const saved = (verified: number[], reading = 2) => storedAhead(pieceStates(torrent(verified), file), file, 10, reading, 1);
 
-test('the saved run is measured from the position to the far edge of its last whole piece', () => {
-  // Pieces 2 to 5 hold torrent bytes 20 to 59, which is everything up to byte 34 of a file that starts at 25.
-  assert.equal(saved([2, 3, 4, 5]), 35);
-  assert.equal(storedAhead(pieceStates(torrent([2, 3, 4, 5]), file), file, 10, 10, 90), 25, 'measured from where playback is, not from the start');
-  // The end of the run is the end of the file, never the end of the piece hanging past it.
-  assert.equal(saved([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]), 90);
+test('the saved run is counted in whole pieces past the one being read', () => {
+  // Reading piece 2 with 3, 4 and 5 saved behind it is thirty bytes, and at a byte a second, thirty seconds.
+  assert.equal(saved([2, 3, 4, 5]), 30);
+  assert.equal(saved([2, 3, 4, 5], 4), 10, 'measured from the read, so a later read has less ahead of it');
+  assert.equal(saved([2, 3, 4, 5], 5), 0, 'nothing whole past the piece being read');
 });
 
 test('the run stops at the first piece that is not saved yet', () => {
-  assert.equal(saved([2, 3, 5]), 15, 'piece 4 is missing, so the run is pieces 2 and 3');
+  assert.equal(saved([2, 3, 5]), 10, 'piece 4 is missing, so only piece 3 is ahead');
   assert.equal(saved([2, 3, 4, 5]) > saved([2, 3, 5]), true);
 });
 
-test('a position with nothing saved under it answers zero', () => {
-  assert.equal(saved([5, 6, 7]), 0, 'the run ahead has to start where playback is');
+test('a read over a piece that is not here answers zero', () => {
+  assert.equal(saved([3, 4, 5]), 0, 'the run has to start where the player is reading');
   assert.equal(saved([]), 0);
   // A piece on its way is not a piece that can be played.
-  assert.equal(storedAhead(pieceStates(torrent([], [2, 3]), file), file, 10, 0, 90), 0);
-  assert.equal(storedAhead(pieceStates(torrent([2, 3, 4, 5]), file), file, 10, 1000, 90), 0, 'past the end of the file');
+  assert.equal(saved([3, 4, 5], 2), 0);
+  assert.equal(storedAhead(pieceStates(torrent([], [2, 3]), file), file, 10, 2, 1), 0);
+  // Before the first read there is no position to measure from, and a read off the end is not one either.
+  assert.equal(saved([2, 3, 4, 5], -1), 0);
+  assert.equal(saved([2, 3, 4, 5], 99), 0);
 });
 
-test('nothing is measured without pieces, a duration, or a file', () => {
-  assert.equal(storedAhead(null, file, 10, 0, 90), 0);
-  assert.equal(storedAhead(pieceStates(torrent([2, 3]), file), file, 10, 0, 0), 0);
-  assert.equal(storedAhead(pieceStates(torrent([2, 3]), file), { offset: 25, length: 0 }, 10, 0, 90), 0);
+test('nothing is measured without pieces or a duration', () => {
+  assert.equal(storedAhead(null, file, 10, 2, 1), 0);
+  assert.equal(storedAhead(pieceStates(torrent([2, 3]), file), file, 10, 2, 0), 0);
 });
 
 test('nothing is mapped before metadata, after the torrent is gone, or for a file with no bytes', () => {

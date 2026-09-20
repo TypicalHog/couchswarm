@@ -9,23 +9,21 @@ type Pieces = {
   pieces: ({ length: number; missing: number } | null)[];
 };
 
-// How many seconds of video are saved in an unbroken run from a position. A browser sizes the player's own
-// forward buffer for itself, and on a progressive file it settles a second or two short of the room's readiness
-// target however much of the movie is already on disk — so the run of pieces ahead of the playhead is what
-// really says whether this seat can play on. Time maps to bytes at the file's average rate: a variable bitrate
-// makes that approximate, which is enough to answer whether the next few seconds are here.
-export function storedAhead(states: Uint8Array | null, file: { offset: number; length: number }, pieceLength: number, position: number, duration: number) {
-  if (!states?.length || !(duration > 0) || !(file.length > 0)) return 0;
-  const rate = file.length / duration;
-  const first = Math.floor(file.offset / pieceLength);
-  // An index off either end reads undefined, which is not DONE, so a position outside the file answers zero.
-  const at = Math.floor((file.offset + Math.min(file.length - 1, position * rate)) / pieceLength) - first;
-  if (states[at] !== DONE) return 0;
-  let last = at;
+// How many seconds of video are saved in an unbroken run past the piece the player is reading. A browser sizes
+// the player's own forward buffer for itself, and on a progressive file it settles a second or two short of the
+// room's readiness target however much of the movie is already on disk — so this is what really says whether a
+// seat can play on. It starts from the read rather than from a position in seconds, because seconds only map
+// back to a byte at an average bitrate, and a seat that joined mid-movie is nowhere near where that points.
+// The length of the run is still averaged, which a long run makes harmless.
+export function storedAhead(states: Uint8Array | null, file: { offset: number }, pieceLength: number, reading: number, secondsPerByte: number) {
+  if (!states?.length || !(secondsPerByte > 0)) return 0;
+  // An index off either end reads undefined, which is not DONE, so a read outside the file answers zero.
+  const from = reading - Math.floor(file.offset / pieceLength);
+  if (states[from] !== DONE) return 0;
+  let last = from;
   while (states[last + 1] === DONE) last++;
-  // The run reaches the far edge of its last saved piece, and the file ends where it ends.
-  const end = Math.min(file.length, (first + last + 1) * pieceLength - file.offset);
-  return Math.max(0, end / rate - position);
+  // Whole pieces past the one being read: part of that one has been played already.
+  return (last - from) * pieceLength * secondsPerByte;
 }
 
 // One byte per piece of the chosen video, in file order. Null until the torrent has metadata to say what its
