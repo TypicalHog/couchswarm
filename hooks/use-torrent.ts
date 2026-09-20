@@ -179,7 +179,9 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           if (disposed) return;
           setHelper({ peers: value.peers });
           if (!value.ready) setStatus(`Your helper is finding torrent peers… ${value.peers} connected`);
-        }).catch(err => { if (abort.signal.aborted) throw err; setStatus('Helper unavailable, using browser peers…'); return null; }) : null;
+        // Same budget as the paired helper: a refused lease — the room's own superseded torrent still
+        // holding a laggard guest, or a helper not started yet — is retried once, then offered.
+        }).catch(err => { if (abort.signal.aborted) throw err; helperFailed = retriedUpgrade.current; retriedUpgrade.current = true; setStatus('Helper unavailable, using browser peers…'); return null; }) : null;
         if (disposed) return;
         if (bridge) {
           const heartbeat = async () => {
@@ -203,16 +205,24 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           // A helper that was offered and could not be reached is upgraded to once per movie, never in a loop:
           // once that budget is spent the returning helper is offered instead, because a tab left on browser
           // peers that receive nothing holds the whole room paused with nothing to click.
+          const upgrade = (own: boolean) => {
+            if (fileRef.current?.downloaded && !lostHelper.current) return;
+            if (helperFailed) fail(`${own ? 'Your' : 'The host’s'} helper is available again. Reconnect to the movie to use it.`);
+            else setAttempt(value => value + 1);
+          };
           const watch = async () => {
             try {
               const { ready, own } = await helperStatus(session, abort.signal);
               if (disposed) return;
-              if (ready && (!remote || own)) {
-                if (!fileRef.current?.downloaded || lostHelper.current) {
-                  if (helperFailed) fail(`${own ? 'Your' : 'The host’s'} helper is available again. Reconnect to the movie to use it.`);
-                  else setAttempt(value => value + 1);
-                }
-                return;
+              if (ready && (!remote || own)) { upgrade(own); return; }
+              // A helper served through this site is not paired to the room, so the room API can never
+              // report it: only its own health endpoint says it is there. Without this probe a refused
+              // lease, or a helper started after the room, is final for the whole movie.
+              if (!remote) {
+                const health = await fetch('/torrent-helper/health', { signal: abort.signal })
+                  .then(response => response.ok ? response.json() as Promise<{ available?: boolean }> : null).catch(() => null);
+                if (disposed) return;
+                if (health?.available === true) { upgrade(true); return; }
               }
             }
             catch { /* The room connection already reports connectivity failures. */ }

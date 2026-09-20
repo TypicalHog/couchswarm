@@ -415,8 +415,12 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
         if (entry) clearTimeout(entry.idleTimer);
         else {
           for (const other of entries.values()) if (!other.sessions.size) { clearTimeout(other.idleTimer); entries.delete(other.key); cleanup(other); }
-          if (entries.size >= MAX_ROOM_TORRENTS) { json(res, 429, { error: 'The helper supports two active torrents. Leave another room first.' }); return; }
-          entry = { key, sessions: new Set(), streams: new Set(), ready: false, disposed: false, abort: new AbortController() };
+          // A room watches one torrent at a time, so the budget counts rooms rather than entries: a host
+          // switching source must not be refused by their own room's superseded entry, which a guest's
+          // lease keeps alive until that guest's room poll remounts them onto the new source.
+          const rooms = new Set([...entries.values()].map(other => other.roomId));
+          if (!rooms.has(body.roomId) && rooms.size >= MAX_ROOM_TORRENTS) { json(res, 429, { error: 'The helper supports two active torrents. Leave another room first.' }); return; }
+          entry = { key, roomId: body.roomId, sessions: new Set(), streams: new Set(), ready: false, disposed: false, abort: new AbortController() };
           entries.set(key, entry);
           void initialize(entry, room.source);
         }
