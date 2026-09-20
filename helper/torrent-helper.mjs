@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdir, mkdtemp, open, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readdir, rm, stat, utimes } from 'node:fs/promises';
 import path from 'node:path';
 import { lookup } from 'node:dns/promises';
 import { BlockList, isIP } from 'node:net';
@@ -285,9 +285,10 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
           if (!name.startsWith('session-')) continue;
           const stale = path.join(root, name);
           if ([...entries.values()].some(other => other.directory === stale)) continue;
-          const info = await stat(stale).catch(() => null);
-          if (!info || !info.isDirectory() || Date.now() - info.mtimeMs <= 3600000) continue;
-          if (!await stat(path.join(stale, '.couchswarm')).catch(() => null)) continue;
+          // The marker is what a live helper keeps fresh; writes inside a session folder leave its own mtime alone,
+          // so judging the folder would reclaim another helper's movie while it is still playing.
+          const marker = await stat(path.join(stale, '.couchswarm')).catch(() => null);
+          if (!marker || Date.now() - marker.mtimeMs <= 3600000) continue;
           await rm(stale, { recursive: true, force: true }).catch(() => {});
         }
       }
@@ -330,6 +331,14 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
     for (const [id, session] of sessions) if (Date.now() - session.seen > idleMs) release(id);
   }, Math.min(30000, idleMs));
   sweep.unref();
+  // Another helper sharing this cache root reclaims a session folder an hour after its marker was written,
+  // so keep ours current for as long as the download is held.
+  const heartbeat = setInterval(() => {
+    const now = new Date();
+    for (const entry of entries.values())
+      if (entry.directory) void utimes(path.join(entry.directory, '.couchswarm'), now, now).catch(() => {});
+  }, 600000);
+  heartbeat.unref();
 
   async function handle(req, res, next = () => json(res, 404, { error: 'Not found.' })) {
     const url = URL.parse(req.url, origin);
@@ -445,7 +454,7 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
   }
 
   return { handle, async close() {
-    closed = true; clearInterval(sweep);
+    closed = true; clearInterval(sweep); clearInterval(heartbeat);
     for (const id of sessions.keys()) release(id);
     for (const entry of entries.values()) { clearTimeout(entry.idleTimer); cleanup(entry); }
     entries.clear();
