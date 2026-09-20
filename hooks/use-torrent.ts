@@ -262,7 +262,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           // Naming the subtitles costs nothing; their bytes are only read once somebody picks one.
           subtitleRef.current = subtitleFiles(value.files);
           setSubtitles(subtitleRef.current.map(file => ({ name: file.name, path: file.path })));
-          if (pendingPick.current) setListed(value => value + 1);
+          if (pendingPick.current) setListed(count => count + 1);
           const file = videos[fileIndex];
           if (!videos.length) { fail('No video found. Choose a torrent containing an MKV, MP4, WebM, M4V, or OGV video.'); return; }
           if (!file) { fail(`The host chose video #${fileIndex + 1}, but this torrent has ${videos.length}. Ask the host to pick again.`); return; }
