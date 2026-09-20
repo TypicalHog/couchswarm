@@ -107,9 +107,12 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     let accepted = actor.ready === ready && actor.epoch === epoch && Math.trunc(actor.buffered) === Math.trunc(buffered)
       && actor.last_seen > now - 3000 && actor.report_sequence < body.sequence;
     if (!accepted) {
-      // A lapsed seat rejoins as a spectator until it reports ready (never the host, who owns the timeline), and cannot take a seat the room no longer has — except the host's own seat, which the room can never resume without.
-      const report = await db.prepare('UPDATE members SET ready = ?, buffered = ?, epoch = CASE WHEN ? OR (epoch != ? AND last_seen > ?) THEN ? ELSE ? END, last_seen = ?, report_sequence = ? WHERE id = ? AND (report_sequence < ? OR (last_seen > 0 AND last_seen < ?)) AND (last_seen > ? OR ? = ? OR (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ?)')
-        .bind(ready, buffered, ready || actor.id === stored.host_id ? 1 : 0, SPECTATOR_EPOCH, now - PRESENCE_MS, epoch, SPECTATOR_EPOCH, now, body.sequence,
+      // A lapsed seat comes back as a spectator (never the host, who owns the timeline) and only retakes its seat by
+      // reporting ready at the epoch the room is on: a tab that wakes with an old snapshot is ready for a scene the
+      // room has left, and seating it there would pause everyone. It cannot take a seat the room no longer has —
+      // except the host's own seat, which the room can never resume without.
+      const report = await db.prepare('UPDATE members SET ready = ?, buffered = ?, epoch = CASE WHEN ? OR ((? OR epoch != ?) AND last_seen > ?) THEN ? ELSE ? END, last_seen = ?, report_sequence = ? WHERE id = ? AND (report_sequence < ? OR (last_seen > 0 AND last_seen < ?)) AND (last_seen > ? OR ? = ? OR (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ?)')
+        .bind(ready, buffered, actor.id === stored.host_id ? 1 : 0, ready && epoch === stored.epoch ? 1 : 0, SPECTATOR_EPOCH, now - PRESENCE_MS, epoch, SPECTATOR_EPOCH, now, body.sequence,
           actor.id, body.sequence, now - 2000, now - PRESENCE_MS, actor.id, stored.host_id, id, now - PRESENCE_MS, MAX_SEATS).run();
       accepted = !!report.meta.changes;
       if (!accepted && actor.last_seen <= now - PRESENCE_MS) return json({ error: `This couch is full (${MAX_SEATS} people). Try again when a seat opens.` }, 409);
