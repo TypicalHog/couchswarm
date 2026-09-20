@@ -19,6 +19,10 @@ static class Skin {
     public static readonly Color Surface = Contrast ? SystemColors.Window : Color.FromArgb(25, 30, 26);
     public static readonly Color Field = Contrast ? SystemColors.Window : Color.FromArgb(20, 26, 20);
     public static readonly Color Edge = Contrast ? SystemColors.WindowText : Color.FromArgb(44, 52, 45);
+    // Edge is 1.32:1 against Surface: enough for the card's own border, invisible as the boundary of a control.
+    // Text boxes and the unchecked box take the website's input border instead (app/globals.css .text-input),
+    // which clears WCAG 1.4.11's 3:1 at 3.80:1.
+    public static readonly Color FieldEdge = Contrast ? SystemColors.WindowText : Color.FromArgb(107, 125, 94);
     public static readonly Color Lime = Contrast ? SystemColors.Highlight : Color.FromArgb(194, 242, 138);
     public static readonly Color LimeLift = Contrast ? SystemColors.Highlight : Color.FromArgb(210, 255, 162);
     public static readonly Color LimePress = Contrast ? SystemColors.Highlight : Color.FromArgb(173, 221, 121);
@@ -85,7 +89,7 @@ class Card : Panel {
             var box = child as TextBox;
             if (box == null) continue;
             var field = Rectangle.Inflate(box.Bounds, (int)(PadX * scale), (int)(PadY * scale));
-            Skin.Plate(e.Graphics, field, (int)(8 * scale), Skin.Field, box.Focused ? Skin.Lime : Skin.Edge);
+            Skin.Plate(e.Graphics, field, (int)(8 * scale), Skin.Field, box.Focused ? Skin.Lime : Skin.FieldEdge);
         }
         if (Dot.IsEmpty) return;
         int size = (int)(9 * scale);
@@ -162,7 +166,7 @@ class Check : CheckBox {
         int size = (int)(20 * scale);
         var box = new Rectangle(1, (ClientSize.Height - size) / 2, size, size);
         Color face = Checked ? (Enabled ? Skin.Lime : Skin.Mix(Skin.Surface, Skin.Lime, 0.22)) : Skin.Field;
-        Color edge = !Enabled ? Skin.Mix(Skin.Edge, Skin.Surface, 0.4) : Checked ? face : hover ? Skin.Mix(Skin.Edge, Skin.Lime, 0.45) : Skin.Edge;
+        Color edge = !Enabled ? Skin.Mix(Skin.FieldEdge, Skin.Surface, 0.4) : Checked ? face : hover ? Skin.Mix(Skin.FieldEdge, Skin.Lime, 0.45) : Skin.FieldEdge;
         Skin.Plate(e.Graphics, box, (int)(6 * scale), face, edge);
         if (Checked) {
             using (var pen = new Pen(Enabled ? Skin.OnLime : Skin.Mix(Skin.OnLime, Skin.Surface, 0.45), Math.Max(2f, 2f * scale))) {
