@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { isMkv, videoFiles } from '../lib/video-files.ts';
 import { videoFiles as helperVideoFiles } from '../helper/torrent-helper.mjs';
-import { MAX_SEATS } from '../lib/sync.ts';
-import { MAX_SEATS as helperSeats } from '../helper/constants.mjs';
+import { MAX_HELPER_PEERS, MAX_SEATS } from '../lib/sync.ts';
+import { MAX_HELPER_PEERS as helperPeers, MAX_SEATS as helperSeats } from '../helper/constants.mjs';
 
 test('MKV torrents select the main movie and retain other video choices', () => {
   const files = [
@@ -33,3 +33,5 @@ test('the packaged helper and the site select the same video files', () => {
 });
 
 test('the packaged helper and the site agree on the seat count', () => assert.equal(helperSeats, MAX_SEATS));
+
+test('the packaged helper and the site agree on how many viewers one helper answers', () => assert.equal(helperPeers, MAX_HELPER_PEERS));

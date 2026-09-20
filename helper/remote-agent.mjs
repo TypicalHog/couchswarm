@@ -4,7 +4,7 @@ import WebTorrent from 'webtorrent';
 import Peer from '@thaunknown/simple-peer';
 import { markSparse, torrentPathIssue, torrentSource, videoSpanFiles } from './torrent-helper.mjs';
 import { serveTorrentPeer } from './remote-wire.mjs';
-import { MAX_SEATS } from './constants.mjs';
+import { MAX_HELPER_PEERS } from './constants.mjs';
 
 // Pieces kept selected past recent requests: enough to pipeline the swarm fetch, far short of a whole movie. A browser
 // reads at its playhead and backfills from the start of the file at the same time, so a few regions stay selected.
@@ -188,7 +188,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       for (const [id, peer] of peers) if (!live.has(id) || data.room.mediaVersion !== mediaVersion) { peers.delete(id); peer.destroy(); }
       if (torrent && data.room.mediaVersion === mediaVersion) {
         for (const remote of data.peers) {
-          if (remote.answered || peers.has(remote.id) || peers.size >= MAX_SEATS) continue;
+          if (remote.answered || peers.has(remote.id) || peers.size >= MAX_HELPER_PEERS) continue;
           // The native WebRTC polyfill assembles TURN URLs from these fields.
           const iceServers = (iceOverride ?? data.iceServers).map(server => ({ ...server,
             ...(server.username ? { username: encodeURIComponent(server.username), credential: encodeURIComponent(server.credential) } : {}),
