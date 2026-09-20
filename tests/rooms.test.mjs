@@ -7,8 +7,14 @@ const magnet = 'magnet:?xt=urn:btih:' + 'a'.repeat(40);
 async function post(path, body, token, expected = 200) {
   const response = await fetch(origin + path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body), signal: AbortSignal.timeout(10000) })
     .catch(error => { throw new Error(`POST ${origin + path}: ${error.message}`); });
-  const data = await response.json();
-  assert.equal(response.status, expected, data.error || `HTTP ${response.status}`);
+  // A dev-overlay 500, a 404 page or a proxy answers HTML, and parsing that before the status assertion throws a
+  // SyntaxError inside this helper with no status, route or body to go on.
+  const text = await response.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch { /* reported below, together with the status */ }
+  const detail = `POST ${origin + path}${body.action ? ` ${body.action}` : ''}: HTTP ${response.status} ${response.headers.get('content-type')}: ${text.slice(0, 200)}`;
+  assert.equal(response.status, expected, data?.error || detail);
+  assert.ok(data, detail);
   return data;
 }
 
