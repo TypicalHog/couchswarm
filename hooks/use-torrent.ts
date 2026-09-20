@@ -108,6 +108,9 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
   const retriedUpgrade = useRef(false);
   // A restart that lost its helper may adopt the returning one even though the kept store already holds bytes.
   const lostHelper = useRef(false);
+  // Whether this tab is streaming from its own paired helper at this moment. The room's status says a paired
+  // row exists, which a stopped or offline helper leaves behind, so it cannot answer that.
+  const ownHelperLive = useRef(false);
   const movieRef = useRef('');
   const sourceRef = useRef('');
   // Where the subtitle effect, which has no torrent of its own, can see the standalone helper's seed URL.
@@ -141,6 +144,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     setLoadedVersion(-1);
     setHelper(null);
     setHelperPending(false);
+    ownHelperLive.current = false;
     // The file list belongs to the torrent, not the selection: keep it across a file switch so the picker stays mounted.
     if (sourceRef.current !== source) { sourceRef.current = source; setFiles([]); setSubtitles([]); }
     setError('');
@@ -260,6 +264,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         };
         const remote = session ? await connectRemoteHelper(session, mediaVersion, abort.signal, setStatus,
           own => {
+            ownHelperLive.current = false;
             if (fileRef.current?.progress === 1) return;
             setHelper(null);
             lostHelper.current = true;
@@ -271,6 +276,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           // spending this movie's one upgrade attempt on a browser-only stream.
           }).catch(err => { if (abort.signal.aborted || (err as { stale?: boolean }).stale) throw err; helperFailed = retriedUpgrade.current; retriedUpgrade.current = true; return fallBack(err); }) : null;
         if (remote) {
+          ownHelperLive.current = remote.own;
           setHelper({ host: !remote.own });
           // The reconnect budget above is spent by every drop in one movie, so an evening of brief Wi-Fi
           // hiccups used it up and stopped the film the fourth time one landed. A leg that has stayed up this
@@ -640,6 +646,10 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
   }, [subtitle, picked, videoRef, listed]);
 
   const reconnect = useCallback(() => { retriedHelper.current = 0; retriedUpgrade.current = false; setAttempt(value => value + 1); }, []);
+  // Unpairing only changes what this tab streams from if it was streaming from that helper. Rebuilding the
+  // pipeline for a helper that had already stopped empties the video for nothing, and the ready:false the next
+  // heartbeat then reports pauses the room for everyone.
+  const reconnectIfOwnHelper = useCallback(() => { if (ownHelperLive.current) reconnect(); }, [reconnect]);
   const chooseSubtitle = useCallback((next: number | File | null) => { setSubtitle(next); setPicked(count => count + 1); }, []);
 
   // The effect's cleanup pulls the attached <track> the moment the pick changes, so committing an upload before
@@ -658,5 +668,5 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     return true;
   }, [chooseSubtitle]);
 
-  return { status, error, files, stats, loadedVersion, helper, helperPending, reconnect, subtitles, subtitle, setSubtitle: chooseSubtitle, uploadSubtitle, subtitleError, subtitleBusy };
+  return { status, error, files, stats, loadedVersion, helper, helperPending, reconnect, reconnectIfOwnHelper, subtitles, subtitle, setSubtitle: chooseSubtitle, uploadSubtitle, subtitleError, subtitleBusy };
 }

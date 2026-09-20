@@ -5,8 +5,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { helperRequest, helperStatus, type HelperStatus } from '@/lib/remote-helper';
 import { PAIR_TTL_MS, type Session } from '@/lib/sync';
 
-export function HelperConnection({ session, isHost, reconnect, needed, open, onOpenChange }:
-  { session: Session; isHost: boolean; reconnect: () => void; needed: boolean; open: boolean; onOpenChange: (open: boolean) => void }) {
+export function HelperConnection({ session, isHost, reconnectIfOwnHelper, needed, open, onOpenChange }:
+  { session: Session; isHost: boolean; reconnectIfOwnHelper: () => void; needed: boolean; open: boolean; onOpenChange: (open: boolean) => void }) {
   const [status, setStatus] = useState<HelperStatus | null>(null);
   const [pairingUrl, setPairingUrl] = useState('');
   const [pairingExpires, setPairingExpires] = useState(0);
@@ -53,8 +53,9 @@ export function HelperConnection({ session, isHost, reconnect, needed, open, onO
   }
   async function unpair() {
     setBusy(true); setError('');
-    const servedByMine = !!status?.own;
-    try { await helperRequest(session, { action: 'unpair' }); setPairingUrl(''); setStatus(await helperStatus(session)); if (servedByMine) reconnect(); }
+    // Only the pipeline knows whether it is streaming from this helper right now: a paired row stays behind a
+    // helper that was stopped or went offline, so asking the status would restart a stream nothing changed.
+    try { await helperRequest(session, { action: 'unpair' }); setPairingUrl(''); setStatus(await helperStatus(session)); reconnectIfOwnHelper(); }
     catch { setError('Could not disconnect the helper. Try again.'); }
     finally { setBusy(false); }
   }
