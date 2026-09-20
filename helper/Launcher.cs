@@ -211,6 +211,7 @@ class CouchSwarmHelper : Form {
     readonly JavaScriptSerializer json = new JavaScriptSerializer();
     Process helper;
     bool quitting, running;
+    int viewers;
     string lastLink = "";
 
     CouchSwarmHelper() {
@@ -344,6 +345,13 @@ class CouchSwarmHelper : Form {
                 try { helper.StandardInput.Close(); } catch {}
                 return;
             }
+            // Closing stops the helper at once, and with it every friend's movie: worth one question first.
+            if (!quitting && e.CloseReason == CloseReason.UserClosing && viewers > 0
+                && MessageBox.Show(this, viewers + (viewers == 1 ? " friend is" : " friends are") + " watching through this helper. Closing it stops their movie.",
+                    "CouchSwarm", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.OK) {
+                e.Cancel = true;
+                return;
+            }
             e.Cancel = true;
             if (!quitting) {
                 quitting = true;
@@ -445,6 +453,7 @@ class CouchSwarmHelper : Form {
                 bool failed = data.ContainsKey("error");
                 bool ended = failed || data.ContainsKey("stopped");
                 if (data.ContainsKey("status")) Say(Convert.ToString(data["status"]), failed ? Skin.Alarm : ended || !running ? Skin.Muted : Skin.Lime);
+                viewers = data.ContainsKey("peers") ? Convert.ToInt32(data["peers"]) : 0;
                 meta.Text = data.ContainsKey("peers") && data.ContainsKey("torrentPeers") ? "Viewers connected: " + data["peers"] + "     Torrent peers: " + data["torrentPeers"] : "";
                 if (ended) SetRunning(false);
                 if (failed && link.Text.Length == 0) link.Text = lastLink;
@@ -458,6 +467,7 @@ class CouchSwarmHelper : Form {
                 if (quitting) { Close(); return; }
                 Say("Helper stopped (code " + code + "). Create a fresh pairing link to reconnect.", Skin.Alarm);
                 meta.Text = "";
+                viewers = 0;
                 SetRunning(false);
             });
         };
