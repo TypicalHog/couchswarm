@@ -1,7 +1,6 @@
 import { createInterface } from 'node:readline';
-import path from 'node:path';
-import os from 'node:os';
 import { createRemoteAgent } from './remote-agent.mjs';
+import { defaultDownloads } from './data-paths.mjs';
 
 let agent, keepDownloads = false;
 const report = data => { process.stdout.write(`${JSON.stringify(data)}\n`); };
@@ -21,8 +20,7 @@ input.on('line', line => {
       // placeholder and the packaged README name, whichever way the Keep checkbox is set. Temporary and kept data
       // still cannot be confused there: only mkdtemp's room-XXXXXX directories carrying a .couchswarm marker are
       // ever swept, and a leftover from a forced kill is now under the root a later session looks in.
-      const home = path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'CouchSwarm');
-      agent = createRemoteAgent({ cacheRoot: command.folder || path.join(home, 'downloads'), keepDownloads, report });
+      agent = createRemoteAgent({ cacheRoot: command.folder || defaultDownloads, keepDownloads, report });
       await agent.pair(command.url);
     }
   }).catch(error => report({ status: error.message, error: true }));
