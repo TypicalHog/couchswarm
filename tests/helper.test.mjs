@@ -1,13 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
 import WebTorrent from 'webtorrent';
 import MemoryStore from 'memory-chunk-store';
 import { createTorrentHelper, filterPeers, publicAddress, torrentPathIssue, torrentSource } from '../helper/torrent-helper.mjs';
+import { MAX_ROOM_TORRENTS, MAX_SEATS } from '../helper/constants.mjs';
 
 // Offline by default, so a helper built without the createClient below still cannot reach the DHT or a public tracker.
 process.env.COUCHSWARM_HELPER_OFFLINE ??= '1';
@@ -70,6 +71,26 @@ async function setup(t, files, options = {}) {
   };
   return { call, open, ready, seeder, origin, cacheRoot, nativeClients, close: () => helper.close(), clients: () => clients, setSource: value => { source = value; } };
 }
+
+// The cache root can be a folder of the user's own, so the startup sweep deletes only what a helper left there.
+// It runs once per process, so this has to stay the first test in the file that opens a session.
+test('the startup sweep reclaims only its own marked, hour-old session folders', { timeout: 20000 }, async t => {
+  const env = await setup(t, Object.assign(Buffer.alloc(16384, 3), { name: 'movie.mp4' }));
+  const old = (Date.now() - 2 * 3600000) / 1000;
+  for (const name of ['session-marked', 'session-fresh', 'session-notes']) {
+    const folder = path.join(env.cacheRoot, name);
+    await mkdir(folder);
+    if (name !== 'session-notes') await writeFile(path.join(folder, '.couchswarm'), '');
+    // Judged by the marker, not the folder: writes inside a session leave the folder's own mtime alone.
+    if (name === 'session-marked') await utimes(path.join(folder, '.couchswarm'), old, old);
+    if (name === 'session-notes') await utimes(folder, old, old);
+  }
+  await env.ready((await env.open()).id);
+  const left = await readdir(env.cacheRoot);
+  assert.ok(!left.includes('session-marked'), 'an hour-old session a helper left behind is reclaimed');
+  assert.deepEqual(['session-fresh', 'session-notes'].filter(name => !left.includes(name)), [],
+    'a session still in use, and a folder the user named, are both left alone');
+});
 
 test('helper obtains magnet metadata over TCP and serves verified single-file ranges to two viewers', { timeout: 20000 }, async t => {
   const payload = Buffer.alloc(256 * 1024);
@@ -194,6 +215,19 @@ test('helper rejects private-network metadata URLs and expires inactive viewers'
   assert.equal((await env.call(`/sessions/${local.id}`)).status, 410);
   clearInterval(keepAlive);
   assert.equal((await env.call(`/sessions/${busy.id}`)).status, 200, 'a polled lease survives the sweep');
+});
+
+test('a torrent with no video is refused rather than served', { timeout: 20000 }, async t => {
+  const env = await setup(t, Object.assign(Buffer.alloc(1024, 7), { name: 'notes.txt' }));
+  assert.match((await env.ready((await env.open()).id)).error, /does not contain an MKV/);
+});
+
+test('the helper stops leasing past the seats it can serve', { timeout: 20000 }, async t => {
+  const env = await setup(t, Object.assign(Buffer.alloc(16384, 11), { name: 'movie.mp4' }));
+  const leased = [];
+  for (let i = 0; i < MAX_ROOM_TORRENTS * MAX_SEATS; i++) leased.push((await env.open()).status);
+  assert.deepEqual([...new Set(leased)], [201], 'every seat inside the budget is leased');
+  assert.equal((await env.open()).status, 429, 'the one past it is refused');
 });
 
 test('a magnet cannot point the helper at the private network', { timeout: 5000 }, async () => {
