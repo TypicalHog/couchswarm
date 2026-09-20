@@ -35,6 +35,21 @@ try {
         );
       continue;
     }
+    // A schema provisioned outside this runner - drizzle-kit push or migrate, or a SQL shell - carries no
+    // bookkeeping row, so the baseline is replayed onto tables that already exist and every build from then
+    // on dies on 'table `helper_peers` already exists'. Name the cause while the message can still be read.
+    if (name === '0000_init.sql') {
+      const baseline = ['rooms', 'members', 'helpers', 'helper_peers'];
+      const found = await client.execute({
+        sql: `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${baseline.map(() => '?').join(', ')})`,
+        args: baseline,
+      });
+      const present = baseline.filter((table) => found.rows.some((row) => row.name === table));
+      if (present.length)
+        throw new Error(
+          `${name} has no row in couchswarm_migrations, but this database already holds ${present.join(', ')}: it was created outside npm run db:migrate, by drizzle-kit push or migrate or a SQL shell. Point TURSO_DATABASE_URL at an empty database and run npm run db:migrate, which is the only supported way to provision one.`,
+        );
+    }
     const statements = sql
       .split('--> statement-breakpoint')
       .map((sql) => sql.trim())
