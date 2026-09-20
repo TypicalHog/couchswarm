@@ -23,7 +23,9 @@ console.log(`Migrating ${url.startsWith('file:') ? url : new URL(url).host}`
 try {
   await client.execute('CREATE TABLE IF NOT EXISTS couchswarm_migrations (name TEXT PRIMARY KEY, checksum TEXT NOT NULL)');
   for (const name of (await readdir('drizzle')).filter((name) => name.endsWith('.sql')).sort()) {
-    const sql = (await readFile(`drizzle/${name}`, 'utf8')).replace(/\r\n?/g, '\n');
+    // An editor that re-saves an applied migration as UTF-8 with a BOM would otherwise move its checksum
+    // and fail every build from then on, the same editor churn the CRLF normalisation already absorbs.
+    const sql = (await readFile(`drizzle/${name}`, 'utf8')).replace(/^﻿/, '').replace(/\r\n?/g, '\n');
     const checksum = createHash('sha256').update(sql).digest('hex');
     const existing = await client.execute({ sql: 'SELECT checksum FROM couchswarm_migrations WHERE name = ?', args: [name] });
     if (existing.rows.length) {
