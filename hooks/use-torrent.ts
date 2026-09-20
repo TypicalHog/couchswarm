@@ -316,6 +316,13 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           if (isMkv(file.name) && (typeof MediaSource === 'undefined' || !MediaSource.canConstructInDedicatedWorker)) {
             fail('This browser cannot play MKV video. Ask the host for an MP4 or WebM version, or watch in Chrome or Edge.'); return;
           }
+          // Selecting the file, and the open-ended ranges the video element asks for, pull the whole video into
+          // this browser's store. A private window's allowance is fixed and far smaller than the disk, so a
+          // movie that can never fit is refused here rather than partway through the night.
+          void navigator.storage.estimate().then(({ quota }) => {
+            if (!disposed && quota !== undefined && file.length > quota)
+              fail('This movie is larger than the storage this browser allows CouchSwarm. A private window gets much less space than a normal one: open the invite in a normal window, free up disk space, or use another device.');
+          }).catch(() => {});
           file.select();
           const playNatively = () => {
             // A codec the browser cannot decode is dropped at demux and the audio plays on: no media error,
@@ -370,7 +377,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         // the bytes could not be stored, so telling the room to check the link sends it after another torrent
         // the helper is already serving.
         torrent.on('error', error => { torrentFailed = true; fail(/quota|storage/i.test(String(error)) || (error as { name?: string }).name === 'QuotaExceededError'
-          ? 'Your browser ran out of storage for this movie. Free up disk space or use another device.'
+          ? 'Your browser ran out of storage for this movie. A private window gets much less space than a normal one: open the invite in a normal window, free up disk space, or use another device.'
           : gotMetadata ? 'This browser could not save this movie. Reconnect to try again, or ask the host for another torrent.'
           : 'Could not load this torrent. Check the link; .torrent URLs must allow browser access (CORS).'); });
         torrent.on('metadata', () => {
