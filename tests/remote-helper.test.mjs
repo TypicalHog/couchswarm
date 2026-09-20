@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -143,8 +143,15 @@ test('remote helper delivers magnet metadata and seekable multi-file bytes from 
   // markSparse flags every span file larger than a piece before the first write; a.mp4 (<= pieceLength) is skipped.
   if (process.platform === 'win32') {
     const [dir] = (await readdir(cacheRoot)).filter(name => name.startsWith('room-'));
-    const { stdout } = await run('fsutil', ['sparse', 'queryflag', path.join(cacheRoot, dir, 'RTC fixture', 'b.mkv')], { windowsHide: true });
-    assert.match(stdout, /^This file is set as sparse/m, 'the helper marked the movie file sparse before writing it');
+    // fsutil exits 0 either way and prints its verdict in the UI language, so the only reading that holds on a
+    // non-English Windows is against a file that is certainly not sparse.
+    const queryflag = async file => (await run('fsutil', ['sparse', 'queryflag', file], { windowsHide: true })).stdout.trim();
+    const control = `${cacheRoot}-control.bin`;
+    await writeFile(control, '');
+    try {
+      assert.notEqual(await queryflag(path.join(cacheRoot, dir, 'RTC fixture', 'b.mkv')), await queryflag(control),
+        'the helper marked the movie file sparse before writing it');
+    } finally { await rm(control, { force: true }); }
   }
   const peer = new Peer({ initiator: true, trickle: false, config: { iceServers: [] } });
   peer.on('error', () => {}); peer.id = 'test-room-peer';
