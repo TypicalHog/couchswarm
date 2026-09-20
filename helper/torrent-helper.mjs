@@ -21,11 +21,29 @@ const MAX_SESSIONS = MAX_ROOM_TORRENTS * MAX_SEATS;
 // The dev server builds one helper per loopback origin; they share a cache root.
 let swept = false;
 const blocked = new BlockList();
-for (const [address, prefix] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8],
+for (const [address, prefix] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['192.0.0.0', 24],
   ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 4], ['240.0.0.0', 4]]) blocked.addSubnet(address, prefix);
-for (const [address, prefix] of [['::', 96], ['::1', 128], ['64:ff9b::', 96], ['2002::', 16], ['2001::', 32],
+for (const [address, prefix] of [['::', 96], ['::1', 128], ['2002::', 16], ['2001::', 32],
   ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8]]) blocked.addSubnet(address, prefix, 'ipv6');
-const publicAddress = address => !blocked.check(address, isIP(address) === 6 ? 'ipv6' : 'ipv4');
+// A translating prefix carries a real IPv4 in the low 32 bits, and says nothing itself about where that
+// address lives: judging the carrier refuses every public host a DNS64 resolver synthesises, and still
+// lets 10.0.0.5 through a local-use translator. So decode these and judge what they carry.
+const translating = new BlockList();
+// RFC 6052 well-known, RFC 8215 local-use, and the RFC 2765 IPv4-translated form.
+for (const [address, prefix] of [['64:ff9b::', 96], ['64:ff9b:1::', 48], ['::ffff:0:0:0', 96]]) translating.addSubnet(address, prefix, 'ipv6');
+const embeddedAddress = value => {
+  if (!translating.check(value, 'ipv6')) return '';
+  const tail = value.slice(value.lastIndexOf(':') + 1);
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(tail)) return tail;
+  // The last two groups hold the address; either can be elided, which reads as zero.
+  const groups = value.split(':');
+  const low = parseInt(groups.pop() || '0', 16), high = parseInt(groups.pop() || '0', 16);
+  return `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`;
+};
+export const publicAddress = address => {
+  const carried = isIP(address) === 6 ? embeddedAddress(address.toLowerCase()) : '';
+  return carried ? !blocked.check(carried, 'ipv4') : !blocked.check(address, isIP(address) === 6 ? 'ipv6' : 'ipv4');
+};
 // A name is not an address: resolve it here the way fetchTorrent does, or `localhost` and
 // `127.0.0.1.nip.io` walk straight past the filter below.
 const publicHost = async value => {

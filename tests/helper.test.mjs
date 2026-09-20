@@ -7,7 +7,7 @@ import path from 'node:path';
 import { once } from 'node:events';
 import WebTorrent from 'webtorrent';
 import MemoryStore from 'memory-chunk-store';
-import { createTorrentHelper, filterPeers, torrentPathIssue, torrentSource } from '../helper/torrent-helper.mjs';
+import { createTorrentHelper, filterPeers, publicAddress, torrentPathIssue, torrentSource } from '../helper/torrent-helper.mjs';
 
 // Offline by default, so a helper built without the createClient below still cannot reach the DHT or a public tracker.
 process.env.COUCHSWARM_HELPER_OFFLINE ??= '1';
@@ -219,6 +219,15 @@ test('a magnet cannot point the helper at the private network', { timeout: 5000 
   assert.equal(offlineParsed.peerAddresses.length, 4, 'offline mode keeps loopback hints so the suites can seed locally');
   assert.equal(offlineParsed.announce.length, 6);
   assert.deepEqual(filterPeers({}), {}, 'offline mode leaves the suites free to seed from loopback');
+});
+
+test('a translated address is judged by the IPv4 it carries', { timeout: 5000 }, async () => {
+  for (const address of ['64:ff9b::10.0.0.5', '64:ff9b::a00:5', '64:ff9b:1::a00:5', '::ffff:0:7f00:1', '::ffff:10.0.0.5',
+    '2002:808:808::1', 'fe80::1', '::1', '192.0.0.170', '127.0.0.1'])
+    assert.equal(publicAddress(address), false, address);
+  for (const address of ['64:ff9b::8.8.8.8', '64:ff9b::808:808', '64:ff9b:1::808:808', '::ffff:8.8.8.8',
+    '2606:4700:4700::1111', '192.0.1.1', '8.8.8.8'])
+    assert.equal(publicAddress(address), true, address);
 });
 
 test('torrentPathIssue rejects only the paths Windows cannot store', { timeout: 5000 }, async () => {
