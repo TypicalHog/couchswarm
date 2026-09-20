@@ -10,7 +10,9 @@ nextEnv.loadEnvConfig(process.cwd(), process.env.npm_lifecycle_event === 'predev
 const url = process.env.TURSO_DATABASE_URL || (process.env.VERCEL || process.env.NODE_ENV === 'production' ? '' : 'file:.local/rooms.db');
 if (!url) throw new Error('Set TURSO_DATABASE_URL to the target database.');
 if (url.startsWith('file:')) await mkdir(path.dirname(url.slice(5).replace(/^\/+(?=[A-Za-z]:)/, '')), { recursive: true });
-const client = createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN });
+// Without a busy timeout a runner that meets another's lock fails instantly, before the bookkeeping
+// row's PRIMARY KEY below can turn the race into a skip: a build next to a dev server's predev aborts.
+const client = createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN, timeout: 5000 });
 // Database variables left unscoped make a preview build migrate production, so every build log says which
 // database this run is about to change, and from which deployment.
 console.log(`Migrating ${url.startsWith('file:') ? url : new URL(url).host}`
