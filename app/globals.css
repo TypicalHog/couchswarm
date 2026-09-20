@@ -49,7 +49,7 @@ h1 { margin:8px 0 0; font-size:clamp(28px,3vw,36px); letter-spacing:-1.4px; font
 .setup h2 { font-size:clamp(28px,2.8vw,40px); letter-spacing:-1.6px; line-height:1.2; font-weight:450; margin:0 0 14px; } .setup h2 span { color:#a6b89a; }
 .setup p { color:#a2aea0; font-size:14px; line-height:1.7; margin:0 auto 25px; max-width:410px; } .setup .text-input { margin-bottom:10px; }
 .torrent-form { display:flex; background:#151c15; border:1px solid #6b7d5e; border-radius:9px; padding:5px 5px 5px 14px; align-items:center; gap:11px; text-align:left; }
-.torrent-form:focus-within { border-color:var(--primary); } .torrent-form>svg { color:#9faa95; }
+.torrent-form:focus-within { border-color:var(--primary); } .torrent-form:has(input:focus-visible) { outline:2px solid transparent; outline-offset:2px; } .torrent-form>svg { color:#9faa95; }
 .torrent-form input { min-width:0; flex:1; border:none; outline:none; background:transparent; font-size:14px; color:white; height:42px; }
 .torrent-form input::placeholder { color:#91a087; } .torrent-form input:focus-visible { outline:none; }
 .torrent-form button { padding:10px 15px; white-space:nowrap; } .setup .format-note { color:#91a087; font-size:12px; margin:11px 0 0; max-width:none; }
