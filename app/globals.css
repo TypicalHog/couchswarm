@@ -32,7 +32,7 @@ svg { flex-shrink:0; } a { color:inherit; }
 .room-heading { display:flex; justify-content:space-between; gap:24px; align-items:center; padding:36px 0 28px; }
 .eyebrow { font-family:var(--font-geist-mono),monospace; font-size:12px; font-weight:500; text-transform:uppercase; letter-spacing:.12em; color:#9da99d; display:flex; align-items:center; gap:9px; }
 h1 { margin:8px 0 0; font-size:clamp(28px,3vw,36px); letter-spacing:-1.4px; font-weight:500; line-height:1.2; }
-.heading-actions { display:flex; gap:12px; align-items:center; }
+.heading-actions { display:flex; gap:12px; align-items:center; } .heading-actions .primary-button { white-space:nowrap; }
 .pill { font-size:12px; display:inline-flex; align-items:center; gap:7px; border:1px solid var(--border); border-radius:30px; padding:7px 11px; color:#b5beb4; white-space:nowrap; }
 .dot { width:6px; height:6px; border-radius:50%; background:#7b867d; display:inline-block; } .dot.live { background:var(--primary); box-shadow:0 0 9px #c2f28a30; }
 .primary-button,.outline-button { border:1px solid transparent; display:inline-flex; align-items:center; justify-content:center; gap:9px; min-height:44px; padding:11px 18px; border-radius:8px; font-size:14px; font-weight:600; text-decoration:none; }
