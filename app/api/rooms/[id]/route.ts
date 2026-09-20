@@ -63,8 +63,11 @@ async function handler(request: Request, context: { params: Promise<{ id: string
       if (!result.meta.changes) return json({ error: `This couch is full (${MAX_SEATS} people). Try again when a seat opens.` }, 409);
     }
     const pausedAt = host && host.last_seen <= now - PRESENCE_MS ? host.last_seen + PRESENCE_MS : now;
-    await db.prepare('UPDATE rooms SET playing = 0, position = ?, reason = ?, revision = revision + 1 WHERE id = ? AND playing = 1')
-      .bind(timelinePosition(publicRoom(stored), pausedAt), 'A friend joined. Waiting for their buffer.', id).run();
+    // The room was read several round trips ago, so pause only the timeline this position was worked out from:
+    // a pause and a restart in between would put the movie back where it never was, and the joiner's own first
+    // report pauses the room anyway.
+    await db.prepare('UPDATE rooms SET playing = 0, position = ?, reason = ?, revision = revision + 1 WHERE id = ? AND playing = 1 AND revision = ?')
+      .bind(timelinePosition(publicRoom(stored), pausedAt), 'A friend joined. Waiting for their buffer.', id, stored.revision).run();
     return json({ roomId: id, memberId, token, invite: body.invite }, 201);
   }
   const token = request.headers.get('Authorization')?.replace(/^Bearer /, '') || '';
