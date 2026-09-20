@@ -9,6 +9,20 @@ export const maxDuration = 10;
 // can see any more should not keep polling either.
 const HELPER_OWNER_GRACE_MS = 600_000;
 
+// A helper extracted from an older ZIP still claims and polls exactly like a current one, so the only moment it can
+// be told to update is the claim it answers with its own build. A helper that predates version reporting names none
+// and is left alone, and a staggered deploy that leaves the site a build behind its helpers is nobody's problem to
+// fix, so only a site that is ahead names itself back.
+const BUILD = /^\d+(\.\d+){0,3}$/;
+function newerSite(reported: unknown) {
+  const site = process.env.NEXT_PUBLIC_VERSION || '';
+  if (typeof reported !== 'string' || !BUILD.test(reported) || !BUILD.test(site)) return '';
+  const theirs = reported.split('.').map(Number), ours = site.split('.').map(Number);
+  for (let i = 0; i < Math.max(theirs.length, ours.length); i++)
+    if ((ours[i] || 0) !== (theirs[i] || 0)) return (ours[i] || 0) > (theirs[i] || 0) ? site : '';
+  return '';
+}
+
 async function handler(request: Request) {
   let body;
   try { body = await readBody(request, 40000); } catch { return json({ error: 'Invalid helper request.' }, 400); }
@@ -24,7 +38,7 @@ async function handler(request: Request) {
     const claim = await db.prepare("UPDATE helpers SET token_hash = ?, last_seen = ?, status = 'Helper connected.' WHERE id = ? AND token_hash IS NULL AND pair_expires > ?")
       .bind(await hash(token), Date.now(), helper.id, Date.now()).run();
     if (!claim.meta.changes) return json({ error: 'That pairing link was already used.' }, 409);
-    return json({ id: helper.id, roomId: helper.room_id, token, ...await iceConfiguration(helper.id) });
+    return json({ id: helper.id, roomId: helper.room_id, token, siteVersion: newerSite(body.version), ...await iceConfiguration(helper.id) });
   }
   const token = request.headers.get('authorization')?.replace(/^Bearer /, '') || '';
   if (!/^[a-f0-9]{64}$/.test(token) || typeof body.id !== 'string') return json({ error: 'Pair the helper from your room first.' }, 403);

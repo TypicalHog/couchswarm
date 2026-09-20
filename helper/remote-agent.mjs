@@ -384,9 +384,16 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       // Naming the origin the helper is about to obey; safe here only because polling has not started, so this
       // status never reaches a room.
       notify(`Connecting to ${url.host}…`);
-      grant = await api({ action: 'claim', code });
+      // The manifest beside this folder names the build the ZIP was packaged from; a dev run reads the repo's own
+      // package.json, which is the number the site publishes too. A helper that cannot name its build sends none
+      // and is never told to update.
+      const build = await readFile(new URL('../package.json', import.meta.url), 'utf8').then(text => JSON.parse(text).version || '').catch(() => '');
+      grant = await api({ action: 'claim', code, version: build });
       lastContact = Date.now();
-      notify('Helper paired.');
+      // The site answers with its own build only when it is ahead of this one. The launcher prints this line
+      // verbatim, so a hostile origin gets a version number or nothing at all.
+      const shipped = /^\d+(\.\d+){0,3}$/.test(grant.siteVersion || '') ? grant.siteVersion : '';
+      notify(shipped ? `Helper paired. A newer helper (${shipped}) is available in your room; download it and replace this folder.` : 'Helper paired.');
       poll().catch(() => {});
       return { roomId: grant.roomId };
     }, stop,

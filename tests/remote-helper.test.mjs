@@ -50,9 +50,11 @@ test('helper pairing is per participant, single-use, scoped, revocable, and reje
   const guest = await post(room, { action: 'join', invite: host.invite, name: 'Guest' }, null, 201);
   t.after(() => post(room, { action: 'leave' }, guest.token).catch(() => {}));
   await post(route, { action: 'status' }, null, 403);
-  const claim = async pairingUrl => post('/api/helper', { action: 'claim', code: new URLSearchParams(new URL(pairingUrl).hash.slice(1)).get('helper') });
+  const claim = async (pairingUrl, version) => post('/api/helper', { action: 'claim', code: new URLSearchParams(new URL(pairingUrl).hash.slice(1)).get('helper'), version });
   const pair = await post(route, { action: 'pair' }, host.token);
   const grant = await claim(pair.pairingUrl);
+  // A helper that names no build predates version reporting and must never be nagged.
+  assert.equal(grant.siteVersion, '', 'a helper that reports no build is left alone');
   await post('/api/helper', { action: 'claim', code: new URLSearchParams(new URL(pair.pairingUrl).hash.slice(1)).get('helper') }, null, 410);
   await post('/api/helper', { action: 'poll', id: grant.id }, host.token, 403);
   await post(room, { action: 'pause', revision: 0 }, grant.token, 401);
@@ -79,7 +81,8 @@ test('helper pairing is per participant, single-use, scoped, revocable, and reje
   await post('/api/helper', { action: 'answer', id: grant.id, peerId: connection.peerId, answer: { type: 'answer', sdp: sdp('second answer') } }, grant.token, 410);
   assert.equal((await post(route, { action: 'peer', peerId: connection.peerId }, guest.token)).answer.sdp, sdp('test answer'));
   // A guest's own helper takes over once it is ready. Until then the host's ready helper keeps serving them.
-  const guestGrant = await claim((await post(route, { action: 'pair' }, guest.token)).pairingUrl);
+  const guestGrant = await claim((await post(route, { action: 'pair' }, guest.token)).pairingUrl, '0.0.1');
+  assert.match(guestGrant.siteVersion, /^\d+\.\d+/, 'a helper behind the site is told which build it ships');
   state = await post(route, { action: 'status' }, guest.token);
   assert.deepEqual([state.paired, state.online, state.ready, state.own, state.mine], [true, true, true, false, true]);
   assert.equal((await post(route, { action: 'peer', peerId: connection.peerId }, guest.token)).answer.sdp, sdp('test answer'));

@@ -12,6 +12,9 @@ const app = path.join(stage, 'app');
 const output = path.join(root, 'public', 'downloads', 'CouchSwarm-Helper-win-x64.zip');
 const inside = (base, target) => { const relative = path.relative(base, target); return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative); };
 if (!inside(path.join(root, 'work'), stage) || !inside(path.join(root, 'public', 'downloads'), output)) throw new Error('Invalid output directory.');
+// The assembly version must stay numeric, so package.json's version cannot carry a prerelease suffix. It is read
+// here rather than beside the assembly it stamps, because the packaged manifest below carries it too.
+const { version: appVersion } = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
 const node = process.env.COUCHSWARM_NODE_BINARY || process.execPath;
 const version = execFileSync(node, ['--version'], { encoding: 'utf8', windowsHide: true }).trim();
 if (!/^v(2[4-9]|[3-9]\d)\./.test(version)) throw new Error('Package with Node 24 LTS or newer. Set COUCHSWARM_NODE_BINARY to its node.exe.');
@@ -36,7 +39,9 @@ await fs.mkdir(path.dirname(output), { recursive: true });
 await fs.copyFile(node, path.join(stage, 'runtime', 'node.exe'));
 await fs.writeFile(path.join(stage, 'runtime', 'LICENSE'), licenseText);
 for (const file of ['constants.mjs', 'desktop.mjs', 'remote-agent.mjs', 'remote-wire.mjs', 'torrent-helper.mjs']) await fs.copyFile(path.join(root, 'helper', file), path.join(app, 'helper', file));
-await fs.writeFile(path.join(app, 'package.json'), JSON.stringify({ name: 'couchswarm-helper', private: true, type: 'module' }));
+// The version is stamped into the manifest alone: the helper scripts are copied verbatim above, and the packaged
+// suite proves a build is current by comparing them to the sources byte for byte.
+await fs.writeFile(path.join(app, 'package.json'), JSON.stringify({ name: 'couchswarm-helper', private: true, type: 'module', version: appVersion }));
 const visited = new Set();
 const notices = [];
 const unlicensed = [];
@@ -98,8 +103,6 @@ await fs.writeFile(path.join(stage, 'THIRD-PARTY-NOTICES.txt'), notices.join('\n
 // The ZIP is the whole of what most people ever receive, so CouchSwarm's own terms have to travel with it.
 await fs.copyFile(path.join(root, 'LICENSE.md'), path.join(stage, 'LICENSE.md'));
 if (unlicensed.length) console.warn(`No license text for ${unlicensed.length} packages: ${unlicensed.join(', ')}`);
-// The assembly version must stay numeric, so package.json's version cannot carry a prerelease suffix.
-const { version: appVersion } = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
 const info = path.join(root, 'work', 'AssemblyInfo.cs');
 await fs.writeFile(info, `using System.Reflection;\n[assembly: AssemblyTitle("CouchSwarm Helper")]\n[assembly: AssemblyProduct("CouchSwarm")]\n[assembly: AssemblyVersion("${appVersion}.0")]\n[assembly: AssemblyFileVersion("${appVersion}.0")]\n`);
 execFileSync(csc, [
