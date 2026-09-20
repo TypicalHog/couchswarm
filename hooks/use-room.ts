@@ -175,6 +175,10 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     setError('');
   }, []);
 
+  // One state carries two lifetimes: a live control failure, which the next reply or revision clears, and a form's
+  // submit failure, which belongs to the form that caused it and has to go when that form does.
+  const clearError = useCallback(() => setError(''), []);
+
   useEffect(() => {
     const roomId = new URLSearchParams(location.search).get('room');
     // Read the link first, so an invitee on a refused browser is told their friend's room is out of reach.
@@ -355,7 +359,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   const hostPresent = !!(room && snapshot && snapshot.members.some(m => m.id === room.hostId && m.lastSeen > snapshot.serverNow - PRESENCE_MS));
   const inviteStale = !!room?.inviteTag && hashed.invite === sessionInvite && room.inviteTag !== hashed.tag;
   return { session, room, members: snapshot?.members || [], invitation, error: error || networkError, unsupported, busy, connected, armed, playhead,
-    buffered, duration, countdown, media, isHost, everyoneReady, hostPresent, inviteStale, seatLost, create, join, control, enable, leave,
+    buffered, duration, countdown, media, isHost, everyoneReady, hostPresent, inviteStale, seatLost, create, join, control, enable, leave, clearError,
     inviteUrl: session ? `${typeof location === 'undefined' ? '' : location.origin}/?room=${session.roomId}#invite=${session.invite}` : '',
   };
 }
