@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
@@ -17,6 +17,14 @@ async function post(path, body, token, expected = 200) {
   assert.ok(data, detail);
   return data;
 }
+
+// A fresh `next dev` compiles a route the first time it is asked for, which has taken 8 s here and can outlast the
+// 10 s budget every request below carries. These are the same 405 GETs the method test makes, so they compile all
+// four routes the suite uses and write nothing.
+before(async () => {
+  for (const route of ['/api/rooms', '/api/rooms/warmup', '/api/rooms/warmup/helper', '/api/helper'])
+    await fetch(origin + route, { signal: AbortSignal.timeout(90000) }).catch(() => {});
+}, { timeout: 360000 });
 
 test('room invites, authority, buffering gate, timeline, stale messages, seeking, and late joins', { timeout: 30000 }, async t => {
   await post('/api/rooms', { source: 'invalid' }, undefined, 400);
