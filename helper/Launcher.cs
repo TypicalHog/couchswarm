@@ -11,25 +11,31 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
 // The room's palette (app/globals.css), painted with GDI+ because WinForms ships no dark controls.
+// High Contrast replaces it with the four colours the user chose there, including the one the text boxes
+// draw their cue text in. The theme is read once, so switching it needs the helper reopened.
 static class Skin {
-    public static readonly Color Ground = Color.FromArgb(16, 20, 17);
-    public static readonly Color Surface = Color.FromArgb(25, 30, 26);
-    public static readonly Color Field = Color.FromArgb(20, 26, 20);
-    public static readonly Color Edge = Color.FromArgb(44, 52, 45);
-    public static readonly Color Lime = Color.FromArgb(194, 242, 138);
-    public static readonly Color LimeLift = Color.FromArgb(210, 255, 162);
-    public static readonly Color LimePress = Color.FromArgb(173, 221, 121);
-    public static readonly Color OnLime = Color.FromArgb(23, 34, 21);
-    public static readonly Color Ink = Color.FromArgb(239, 243, 237);
-    public static readonly Color Muted = Color.FromArgb(163, 173, 156);
-    public static readonly Color Alarm = Color.FromArgb(242, 142, 134);
-    public static readonly Color Ghost = Color.FromArgb(27, 33, 28);
-    public static readonly Color GhostLift = Color.FromArgb(41, 49, 41);
-    public static readonly Color GhostPress = Color.FromArgb(34, 41, 34);
-    public static readonly Color GhostEdge = Color.FromArgb(58, 68, 59);
-    public static readonly Color GhostEdgeLift = Color.FromArgb(86, 97, 79);
+    public static readonly bool Contrast = SystemInformation.HighContrast;
+    public static readonly Color Ground = Contrast ? SystemColors.Window : Color.FromArgb(16, 20, 17);
+    public static readonly Color Surface = Contrast ? SystemColors.Window : Color.FromArgb(25, 30, 26);
+    public static readonly Color Field = Contrast ? SystemColors.Window : Color.FromArgb(20, 26, 20);
+    public static readonly Color Edge = Contrast ? SystemColors.WindowText : Color.FromArgb(44, 52, 45);
+    public static readonly Color Lime = Contrast ? SystemColors.Highlight : Color.FromArgb(194, 242, 138);
+    public static readonly Color LimeLift = Contrast ? SystemColors.Highlight : Color.FromArgb(210, 255, 162);
+    public static readonly Color LimePress = Contrast ? SystemColors.Highlight : Color.FromArgb(173, 221, 121);
+    public static readonly Color OnLime = Contrast ? SystemColors.HighlightText : Color.FromArgb(23, 34, 21);
+    public static readonly Color Ink = Contrast ? SystemColors.WindowText : Color.FromArgb(239, 243, 237);
+    public static readonly Color Muted = Contrast ? SystemColors.GrayText : Color.FromArgb(163, 173, 156);
+    public static readonly Color Alarm = Contrast ? SystemColors.WindowText : Color.FromArgb(242, 142, 134);
+    public static readonly Color Ghost = Contrast ? SystemColors.Window : Color.FromArgb(27, 33, 28);
+    public static readonly Color GhostLift = Contrast ? SystemColors.Window : Color.FromArgb(41, 49, 41);
+    public static readonly Color GhostPress = Contrast ? SystemColors.Window : Color.FromArgb(34, 41, 34);
+    public static readonly Color GhostEdge = Contrast ? SystemColors.WindowText : Color.FromArgb(58, 68, 59);
+    public static readonly Color GhostEdgeLift = Contrast ? SystemColors.Highlight : Color.FromArgb(86, 97, 79);
 
     public static Color Mix(Color from, Color to, double amount) {
+        // High Contrast has no shades between its colours: a foreground that would fade into the card takes the
+        // system's disabled grey instead, and a surface that would take on a tint stays the surface it is.
+        if (Contrast) return from == Surface ? from : Muted;
         return Color.FromArgb((int)(from.R + (to.R - from.R) * amount), (int)(from.G + (to.G - from.G) * amount), (int)(from.B + (to.B - from.B) * amount));
     }
     // Painted geometry is in 96-DPI units; the form scales control bounds, this scales what we draw inside them.
@@ -439,6 +445,8 @@ class CouchSwarmHelper : Form {
     }
     protected override void OnHandleCreated(EventArgs e) {
         base.OnHandleCreated(e);
+        // The title bar follows the High Contrast theme like every other window's.
+        if (Skin.Contrast) return;
         // DWMWA_USE_IMMERSIVE_DARK_MODE. Windows builds without it keep the light title bar.
         try { int on = 1; DwmSetWindowAttribute(Handle, 20, ref on, sizeof(int)); } catch {}
     }
