@@ -94,10 +94,10 @@ test('helper pairing is per participant, single-use, scoped, revocable, and reje
   assert.deepEqual((await ready(guestGrant.id, guestGrant.token)).peers.map(peer => peer.id), [own.peerId]);
   assert.deepEqual((await ready(grant.id, grant.token)).peers, []);
   assert.equal((await post(route, { action: 'status' }, host.token)).own, true);
-  // Stopping the guest's helper falls back to the host's helper.
+  // Stopping the guest's helper drops its pairing and falls back to the host's helper.
   await post('/api/helper', { action: 'stop', id: guestGrant.id }, guestGrant.token);
   state = await post(route, { action: 'status' }, guest.token);
-  assert.deepEqual([state.ready, state.own, state.mine], [true, false, true]);
+  assert.deepEqual([state.ready, state.own, state.mine], [true, false, false]);
   await post(route, { action: 'peer', peerId: own.peerId }, guest.token, 410);
   // Unpairing only removes the caller's helper.
   await post(route, { action: 'unpair' }, guest.token);

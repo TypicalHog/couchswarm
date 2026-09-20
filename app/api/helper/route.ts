@@ -42,10 +42,12 @@ async function handler(request: Request) {
       return json({ error: 'You left the room. Pair the helper again from your room.' }, 410);
     }
   }
+  // A stopped agent forgets its grant, so the row it leaves behind can never come back: keeping it would only
+  // report the room as paired but offline, and every later playback start would wait out the offline grace.
   if (body.action === 'stop') {
     await db.batch([
-      db.prepare("UPDATE helpers SET last_seen = 0, info_hash = '', status = 'Helper stopped.' WHERE id = ?").bind(helper.id),
       db.prepare('DELETE FROM helper_peers WHERE helper_id = ?').bind(helper.id),
+      db.prepare('DELETE FROM helpers WHERE id = ?').bind(helper.id),
     ]);
     return json({ ok: true });
   }
