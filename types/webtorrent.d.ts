@@ -28,7 +28,7 @@ declare module 'webtorrent/dist/webtorrent.min.js' {
   export default class WebTorrent {
     constructor(options?: { tracker?: { announce?: string[] } });
     on(event: string, listener: (...args: unknown[]) => void): this;
-    add(source: string | Uint8Array, options: { strategy: string; deselect: boolean; destroyStoreOnDestroy: boolean; storeCacheSlots?: number; bitfield?: Uint8Array }, callback: (torrent: Torrent) => void): Torrent;
+    add(source: string | Uint8Array, options: { strategy: string; deselect: boolean; destroyStoreOnDestroy: boolean; storeCacheSlots?: number; bitfield?: Uint8Array; urlList?: string[]; announce?: string[] }, callback: (torrent: Torrent) => void): Torrent;
     createServer(options: { controller: ServiceWorkerRegistration }): unknown;
     destroy(callback?: () => void): void;
   }

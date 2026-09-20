@@ -207,10 +207,28 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         // browsers at any URL. The helper strips both for that reason; web seeds and trackers stay. magnet-uri
         // parses the raw query itself, so they are dropped by filtering it: rebuilding the string through
         // URLSearchParams would re-encode xt and leave the add without an info hash.
-        const magnet = source.startsWith('magnet:?')
-          ? `magnet:?${source.slice(8).split('&').filter(param => !/^(xs|as)=/i.test(param)).join('&')}`
-          : source;
-        torrent = client.add(remote?.infoHash || bridge?.metadata || magnet, { strategy: 'sequential', deselect: true, destroyStoreOnDestroy: false, storeCacheSlots: 8, bitfield: verified?.source === source ? verified.bitfield : undefined }, value => {
+        const params = source.startsWith('magnet:?') ? source.slice(8).split('&') : undefined;
+        let added: string | Uint8Array = remote?.infoHash || bridge?.metadata
+          || (params ? `magnet:?${params.filter(param => !/^(xs|as)=/i.test(param)).join('&')}` : source);
+        // A helper path adds the helper's own id or its rebuilt metadata, and the helper strips what the
+        // source says about where else the data lives, so a web-seed-only torrent has nothing left to ask.
+        // Carry the source's own web seeds and browser-reachable trackers instead: they are the requests this
+        // browser already makes when no helper is paired.
+        const carried: { urlList?: string[]; announce?: string[] } = {};
+        if (remote || bridge) {
+          if (params) {
+            const hints = (key: string) => params.filter(param => param.startsWith(`${key}=`)).map(param => decodeURIComponent(param.slice(key.length + 1)));
+            carried.urlList = hints('ws').filter(url => /^https:/i.test(url));
+            carried.announce = hints('tr').filter(url => /^wss:/i.test(url));
+          } else {
+            // A .torrent keeps its web seeds and its private flag inside the file, and without a helper this
+            // browser fetches that very URL, so read it here rather than guess at either.
+            const metadata = await fetch(source, { signal: abort.signal }).then(response => response.ok ? response.arrayBuffer() : null).catch(() => null);
+            if (disposed) return;
+            if (metadata) added = new Uint8Array(metadata);
+          }
+        }
+        torrent = client.add(added, { strategy: 'sequential', deselect: true, destroyStoreOnDestroy: false, storeCacheSlots: 8, bitfield: verified?.source === source ? verified.bitfield : undefined, ...carried }, value => {
           if (disposed) return;
           // The store survives teardown so a reconnect resumes; nothing else holds one while this tab
           // owns the media lock, so reclaim every other movie here.
