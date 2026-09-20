@@ -17,9 +17,12 @@ input.on('line', line => {
     else if (command.action === 'pair') {
       await agent?.stop().catch(() => {});
       keepDownloads = command.keepDownloads === true;
-      // The launcher sends its folder setting; empty means the default, which is only swept when downloads are not kept.
+      // The launcher sends its folder setting; empty means the default, and that is the one folder the launcher's
+      // placeholder and the packaged README name, whichever way the Keep checkbox is set. Temporary and kept data
+      // still cannot be confused there: only mkdtemp's room-XXXXXX directories carrying a .couchswarm marker are
+      // ever swept, and a leftover from a forced kill is now under the root a later session looks in.
       const home = path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'CouchSwarm');
-      agent = createRemoteAgent({ cacheRoot: command.folder || path.join(home, keepDownloads ? 'downloads' : 'cache'), keepDownloads, report });
+      agent = createRemoteAgent({ cacheRoot: command.folder || path.join(home, 'downloads'), keepDownloads, report });
       await agent.pair(command.url);
     }
   }).catch(error => report({ status: error.message, error: true }));
