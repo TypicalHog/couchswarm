@@ -66,18 +66,23 @@ export function toWebVTT(text: string, filename: string) {
       // A vector drawing keeps its coordinates in the text field and would render as visible gibberish.
       if (!dialogue || /\\p[1-9]/.test(dialogue[3])) continue;
       const start = assClock(dialogue[1]), end = assClock(dialogue[2]);
-      const cue = escapeCue(stripOverrides(dialogue[3]).replaceAll('\\h', ' ').replace(/\\[Nn]/g, '\n')).trim();
+      // A \N\N asks for a vertical gap, but WebVTT ends the cue at the empty line and everything the dialogue
+      // says after it is never shown, so the gap goes and the words stay.
+      const cue = escapeCue(stripOverrides(dialogue[3]).replaceAll('\\h', ' ').replace(/\\[Nn]/g, '\n')).split('\n').filter(part => part.trim()).join('\n').trim();
       if (start && end && cue) cues.push(`${start} --> ${end}\n${cue}`);
     }
     return `WEBVTT\n\n${cues.join('\n\n')}\n`;
   }
   // Rewriting only the timing lines leaves cue numbers, blank lines and <i>/<b> tags alone: WebVTT reads a
   // numeric line as a cue identifier and renders those tags itself, so every one of them is already legal.
-  const lines = body.split('\n').map(line => {
+  const lines = body.split('\n').flatMap(line => {
     const timing = TIMING.exec(line);
-    return timing
-      ? `${clock(timing[1], timing[2], timing[3], timing[4])} --> ${clock(timing[5], timing[6], timing[7], timing[8])}`
-      : escapeCue(line.replace(SRT_OVERRIDE, ''));
+    if (timing) return `${clock(timing[1], timing[2], timing[3], timing[4])} --> ${clock(timing[5], timing[6], timing[7], timing[8])}`;
+    // Only a truly empty line ends a cue, so a separator holding a space or a tab leaves the cue open and it
+    // swallows the next cue's number; a line the override strip emptied is the mirror image and just goes.
+    if (!line.trim()) return '';
+    const text = escapeCue(line.replace(SRT_OVERRIDE, ''));
+    return text.trim() ? text : [];
   });
   return `WEBVTT\n\n${lines.join('\n')}\n`;
 }

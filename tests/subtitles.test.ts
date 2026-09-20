@@ -50,6 +50,16 @@ test('an SRT converted from an ASS shows no override tags', () => {
   assert.match(cue('He said {this} out loud'), /^He said \{this\} out loud$/m, 'a brace that opens no override tag is dialogue');
 });
 
+test('a blank line never lands inside a cue', () => {
+  const spaced = toWebVTT('1\n00:00:01,000 --> 00:00:02,000\nFirst\n \n2\n00:00:03,000 --> 00:00:04,000\nSecond\n', 'a.srt');
+  assert.match(spaced, /\nFirst\n\n2\n/, 'a separator holding a space would put the next cue number inside the cue');
+  assert.match(toWebVTT('1\n00:00:01,000 --> 00:00:02,000\nTop\n{\\i1}\nBottom\n', 'a.srt'), /^Top\nBottom$/m,
+    'a line of nothing but override tags must not become the empty line that ends the cue');
+  const ass = (text: string) => toWebVTT(`[Events]\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,${text}`, 'a.ass');
+  assert.match(ass('Top\\N\\NBottom'), /^Top\nBottom$/m, 'everything the line says after the empty one would be dropped');
+  assert.match(ass('Top\\N{\\i1}\\NBottom'), /^Top\nBottom$/m);
+});
+
 test('an ASS dialogue becomes a plain-text cue', () => {
   const out = toWebVTT([
     '[Events]',
