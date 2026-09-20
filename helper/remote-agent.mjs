@@ -22,7 +22,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
   createClient = () => new WebTorrent({ natUpnp: false, natPmp: false, lsd: false, utp: false, ...(process.env.COUCHSWARM_HELPER_OFFLINE === '1' ? { dht: false, tracker: false } : {}) }),
   iceOverride }) {
   let grant, origin, client, torrent, directory, mediaVersion = -1, timer, closed = false, loading, loadedSource = '', swept = false;
-  let status = 'Waiting for a pairing link.', lastContact = 0, previousStatus;
+  let status = 'Waiting for a pairing link.', problem = false, lastContact = 0, previousStatus, previousProblem = false;
   let desiredVersion = -2, loadAbort, attemptedVersion = -2, attempts = 0, readyAt = 0, misses = 0, generation = 0, loadingSource = null;
   let servedPieces = [];
   const peers = new Map();
@@ -32,7 +32,10 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
   // Counted once the channel is actually open: an offer that will never connect sits in the map until its 45 s
   // timer, and the launcher would call that a viewer for the whole attempt, then again on every retry.
   const connectedPeers = () => [...peers.values()].filter(peer => peer.connected).length;
-  const notify = message => { status = message; report({ status, peers: connectedPeers(), torrentPeers: torrent?.numPeers || 0 }); };
+  // A status the user has to clear themselves — an unwritable folder, a full drive, retries exhausted — is flagged
+  // so the launcher can colour its dot, and the flag stays with the status until the next one replaces it, since
+  // every later report repeats the text.
+  const notify = (message, isProblem = false) => { status = message; problem = isProblem; report({ status, peers: connectedPeers(), torrentPeers: torrent?.numPeers || 0, ...(problem ? { problem } : {}) }); };
   async function api(body) {
     let response;
     try {
@@ -162,8 +165,8 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       if (Date.now() - readyAt > 300000) attempts = 0;
       void clearTorrent().then(cleared => {
         if (closed || generation !== own) return; // a newer load owns the status now
-        if (!cleared) notify('Torrent stopped. Close the helper before clearing its temporary cache.');
-        else if (attempts < 3) { notify(`${describe(error)} Reconnecting…`); scheduleRetry(); } else notify(`${describe(error)} Choose the movie again in the room to retry.`);
+        if (!cleared) notify('Torrent stopped. Close the helper before clearing its temporary cache.', true);
+        else if (attempts < 3) { notify(`${describe(error)} Reconnecting…`, true); scheduleRetry(); } else notify(`${describe(error)} Choose the movie again in the room to retry.`, true);
       });
     };
     client.on('error', error => { cause = error; failed(error); });
@@ -215,7 +218,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
       if (closed) return;
       lastContact = Date.now();
       misses = 0;
-      if (status === 'Reconnecting to the room…') { notify(previousStatus ?? (torrent ? 'Ready. Keep this helper open while everyone watches.' : 'Connected. Finding your movie…')); previousStatus = undefined; }
+      if (status === 'Reconnecting to the room…') { notify(previousStatus ?? (torrent ? 'Ready. Keep this helper open while everyone watches.' : 'Connected. Finding your movie…'), previousProblem); previousStatus = undefined; previousProblem = false; }
       if (data.room.mediaVersion !== desiredVersion) {
         if (data.room.mediaVersion !== attemptedVersion) { attemptedVersion = data.room.mediaVersion; attempts = 0; }
         attempts++;
@@ -238,7 +241,7 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
             const retry = attempts < 3 && !/public internet addresses|magnet or HTTPS|Choose another torrent/.test(error.message);
             // Filesystem errors carry local paths, which the room must never see.
             const message = error.code ? describe(error) : error.message;
-            notify(retry ? `${message} Retrying…` : `${message} Choose the movie again in the room to retry.`);
+            notify(retry ? `${message} Retrying…` : `${message} Choose the movie again in the room to retry.`, true);
             if (retry) scheduleRetry();
           }).finally(() => { if (loadAbort === controller) loadingSource = null; });
         }
@@ -272,18 +275,18 @@ export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = (
             served = torrent;
             if (served && !closed) { viewers.add(own); serveTorrentPeer(peer, served, piece => readAhead(served, piece, own), servedPieces); } else peer.destroy();
             // The count only moves here, so say so now rather than at the next poll.
-            report({ status, peers: connectedPeers(), torrentPeers: torrent?.numPeers || 0 });
+            report({ status, peers: connectedPeers(), torrentPeers: torrent?.numPeers || 0, ...(problem ? { problem } : {}) });
           });
           peer.on('signal', answer => { void api({ action: 'answer', peerId: remote.id, answer }).catch(() => peer.destroy()); });
           peer.signal(remote.offer);
         }
       }
-      report({ status, peers: connectedPeers(), torrentPeers: torrent?.numPeers || 0, relayAvailable: data.relayAvailable });
+      report({ status, peers: connectedPeers(), torrentPeers: torrent?.numPeers || 0, ...(problem ? { problem } : {}), relayAvailable: data.relayAvailable });
     } catch (error) {
       if (closed) return;
       if (error.revoked) { notify(error.message); await stop(false); report({ status: error.message, stopped: true }); return; }
       if (Date.now() - lastContact > 30000) { for (const peer of peers.values()) peer.destroy(); peers.clear(); }
-      if (status !== 'Reconnecting to the room…') previousStatus = status;
+      if (status !== 'Reconnecting to the room…') { previousStatus = status; previousProblem = problem; }
       notify('Reconnecting to the room…');
       misses++;
     }

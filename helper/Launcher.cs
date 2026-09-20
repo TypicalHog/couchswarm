@@ -456,7 +456,11 @@ class CouchSwarmHelper : Form {
             OnUi(() => {
                 bool failed = data.ContainsKey("error");
                 bool ended = failed || data.ContainsKey("stopped");
-                if (data.ContainsKey("status")) Say(Convert.ToString(data["status"]), failed ? Skin.Alarm : ended || !running ? Skin.Muted : Skin.Lime);
+                // A running session can still hit something only the user can clear: an unwritable folder, a full
+                // drive, a torrent given up on. The helper marks those, so they get the red dot a folder problem
+                // already gets before pairing instead of the lime one that means everything is fine.
+                bool problem = data.ContainsKey("problem");
+                if (data.ContainsKey("status")) Say(Convert.ToString(data["status"]), failed || problem ? Skin.Alarm : ended || !running ? Skin.Muted : Skin.Lime);
                 viewers = data.ContainsKey("peers") ? Convert.ToInt32(data["peers"]) : 0;
                 meta.Text = data.ContainsKey("peers") && data.ContainsKey("torrentPeers") ? "Viewers connected: " + data["peers"] + "     Torrent peers: " + data["torrentPeers"] : "";
                 if (ended) SetRunning(false);
