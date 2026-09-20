@@ -26,3 +26,13 @@ jobs:
           npm run test:rooms
           npm run test:remote
         env: { TURSO_DATABASE_URL: 'file:.ci/rooms.db' }
+  launcher:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # The launcher is only ever compiled while packaging on Windows, so a C# 6 idiom the inbox compiler
+      # rejects reaches the owner's build machine as a surprise. Compile it here with the same csc.exe.
+      - shell: pwsh
+        run: |
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /platform:x64 /out:"$env:RUNNER_TEMP\launcher.exe" /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll helper\Launcher.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
