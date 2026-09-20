@@ -138,10 +138,14 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
       try {
         // One torrent store per browser profile: a second tab opens the same OPFS
         // directory and its teardown deletes the pieces this tab downloaded.
+        // The holder is sometimes this same tab on its way out: an error boundary's reset, or any remount,
+        // starts the old client's destroy and only releases the lock in its callback, so asking whether the
+        // lock is free this instant would report another tab that does not exist. Wait a moment for a holder
+        // that is leaving, and give up long before the viewer would.
         const locked = await new Promise<boolean>(resolve => {
-          void navigator.locks.request('couchswarm:media', { ifAvailable: true }, lock => {
-            resolve(!!lock);
-            return lock ? new Promise<void>(release => { releaseLock = release; }) : undefined;
+          void navigator.locks.request('couchswarm:media', { signal: AbortSignal.any([abort.signal, AbortSignal.timeout(3000)]) }, () => {
+            resolve(true);
+            return new Promise<void>(release => { releaseLock = release; });
           }).catch(() => resolve(false));
         });
         if (!locked) { try { sessionStorage.removeItem('couchswarm:sw-reload'); } catch { /* Storage blocked: nothing to clear. */ } fail('This movie is already open in another CouchSwarm tab. Close or reload that tab, then reconnect here.'); return; }
