@@ -188,6 +188,22 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     setInvitation({ roomId, invite });
   }, []);
 
+  // Rotation is host-only and no reply carries the new invite, so a guest holding the old link would go on
+  // handing out a dead one. The room publishes a tag of its invite's hash instead: this tab hashes the link it
+  // is showing the same way and compares. Without subtle crypto there is no tag, and the link stays on screen.
+  // The digest lands a tick after the invite it belongs to, so the invite is remembered beside it: a tag left over
+  // from the link this tab has just rotated away would read as stale against the room that has already caught up.
+  const [hashed, setHashed] = useState({ invite: '', tag: '' });
+  const sessionInvite = session?.invite;
+  useEffect(() => {
+    if (!sessionInvite || !crypto.subtle) return;
+    let current = true;
+    void crypto.subtle.digest('SHA-256', new TextEncoder().encode(sessionInvite))
+      .then(digest => { if (current) setHashed({ invite: sessionInvite, tag: Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('').slice(0, 16) }); })
+      .catch(() => { /* No digest, no staleness check. */ });
+    return () => { current = false; };
+  }, [sessionInvite]);
+
   // A back/forward-cache restore of a tab that already left brings back a seat the server has released.
   useEffect(() => { const restore = (event: PageTransitionEvent) => { if (event.persisted && leaving.current) location.reload(); }; window.addEventListener('pageshow', restore); return () => window.removeEventListener('pageshow', restore); }, []);
 
@@ -333,8 +349,9 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   const everyoneReady = !!(room && snapshot && allReady(snapshot.members, room, snapshot.serverNow));
   // lastSeen carries the server's clock, so presence is judged against the snapshot's own timestamp, as allReady does.
   const hostPresent = !!(room && snapshot && snapshot.members.some(m => m.id === room.hostId && m.lastSeen > snapshot.serverNow - PRESENCE_MS));
+  const inviteStale = !!room?.inviteTag && hashed.invite === sessionInvite && room.inviteTag !== hashed.tag;
   return { session, room, members: snapshot?.members || [], invitation, error: error || networkError, unsupported, busy, connected, armed, playhead,
-    buffered, duration, countdown, media, isHost, everyoneReady, hostPresent, create, join, control, enable, leave,
+    buffered, duration, countdown, media, isHost, everyoneReady, hostPresent, inviteStale, create, join, control, enable, leave,
     inviteUrl: session ? `${typeof location === 'undefined' ? '' : location.origin}/?room=${session.roomId}#invite=${session.invite}` : '',
   };
 }

@@ -11,6 +11,9 @@ export type Room = {
   id: string; hostId: string; source: string; fileIndex: number;
   mediaVersion: number; epoch: number; revision: number; playing: boolean;
   position: number; startsAt: number; duration: number; reason: string;
+  // A tag of the invite's hash, never the invite itself: a tab can tell the link it is showing has been rotated
+  // away without the room ever handing the new one out. Optional, so a reply without it just leaves the link up.
+  inviteTag?: string;
 };
 export type Member = {
   id: string; name: string; ready: boolean; buffered: number;

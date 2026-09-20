@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
 const origin = process.env.TEST_ORIGIN || 'http://localhost:3001';
 const magnet = 'magnet:?xt=urn:btih:' + 'a'.repeat(40);
@@ -134,6 +135,7 @@ test('rejects malformed requests, rewinds at the end, and gates seats, moderatio
   assert.notEqual(readmitted.memberId, guest.memberId, 'removing someone does not revoke the link they hold, so they come back to a new seat until the host resets it');
   state = await call({ action: 'rotate', revision: state.room.revision });
   assert.match(state.invite, /^[a-f0-9]{64}$/);
+  assert.equal(state.room.inviteTag, createHash('sha256').update(state.invite).digest('hex').slice(0, 16), 'the room publishes a tag of the current invite, so a tab still holding the old link can tell it is dead');
   await post(path, { action: 'join', invite: host.invite, name: 'Stale link' }, undefined, 403);
   const rejoined = await post(path, { action: 'join', invite: state.invite, name: 'New link' }, undefined, 201);
   state = await call({ action: 'rotate', revision: state.room.revision });

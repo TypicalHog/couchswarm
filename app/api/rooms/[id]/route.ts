@@ -16,7 +16,9 @@ type StoredMember = { id: string; name: string; ready: number; buffered: number;
 function publicRoom(row: StoredRoom): Room {
   return { id: row.id, hostId: row.host_id, source: row.source, fileIndex: row.file_index,
     mediaVersion: row.media_version, epoch: row.epoch, revision: row.revision, playing: !!row.playing,
-    position: row.position, startsAt: row.starts_at, duration: row.duration, reason: row.reason };
+    position: row.position, startsAt: row.starts_at, duration: row.duration, reason: row.reason,
+    // Enough of the hash for a tab to recognise its own invite, and far too little to attack the secret behind it.
+    inviteTag: row.invite_hash.slice(0, 16) };
 }
 
 function number(value: unknown, min: number, max: number) {
