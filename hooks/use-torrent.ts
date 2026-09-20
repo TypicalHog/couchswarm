@@ -104,9 +104,13 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
       // old store to be destroyed before opening the same torrent again.
       await teardownRef.current;
       if (disposed) return;
-      if (!window.isSecureContext || !('serviceWorker' in navigator) || !('RTCPeerConnection' in window)) {
-        fail('Use a current browser over HTTPS or localhost to stream torrents.'); return;
+      if (!window.isSecureContext) { fail('Use a current browser over HTTPS or localhost to stream torrents.'); return; }
+      // A private window hides navigator.serviceWorker in Firefox before 138, and in-app browsers do much the
+      // same: the browser and the connection are both current, so telling someone otherwise sends them nowhere.
+      if (!('serviceWorker' in navigator)) {
+        fail('This window cannot run CouchSwarm’s video service, which private windows and in-app browsers often block. Open this link in a normal browser window.'); return;
       }
+      if (!('RTCPeerConnection' in window)) { fail('This browser has WebRTC turned off, and streaming needs it. Turn it on, or watch in another browser.'); return; }
       try {
         // One torrent store per browser profile: a second tab opens the same OPFS
         // directory and its teardown deletes the pieces this tab downloaded.
