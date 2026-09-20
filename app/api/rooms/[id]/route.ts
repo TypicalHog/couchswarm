@@ -117,7 +117,10 @@ async function handler(request: Request, context: { params: Promise<{ id: string
       accepted = !!report.meta.changes;
       if (!accepted && actor.last_seen <= now - PRESENCE_MS) return json({ error: `This couch is full (${MAX_SEATS} people). Try again when a seat opens.` }, 409);
     }
-    if (accepted && actor.id === stored.host_id && duration > 0 && body.mediaVersion === stored.media_version)
+    // The room row is already in hand, so a host restating the duration it reported a second ago is answered without
+    // asking Turso anything. The statement keeps the same tests for the writer that moved the room in the meantime.
+    if (accepted && actor.id === stored.host_id && duration > 0 && body.mediaVersion === stored.media_version
+      && duration !== stored.duration && (!stored.playing || !stored.duration || duration >= stored.duration))
       roomChanged = !!(await db.prepare('UPDATE rooms SET duration = ? WHERE id = ? AND media_version = ? AND duration != ? AND (playing = 0 OR duration = 0 OR ? >= duration)')
         .bind(duration, id, stored.media_version, duration, duration).run()).meta.changes;
   } else if (body.action === 'leave') {
