@@ -41,6 +41,7 @@ next-env.d.ts
 /.local/
 *.db
 /public/downloads/*.zip
+/public/downloads/*.tar.gz
 /public/downloads/*.sha256
 # Copied from webtorrent by scripts/prepare-streaming.mjs on every predev/prebuild.
 /public/sw.min.js
