@@ -136,7 +136,7 @@ export default function CouchSwarm() {
     const onKey = (event: KeyboardEvent) => {
       // A widget that has already acted on this Space - choosing a track in an open picker, say - calls
       // preventDefault without stopping the event, so it still arrives here.
-      if (event.defaultPrevented || event.code !== 'Space' || event.repeat || event.ctrlKey || event.metaKey || event.altKey || modal || swarm.invitation) return;
+      if (event.defaultPrevented || event.code !== 'Space' || event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || modal || swarm.invitation) return;
       // A mouse seek leaves focus inside the timeline slider, where Space does nothing of its own, so the
       // room still hears it from there.
       const target = event.target as HTMLElement | null;
