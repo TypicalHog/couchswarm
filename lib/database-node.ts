@@ -15,7 +15,9 @@ function connection() {
 }
 function result(value: ResultSet) { return { results: value.rows, success: true, meta: { changes: value.rowsAffected } }; }
 class Statement {
-  constructor(readonly sql: string, readonly args: InValue[] = []) {}
+  // Parameter properties cannot be erased, and the tests run this file through Node's type stripping.
+  readonly sql: string; readonly args: InValue[];
+  constructor(sql: string, args: InValue[] = []) { this.sql = sql; this.args = args; }
   bind(...args: InValue[]) { return new Statement(this.sql, args); }
   async first<T>() { return (await connection().execute(this)).rows[0] as T | undefined ?? null; }
   async all<T>() { return { results: (await connection().execute(this)).rows as T[] }; }
