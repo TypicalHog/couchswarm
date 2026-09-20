@@ -62,6 +62,9 @@ test('rejects malformed torrent input and unsafe URL schemes', () => {
   assert.equal(validSource('magnet:?xt=urn:btih:ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'), true);
   assert.equal(validSource('magnet:?xt=urn:btih:bad&xt=urn:btih:' + 'a'.repeat(40)), true);
   assert.equal(validSource('magnet:?xt=urn:btih:' + 'a'.repeat(40) + '&dn=' + 'y'.repeat(8192)), false);
+  // The control characters ride in a parameter the btih check never looks at, so only the Cc clause rejects them.
+  assert.equal(validSource('magnet:?xt=urn:btih:' + 'a'.repeat(40) + '&dn=a\nb'), false);
+  assert.equal(validSource('magnet:?xt=urn:btih:' + 'a'.repeat(40) + '&dn=a\0b'), false);
   assert.equal(validSource('https://example.org/movie.torrent?download=1'), true);
   assert.equal(validSource('http://example.org/movie.torrent'), false);
   assert.equal(validSource('javascript:alert(1)'), false);

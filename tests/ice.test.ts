@@ -37,8 +37,8 @@ test('the TURN and STUN lists are trimmed and filtered', async t => {
   t.after(() => { delete process.env.COUCHSWARM_TURN_URLS; delete process.env.COUCHSWARM_TURN_SECRET; delete process.env.COUCHSWARM_STUN_URLS; });
   process.env.COUCHSWARM_TURN_URLS = ' turn:a.example:3478 ,, stun:x.example ,turns:b.example:443?transport=tcp';
   process.env.COUCHSWARM_TURN_SECRET = secret;
-  process.env.COUCHSWARM_STUN_URLS = ' stun:s.example:3478 ';
+  process.env.COUCHSWARM_STUN_URLS = ' stun:s.example:3478 ,https://evil.example,turn:b.example';
   const { iceServers } = await iceConfiguration('member-1');
-  assert.deepEqual(iceServers[0].urls, ['stun:s.example:3478'], 'a padded entry is trimmed rather than dropped');
+  assert.deepEqual(iceServers[0].urls, ['stun:s.example:3478'], 'a padded entry is trimmed rather than dropped, and only stun: is offered');
   assert.deepEqual(iceServers[1].urls, ['turn:a.example:3478', 'turns:b.example:443?transport=tcp']);
 });
