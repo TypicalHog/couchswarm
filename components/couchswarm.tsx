@@ -50,6 +50,7 @@ export default function CouchSwarm() {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const magnetRef = useRef<HTMLInputElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
+  const seated = useRef<Map<string, string> | null>(null);
   const swarm = useRoom(videoRef);
   const { room, media, session, isHost, members } = swarm;
   const [openDialog, setModal] = useState<'help' | 'invite' | 'source' | 'helper' | null>(null);
@@ -71,6 +72,7 @@ export default function CouchSwarm() {
   // and the new invite exists nowhere but that reply. So a failed one leaves no link worth copying, only a retry.
   const [rotateFailed, setRotateFailed] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [presence, setPresence] = useState('');
   // The prerendered form carries no submit handler, so Enter would navigate to /?torrent=… - losing the magnet
   // to the address bar and history, and with it the ?room= of an invite link, which leaves a guest in a host lobby.
   const hydrated = useSyncExternalStore(noUpdates, () => true, () => false);
@@ -139,6 +141,20 @@ export default function CouchSwarm() {
     const timer = setTimeout(() => setFeedback(''), 3500);
     return () => clearTimeout(timer);
   }, [feedback]);
+  // The couch is a plain list and the server only writes 'A friend joined' while the movie is playing, so a host
+  // waiting in the lobby for their people heard nothing at all. Say who moved instead. The roster is only
+  // remembered while this tab is connected, so a reconnect does not read the whole couch back as new arrivals.
+  useEffect(() => {
+    if (!swarm.connected) { seated.current = null; return; }
+    const now = new Map(members.map(m => [m.id, m.name]));
+    const before = seated.current;
+    seated.current = now;
+    if (!before) return;
+    const missing = (from: Map<string, string>, other: Map<string, string>) => [...from].filter(([id]) => !other.has(id)).map(([, name]) => name);
+    const say = (who: string[], verb: string) => who.length ? `${who.length > 2 ? `${who.length} people` : who.join(' and ')} ${verb} the couch.` : '';
+    const note = [say(missing(now, before), 'joined'), say(missing(before, now), 'left')].filter(Boolean).join(' ');
+    if (note) setPresence(note);
+  }, [members, swarm.connected]);
   useEffect(() => { if (seekLost) { clearTimeout(seekTimer.current); nextSeek.current = null; setSeek(null); } }, [seekLost]);
   // The rejoin dialog portals to the body, outside the fullscreen player card, so it cannot paint until we leave.
   // iPhone has no Element.requestFullscreen, so fullscreen() hands the movie to the native player instead, and
@@ -242,6 +258,7 @@ export default function CouchSwarm() {
   return <div className="shell">
     <output className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</output>
     <output className="sr-only" aria-live="polite" aria-atomic="true">{hasSource && !isPlaying && swarm.everyoneReady ? (isHost ? 'Everyone is ready. You can press play.' : 'Everyone is ready.') : ''}</output>
+    <output className="sr-only" aria-live="polite" aria-atomic="true">{presence}</output>
     <header className="topbar"><Link href="/" className="brand" onClick={e => { if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return; e.preventDefault(); if (!session || confirm('Leave the room? You will lose your seat in this tab.')) swarm.leave(); }}><span className="brand-mark"><Sofa size={27} strokeWidth={1.8}/></span>CouchSwarm</Link><div className="top-actions"><span className="top-caption"><span>●</span> DIFFERENT COUCHES. SAME MOMENT.</span><button className="quiet-button" ref={helpRef} onClick={() => setModal('help')}><CircleHelp size={16}/> How it works</button>{session && <button className="icon-button" aria-label="Leave room" title="Leave room" onClick={() => { if (confirm('Leave the room? You will lose your seat in this tab.')) swarm.leave(); }}><LogOut size={18}/></button>}</div></header>
     <main>
       <div className="room-heading"><div><div className="eyebrow"><span className={`dot ${swarm.connected || !session ? 'live' : ''}`}/>{session ? `ROOM ${session.roomId.slice(0, 8).toUpperCase()}` : 'YOUR OWN LITTLE CINEMA'}</div><h1 tabIndex={-1} ref={headingRef}>The living room</h1></div><div className="heading-actions"><span className="pill"><LockKeyhole size={12}/> Invite only</span><button className="primary-button" ref={inviteRef} aria-busy={swarm.busy} onClick={() => { if (!swarm.busy) void invite(); }} disabled={!!swarm.invitation || swarm.unsupported}><Users size={16}/> Invite friends <ArrowRight size={15}/></button></div></div>
