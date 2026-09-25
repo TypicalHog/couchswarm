@@ -142,8 +142,10 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     const abort = new AbortController();
     // Helper retry budgets are per movie, not per hook mount.
     const movie = `${source}|${mediaVersion}|${fileIndex}`;
-    // A subtitle chosen for the last movie would index a file list this one does not have.
-    if (movieRef.current !== movie) { movieRef.current = movie; retriedHelper.current = 0; retriedUpgrade.current = false; lostHelper.current = false; setSubtitle(null); }
+    // A subtitle chosen for the last movie would index a file list this one does not have. The list itself goes too:
+    // it is ordered for the video being played, so a pick made from the last one's order before this one lists its
+    // files would resolve to another episode's subtitle.
+    if (movieRef.current !== movie) { movieRef.current = movie; retriedHelper.current = 0; retriedUpgrade.current = false; lostHelper.current = false; setSubtitle(null); setSubtitles([]); }
     fileRef.current = null;
     piecesRef.current = null;
     readingRef.current = -1;
@@ -154,7 +156,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     setHelperPending(false);
     ownHelperLive.current = false;
     // The file list belongs to the torrent, not the selection: keep it across a file switch so the picker stays mounted.
-    if (sourceRef.current !== source) { sourceRef.current = source; setFiles([]); setSubtitles([]); }
+    if (sourceRef.current !== source) { sourceRef.current = source; setFiles([]); }
     setError('');
     setStats({ speed: 0, peers: 0, progress: 0, filename: '', size: 0 });
     setStatus(source ? 'Finding your movie…' : '');
