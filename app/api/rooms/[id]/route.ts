@@ -59,14 +59,18 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     const token = secret();
     const name = cleanName(body.name);
     if (!name) return json({ error: 'Enter your name to join.' }, 400);
-    // Counted by when the seat was taken, not by what became of it: leaving zeroes last_seen and frees the seat, so
-    // a join-then-leave loop otherwise passes both this and the seat cap and grows the table as fast as it can post.
-    const recent = await db.prepare('SELECT COUNT(*) AS n FROM members WHERE room_id = ? AND joined_at > ?').bind(id, now - 60_000).first<{ n: number }>();
-    if ((recent?.n ?? 0) >= 24) return json({ error: 'Too many joins. Try again in a minute.' }, 429);
-    const host = stored.playing ? hostLease : null;
     // The host comes back to the seat they already own, never to a new one: the room can never resume without
     // them, so a full couch must not refuse them, and the room's helper stays bound to that member id.
     const reclaim = typeof body.hostKey === 'string' && body.hostKey.length === 64 && await hash(body.hostKey) === stored.host_key_hash;
+    // Counted by when the seat was taken, not by what became of it: leaving zeroes last_seen and frees the seat, so
+    // a join-then-leave loop otherwise passes both this and the seat cap and grows the table as fast as it can post.
+    // A re-claim rewrites the host's own row and grows nothing, and a guest running that loop must not be able to
+    // keep the host out of the one room they could stop it in.
+    if (!reclaim) {
+      const recent = await db.prepare('SELECT COUNT(*) AS n FROM members WHERE room_id = ? AND joined_at > ?').bind(id, now - 60_000).first<{ n: number }>();
+      if ((recent?.n ?? 0) >= 24) return json({ error: 'Too many joins. Try again in a minute.' }, 429);
+    }
+    const host = stored.playing ? hostLease : null;
     const memberId = reclaim ? stored.host_id : crypto.randomUUID();
     // The invite and the key were judged against the row read at the top, and a rotate can commit before this
     // write lands: the seat it takes would outlive the rotate that was meant to clear it, and a re-claim with a

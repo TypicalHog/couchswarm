@@ -242,6 +242,8 @@ test('a join-then-leave loop cannot outrun the join throttle', { timeout: 60000 
   }
   const refused = await post(path, { action: 'join', invite: host.invite, name: 'One too many' }, undefined, 429);
   assert.match(refused.error, /Too many joins/, 'a join counts against the throttle however it ended');
+  const back = await post(path, { action: 'join', invite: host.invite, name: 'Host', hostKey: host.hostKey }, undefined, 201);
+  assert.equal(back.memberId, host.memberId, 'a loop of guests cannot keep the host out of their own seat');
 });
 
 // A join judges the invite against the room it read first, and a rotate can commit before that seat is written, so
