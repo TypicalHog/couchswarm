@@ -326,6 +326,9 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
                 return;
               }
               bridge.release();
+              // Once the whole video is in this browser there is nothing left to ask the helper for, and an error
+              // here would only stop the room, as the paired helper's drop handler already knows.
+              if (fileRef.current?.progress === 1) return;
               const reported = err instanceof Error && code !== undefined ? err.message : '';
               if (!disposed) fail(reported || 'The torrent helper disconnected. Reconnect to the movie to try again.');
               return;
