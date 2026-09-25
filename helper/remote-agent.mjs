@@ -4,7 +4,7 @@ import path from 'node:path';
 import WebTorrent from 'webtorrent';
 import parseTorrent from 'parse-torrent';
 import Peer from '@thaunknown/simple-peer';
-import { markSparse, servedRanges, torrentPathIssue, torrentSource } from './torrent-helper.mjs';
+import { filterPeers, markSparse, servedRanges, torrentPathIssue, torrentSource } from './torrent-helper.mjs';
 import { serveTorrentPeer } from './remote-wire.mjs';
 import { MAX_HELPER_PEERS } from './constants.mjs';
 
@@ -43,11 +43,17 @@ const cleanOffer = offer => {
   }).join('\r\n') };
 };
 
+// torrentSource judges only the peers and trackers a source names. Whatever a tracker, the DHT or ut_pex hands over
+// later reaches WebTorrent's connect-time filter, which the standalone helper has always installed and this client
+// went without, so a swarm could have this machine dial into its own network. Offline mode, which the suites run in,
+// turns the filter off along with the discovery it guards; options let a test build this client without that discovery.
+export const agentClient = (options = {}) => filterPeers(new WebTorrent({ natUpnp: false, natPmp: false, lsd: false, utp: false,
+  ...(process.env.COUCHSWARM_HELPER_OFFLINE === '1' ? { dht: false, tracker: false } : {}), ...options }));
+
 /** @param {{ cacheRoot: string, keepDownloads?: boolean, report?: (status: object) => void, pollMs?: number, readAheadBytes?: number,
  * retryMs?: number, createClient?: () => any, iceOverride?: RTCIceServer[] }} options */
 export function createRemoteAgent({ cacheRoot, keepDownloads = false, report = () => {}, pollMs = 2000, readAheadBytes = READ_AHEAD_BYTES, retryMs = 15000,
-  createClient = () => new WebTorrent({ natUpnp: false, natPmp: false, lsd: false, utp: false, ...(process.env.COUCHSWARM_HELPER_OFFLINE === '1' ? { dht: false, tracker: false } : {}) }),
-  iceOverride }) {
+  createClient = agentClient, iceOverride }) {
   let grant, origin, site = '', client, torrent, directory, mediaVersion = -1, timer, closed = false, loading, loadedSource = '', swept = false;
   let status = 'Waiting for a pairing link.', problem = false, lastContact = 0, previousStatus, previousProblem = false;
   let desiredVersion = -2, loadAbort, attemptedVersion = -2, attempts = 0, readyAt = 0, misses = 0, generation = 0, loadingSource = null, throttled = false;

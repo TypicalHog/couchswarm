@@ -8,6 +8,7 @@ import { once } from 'node:events';
 import WebTorrent from 'webtorrent';
 import MemoryStore from 'memory-chunk-store';
 import { createTorrentHelper, filterPeers, publicAddress, torrentPathIssue, torrentSource } from '../helper/torrent-helper.mjs';
+import { agentClient } from '../helper/remote-agent.mjs';
 import { MAX_ROOM_TORRENTS, MAX_SEATS } from '../helper/constants.mjs';
 
 // Offline by default, so a helper built without the createClient below still cannot reach the DHT or a public tracker.
@@ -257,6 +258,18 @@ test('a magnet cannot point the helper at the private network', { timeout: 5000 
   assert.equal(offlineParsed.peerAddresses.length, 4, 'offline mode keeps loopback hints so the suites can seed locally');
   assert.equal(offlineParsed.announce.length, 6);
   assert.deepEqual(filterPeers({}), {}, 'offline mode leaves the suites free to seed from loopback');
+});
+
+// filterPeers above is only the rule; the paired helper, which is what hosts run, has to build its client with it.
+test('the paired helper refuses the private network at connect time as well', { timeout: 5000 }, async () => {
+  delete process.env.COUCHSWARM_HELPER_OFFLINE;
+  // The DHT and the trackers are what the filter guards against, and a test must not reach either.
+  const client = agentClient({ dht: false, tracker: false });
+  try {
+    for (const host of ['10.0.0.5', '127.0.0.1', '169.254.169.254', '192.168.1.1', 'fe80::1'])
+      assert.equal(client.blocked?.contains(host), true, `a peer at ${host} learned from a tracker, the DHT or ut_pex is dialled`);
+    assert.equal(client.blocked.contains('203.0.113.7'), false);
+  } finally { process.env.COUCHSWARM_HELPER_OFFLINE = '1'; await new Promise(resolve => client.destroy(resolve)); }
 });
 
 test('a translated address is judged by the IPv4 it carries', { timeout: 5000 }, async () => {
