@@ -288,8 +288,10 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           setHelper({ host: !remote.own });
           // The reconnect budget above is spent by every drop in one movie, so an evening of brief Wi-Fi
           // hiccups used it up and stopped the film the fourth time one landed. A leg that has stayed up this
-          // long has earned it back; one that flaps inside the minute still gives up after three.
-          healthyTimer = setTimeout(() => { retriedHelper.current = 0; }, 60_000);
+          // long has earned it back; one that flaps inside the minute still gives up after three. The same goes
+          // for the one automatic upgrade after a failed connect: a helper slow to start at the top of the film
+          // spent it, and every later outage then asked the viewer to press Reconnect while the room waited.
+          healthyTimer = setTimeout(() => { retriedHelper.current = 0; retriedUpgrade.current = false; }, 60_000);
         }
         // Cleared after the helper is reported, so the two never read false at the same moment. Every way
         // out of the attempt — connected, unpaired mid-wait, offline too long, failed — passes here.
@@ -336,9 +338,10 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           // helper remounts onto their own once it is ready. The restart interrupts playback, so adopt one
           // only before any video bytes land — unless this stream lost its helper, where the kept store's
           // bytes say nothing about the swarm and the stall is worse than the interruption.
-          // A helper that was offered and could not be reached is upgraded to once per movie, never in a loop:
-          // once that budget is spent the returning helper is offered instead, because a tab left on browser
-          // peers that receive nothing holds the whole room paused with nothing to click.
+          // A helper that was offered and could not be reached is upgraded to once - per movie, or per leg that
+          // then stayed up a minute - never in a loop: once that budget is spent the returning helper is offered
+          // instead, because a tab left on browser peers that receive nothing holds the whole room paused with
+          // nothing to click.
           // What lands is counted off the network: a reload verifies the kept store into `downloaded` before the
           // swarm has sent a byte, and a tab reloaded while its helper was away would take that for a live swarm,
           // stop watching, play out what it kept and stall the room with no way back. A finished file needs nobody.
