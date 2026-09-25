@@ -235,20 +235,24 @@ async function handler(request: Request, context: { params: Promise<{ id: string
   if (roomChanged) stored = (await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<StoredRoom>())!;
   let room = publicRoom(stored);
   const members = couch ?? await readMembers();
-  if (room.playing && (!allReady(members, room, Date.now()) || timelinePosition(room, Date.now()) >= room.duration)) {
-    const hostPresent = members.some(m => m.id === room.hostId);
-    const ended = room.duration > 0 && timelinePosition(room, Date.now()) >= room.duration;
+  // One clock for every judgement of who is here: the list was cut at an earlier one, so a host whose lease ran out
+  // in between would be missing to allReady yet still on the list, and the room would stop as if for a buffering
+  // seat - the one pause that restarts itself - rather than wait for the host to come back and press play.
+  const at = Date.now();
+  const hostPresent = members.some(m => m.id === room.hostId && m.lastSeen > at - PRESENCE_MS);
+  if (room.playing && (!allReady(members, room, at) || timelinePosition(room, at) >= room.duration)) {
+    const ended = room.duration > 0 && timelinePosition(room, at) >= room.duration;
     const reason = ended ? 'That’s a wrap. Ready for another?' : hostPresent ? BUFFERING : HOST_AWAY;
     await db.prepare('UPDATE rooms SET playing = 0, position = ?, revision = revision + 1, reason = ? WHERE id = ? AND revision = ?')
-      .bind(timelinePosition(room, Date.now()), reason, id, room.revision).run();
+      .bind(timelinePosition(room, at), reason, id, room.revision).run();
     stored = (await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<StoredRoom>())!;
     room = publicRoom(stored);
-  } else if (!room.playing && room.reason === BUFFERING && allReady(members, room, Date.now())) {
+  } else if (!room.playing && room.reason === BUFFERING && allReady(members, room, at)) {
     await db.prepare('UPDATE rooms SET playing = 1, starts_at = ?, revision = revision + 1, reason = ? WHERE id = ? AND revision = ? AND playing = 0')
       .bind(Date.now() + 3000, 'Playing together.', id, room.revision).run();
     stored = (await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<StoredRoom>())!;
     room = publicRoom(stored);
-  } else if (!room.playing && !lapsed && room.reason === HOST_AWAY && members.some(m => m.id === room.hostId)) {
+  } else if (!room.playing && !lapsed && room.reason === HOST_AWAY && hostPresent) {
     // Nothing used to take that message back, so the couch read 'waiting for them to return' at a host who was
     // sitting right there, and only a control action cleared it. The room still does not restart itself: a lease
     // that lapsed is the host's to resume. The request that stopped the room keeps the message, because it is
