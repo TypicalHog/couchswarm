@@ -339,8 +339,12 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           // A helper that was offered and could not be reached is upgraded to once per movie, never in a loop:
           // once that budget is spent the returning helper is offered instead, because a tab left on browser
           // peers that receive nothing holds the whole room paused with nothing to click.
+          // What lands is counted off the network: a reload verifies the kept store into `downloaded` before the
+          // swarm has sent a byte, and a tab reloaded while its helper was away would take that for a live swarm,
+          // stop watching, play out what it kept and stall the room with no way back. A finished file needs nobody.
+          const fed = () => !lostHelper.current && (!!torrent?.received || fileRef.current?.progress === 1);
           const upgrade = (own: boolean) => {
-            if (fileRef.current?.downloaded && !lostHelper.current) return;
+            if (fed()) return;
             if (helperFailed) fail(`${own ? 'Your' : 'The host’s'} helper is available again. Reconnect to the movie to use it.`);
             else setAttempt(value => value + 1);
           };
@@ -352,7 +356,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
             pending = false;
             // The helper dialog polls this same status on a timer of its own, so stop as soon as the upgrade
             // can no longer fire: once this stream has bytes there is nothing left for a second poller to do.
-            if (fileRef.current?.downloaded && !lostHelper.current) return;
+            if (fed()) return;
             try {
               const { ready, own } = await helperStatus(session, abort.signal);
               if (disposed) return;

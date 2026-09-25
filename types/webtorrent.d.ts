@@ -30,6 +30,8 @@ declare module 'webtorrent/dist/webtorrent.min.js' {
     once(event: string, listener: (...args: unknown[]) => void): Torrent;
     addPeer(peer: unknown): boolean;
     name: string; files: TorrentFile[]; downloadSpeed: number; numPeers: number;
+    // Bytes this client has taken off the network, which a store verified at startup adds nothing to.
+    received: number;
     on(event: string, listener: (...args: unknown[]) => void): Torrent;
     addWebSeed(url: string): void;
   }
