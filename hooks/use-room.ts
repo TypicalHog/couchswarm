@@ -113,10 +113,11 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     if (unlocking.current) return;
     checkSleep();
     // A tab that just woke has no usable clock, so nothing may play against its timeline until a reply re-anchors it.
-    if (!anchor.current.server) { video.pause(); setConnected(false); return; }
+    // None of these seats is about to start playing either, so a countdown left on screen would count down nothing.
+    if (!anchor.current.server) { video.pause(); setConnected(false); setCountdown(0); return; }
     // A request still in flight is proof the tab is alive, but only until its 10 s abort would have fired.
-    if ((!pending.current || performance.now() - lastContact.current > 11000) && outOfContact()) { video.pause(); setConnected(false); return; }
-    if (state.media.loadedVersion !== current.mediaVersion || video.readyState < 1) return;
+    if ((!pending.current || performance.now() - lastContact.current > 11000) && outOfContact()) { video.pause(); setConnected(false); setCountdown(0); return; }
+    if (state.media.loadedVersion !== current.mediaVersion || video.readyState < 1) { setCountdown(0); return; }
     const now = localNow();
     const target = timelinePosition(current, now);
     // The room's duration is the host's reading of the file, and another demuxer can come up a shade shorter, so
