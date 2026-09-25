@@ -29,3 +29,22 @@ export function followReads(torrent: Pieces, file: { offset: number; length: num
     return piece;
   };
 }
+
+// A Range header names only the piece a read starts in, and a <video> element keeps one open-ended read going for
+// as long as it plays forward, so that piece falls further behind the player with every second watched: a saved run
+// counted from there takes in everything already played. Passing the read's own chunks through here answers the
+// piece it has really got to. Cancelling is handed straight on, never queued behind a chunk that has not arrived as
+// an async generator would queue it, because that return is what gives an abandoned read's pieces back.
+export function readProgress(read: AsyncIterable<Uint8Array>, from: number, pieceLength: number, reached: (piece: number) => void): AsyncIterableIterator<Uint8Array> {
+  const iterator = read[Symbol.asyncIterator]();
+  let at = from;
+  return {
+    [Symbol.asyncIterator]() { return this; },
+    next: async () => {
+      const chunk = await iterator.next();
+      if (!chunk.done) { at += chunk.value.length; reached(Math.floor((at - 1) / pieceLength)); }
+      return chunk;
+    },
+    return: async () => iterator.return ? iterator.return() : { done: true, value: undefined },
+  };
+}

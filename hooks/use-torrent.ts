@@ -4,7 +4,7 @@ import type WebTorrent from 'webtorrent/dist/webtorrent.min.js';
 import type { Torrent, TorrentFile, TorrentFileStream } from 'webtorrent/dist/webtorrent.min.js';
 import type { PlaysVideoEngine } from 'playsvideo';
 import { isMkv, videoFiles } from '@/lib/video-files';
-import { followReads } from '@/lib/follow-reads';
+import { followReads, readProgress } from '@/lib/follow-reads';
 import { pieceStates, storedAhead } from '@/lib/piece-state';
 import { decodeSubtitle, subtitleFiles, toWebVTT } from '@/lib/subtitles';
 import { connectHelper } from '@/lib/torrent-helper';
@@ -108,7 +108,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
   const fileRef = useRef<TorrentFile | null>(null);
   // The piece bar reads this on a timer of its own: a state per piece is far too much to hand React every second.
   const piecesRef = useRef<{ torrent: Torrent; file: TorrentFile } | null>(null);
-  // The piece the player last read from, which is the only thing that knows where in the file it is.
+  // The piece the player's read has got to, which is the only thing that knows where in the file it is.
   const readingRef = useRef(-1);
   const retriedHelper = useRef(0);
   const retriedUpgrade = useRef(false);
@@ -432,10 +432,17 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           fileRef.current = file;
           piecesRef.current = { torrent: value, file };
           const follow = followReads(value, file);
-          // WebTorrent treats an end of 0 as absent and streams the whole file against a Content-Length of 1.
+          // Only the read that began last is the player's: one it has just abandoned can still deliver a chunk.
+          let reads = 0;
           file.on('iterator', ({ iterator, req }, replace) => {
-            if (!/^bytes=0-0$/.test(req.headers.range || '')) { readingRef.current = follow(req.headers.range || ''); return; }
-            replace((async function* () { for await (const chunk of iterator) { yield chunk.subarray(0, 1); return; } })());
+            const range = req.headers.range || '';
+            // WebTorrent treats an end of 0 as absent and streams the whole file against a Content-Length of 1.
+            if (/^bytes=0-0$/.test(range)) { replace((async function* () { for await (const chunk of iterator) { yield chunk.subarray(0, 1); return; } })()); return; }
+            const read = ++reads;
+            const reached = (piece: number) => { if (!disposed && read === reads) readingRef.current = piece; };
+            reached(follow(range));
+            const start = /^bytes=(\d+)-/.exec(range);
+            if (start) replace(readProgress(iterator, file.offset + Number(start[1]), value.pieceLength, reached));
           });
           setStats(s => ({ ...s, filename: file.name, size: file.length }));
           setStatus('Buffering your seat…');

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import WebTorrent from 'webtorrent';
 import MemoryStore from 'memory-chunk-store';
-import { followReads } from '../lib/follow-reads.ts';
+import { followReads, readProgress } from '../lib/follow-reads.ts';
 
 const offline = { dht: false, tracker: false, lsd: false, utp: false, natUpnp: false, natPmp: false };
 const destroy = client => new Promise(resolve => client.destroy(resolve));
@@ -63,6 +63,33 @@ test('a read that names no start, a read past the end and a destroyed torrent ar
   torrent.destroyed = true;
   follow('bytes=0-');
   assert.equal(calls.length, 2);
+});
+
+// A <video> element keeps one open-ended read going while it plays, so the piece that read started in stays
+// where the player was minutes ago; what the readiness gate needs is the piece the read has got to.
+test('a read answers the piece its chunks have reached, not only the one it started in', async () => {
+  const chunks = [5, 10, 10, 3].map(length => new Uint8Array(length));
+  const reached = [];
+  // Byte 0 of a file that starts 25 bytes into the torrent, with ten-byte pieces: piece 2, byte 5 of it.
+  for await (const chunk of readProgress((async function* () { yield* chunks; })(), 25, 10, piece => reached.push(piece))) void chunk;
+  assert.deepEqual(reached, [2, 3, 4, 5]);
+});
+
+test('cancelling a read parked on a missing piece gives its pieces back at once', { timeout: 30000 }, async t => {
+  const seed = new WebTorrent(offline), viewer = new WebTorrent(offline);
+  t.after(() => destroy(seed)); t.after(() => destroy(viewer));
+  const payload = Object.assign(randomBytes(8 * 16384), { name: 'movie.mp4' });
+  const seeded = await new Promise(resolve => seed.seed(payload, { pieceLength: 16384, announce: [], store: MemoryStore }, resolve));
+  // No peer is ever added, so the piece this read waits on never arrives.
+  const torrent = await new Promise(resolve => viewer.add(seeded.torrentFile, { announce: [], store: MemoryStore, deselect: true }, resolve));
+  const [file] = torrent.files;
+  const reads = () => torrent._selections._items.filter(selection => selection.isStreamSelection).length;
+  const read = readProgress(file[Symbol.asyncIterator]({ start: 3 * 16384 }), file.offset + 3 * 16384, torrent.pieceLength, () => {});
+  void read.next();
+  assert.equal(reads(), 1);
+  void read.return();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(reads(), 0, 'the cancelled read still holds its pieces, so the download stays where the player left');
 });
 
 test('a real download moves to a read in the middle of the file and returns for the start afterwards', { timeout: 30000 }, async t => {
