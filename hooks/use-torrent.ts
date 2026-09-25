@@ -590,8 +590,10 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
       video.pause();
       video.removeAttribute('src');
       video.load();
-      // What this client verified is what the kept store holds, so the replacement need not hash it again.
-      if (torrent?.bitfield) verified = { source, bitfield: torrent.bitfield.buffer.slice() };
+      // What this client verified is what the kept store holds, so the replacement need not hash it again - once it
+      // has finished verifying. Until then the bitfield marks only the pieces checked so far, and the replacement
+      // trusts it whole, so every saved piece past those would be taken for missing and fetched all over again.
+      if (torrent?.ready && torrent.bitfield) verified = { source, bitfield: torrent.bitfield.buffer.slice() };
       // webtorrent 3.0.21 re-arms the video worker's 20 s keepalive on the line after the end-of-stream cleanup
       // that had just cleared it, and neither close nor destroy clears it again, so every client that served a
       // stream to its end — the bytes=0-0 answer above ends one on every load — leaves a fetch timer behind.

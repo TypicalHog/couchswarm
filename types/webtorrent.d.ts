@@ -19,8 +19,10 @@ declare module 'webtorrent/dist/webtorrent.min.js' {
   }
   export interface Torrent {
     infoHash?: string;
-    // Present once metadata has arrived: one bit per piece, marking what this client verified in the store.
+    // Present once metadata has arrived: one bit per piece, marking what this client verified in the store. It is
+    // complete only once the torrent is ready, because the startup check sets bits as it goes.
     bitfield?: { buffer: Uint8Array; get(index: number): boolean };
+    ready: boolean;
     pieceLength: number; destroyed: boolean;
     // One entry per piece, which is null once that piece has verified and carries the bytes still to come until then.
     pieces: ({ length: number; missing: number } | null)[];
