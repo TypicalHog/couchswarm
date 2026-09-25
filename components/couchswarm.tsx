@@ -120,8 +120,9 @@ export default function CouchSwarm() {
   const hostAwayNote = 'Your host has stepped away. The room picks up when they return.';
   // A press at the end of the movie rewinds the room and waits for everyone to buffer again; it cannot also start
   // it, and the room only resumes on its own out of a buffering pause. So say what the press does, rather than
-  // offering a play that quietly turns into a rewind and has to be pressed a second time.
-  const atEnd = !!room?.duration && swarm.playhead >= room.duration;
+  // offering a play that quietly turns into a rewind and has to be pressed a second time. The test is the server's
+  // own: the playhead readout only moves when its whole second does, so at a fractional end it never reaches it.
+  const atEnd = !!room?.duration && !isPlaying && room.position >= room.duration;
   // A seat that has its buffer and still has not unlocked playback is waiting on a press of its own button, not
   // on the swarm, and that is the one thing the host cannot wait out for them.
   const needsEnable = members.some(m => !m.armed && m.epoch !== SPECTATOR_EPOCH && m.buffered >= BUFFER_SECONDS);
