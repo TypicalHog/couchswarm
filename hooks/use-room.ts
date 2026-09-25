@@ -141,11 +141,14 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     // A paused element never fetches past the edge it stopped at, so a hole or a suspended read leaves the
     // ready gate unreachable. One touch only parses about 2.25 s more, which a faststart header's gap
     // outlasts, so keep touching while the gate is unreachable; the drift corrector brings the playhead back.
+    // The gate counts the pieces already saved past the read as well, and a seat that meets it that way must be
+    // left still: every heartbeat that lands inside a touch finds the playhead 8 s off and reports it not ready.
     if (bridged.current.epoch !== current.epoch) bridged.current = { epoch: current.epoch, until: 0, touches: 0 };
     if (!current.playing && appliedEpoch.current === current.epoch && bridged.current.touches < 8
       && performance.now() >= bridged.current.until + 900
       && video.readyState >= 3 && !video.seeking && !video.ended && ahead > 0
-      && Math.abs(video.currentTime - target) < .12 && !hasBuffer(ahead, target, video.duration, false)) {
+      && Math.abs(video.currentTime - target) < .12
+      && !hasBuffer(Math.max(ahead, state.media.readStoredAhead(video.duration)), target, video.duration, false)) {
       bridged.current = { epoch: current.epoch, until: performance.now() + 600, touches: bridged.current.touches + 1 };
       video.currentTime = target + ahead + 0.05;
     }
