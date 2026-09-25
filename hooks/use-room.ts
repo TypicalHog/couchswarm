@@ -359,8 +359,9 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
           const invite = new URLSearchParams(location.hash.slice(1)).get('invite');
           setSession(null); setSnapshot(null); setConnected(false);
           // The dialog that comes back is the one a first-time invitee sees, so without a reason beside it a seat
-          // that was just taken away reads as a fresh welcome.
-          if (status === 401 && invite) { setInvitation({ roomId: session.roomId, invite }); setError('You are no longer in this room. You can join again with the same link.'); }
+          // that was just taken away reads as a fresh welcome. A seat removed along with a reset link looks the same
+          // from here as one removed alone, so the link is not promised to work.
+          if (status === 401 && invite) { setInvitation({ roomId: session.roomId, invite }); setError('You are no longer in this room. Unless your host has made a new invite link, you can join again with this one.'); }
           else setError((err as Error).message);
           return;
         }
