@@ -125,7 +125,10 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     const reachable = Number.isFinite(video.duration) && video.duration > 0 ? Math.min(target, video.duration) : target;
     const drift = reachable - video.currentTime;
     if (performance.now() >= bridged.current.until && (appliedEpoch.current !== current.epoch || Math.abs(drift) > 0.75 || (!current.playing && Math.abs(drift) > .12))) {
-      if (!video.seeking) { video.currentTime = reachable; appliedEpoch.current = current.epoch; }
+      // A seek still in flight is left to finish, except one the room has already moved on from: waiting on it
+      // kept a seat fetching a scene the host had seeked away from, and one that never arrived held the room.
+      // A new seek aborts the old one, and it is issued once per scene, so it cannot churn.
+      if (!video.seeking || appliedEpoch.current !== current.epoch) { video.currentTime = reachable; appliedEpoch.current = current.epoch; }
     }
     const shouldPlay = current.playing && now >= current.startsAt && state.armed && !state.media.error && !video.ended;
     if (shouldPlay) {
