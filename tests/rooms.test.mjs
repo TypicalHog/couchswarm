@@ -66,9 +66,9 @@ test('room invites, authority, buffering gate, timeline, stale messages, seeking
   assert.equal(state.room.playing, true, 'the room resumes itself once everyone has buffered again');
   state = await call({ action: 'pause', revision: state.room.revision });
   assert.equal(state.room.playing, false);
-  await new Promise(resolve => setTimeout(resolve, 2100));
+  await new Promise(resolve => setTimeout(resolve, 5100));
   state = await heartbeat(guest.token, 2, 0, false);
-  assert.equal(state.members.find(m => m.id === guest.memberId).ready, false, 'a stale sequence is accepted again once the member has been quiet for 2 s');
+  assert.equal(state.members.find(m => m.id === guest.memberId).ready, false, 'a stale sequence is accepted again once the member has been quiet for 5 s');
   state = await call({ action: 'seek', position: 60, revision: state.room.revision });
   assert.equal(state.room.position, 60);
   assert.equal(state.room.epoch, 1);
@@ -244,6 +244,28 @@ test('a join-then-leave loop cannot outrun the join throttle', { timeout: 60000 
   assert.match(refused.error, /Too many joins/, 'a join counts against the throttle however it ended');
   const back = await post(path, { action: 'join', invite: host.invite, name: 'Host', hostKey: host.hostKey }, undefined, 201);
   assert.equal(back.memberId, host.memberId, 'a loop of guests cannot keep the host out of their own seat');
+});
+
+// An unchanged report is never written, so a seat reporting every second can look quiet to the stale-report check
+// while it is not; a report delayed in flight must still lose to the newer one that landed before it.
+test('a delayed report cannot undo a newer one the room skipped writing', { timeout: 30000 }, async t => {
+  const host = await post('/api/rooms', { source: magnet }, undefined, 201);
+  const path = `/api/rooms/${host.roomId}`;
+  t.after(() => post(path, { action: 'leave' }, host.token).catch(() => {}));
+  const beat = (token, sequence, ready = true) => post(path, { action: 'heartbeat', ready, armed: true, buffered: 15, epoch: 0, mediaVersion: 0, duration: 120, sequence }, token);
+  await beat(host.token, 1);
+  const guest = await post(path, { action: 'join', invite: host.invite, name: 'Guest' }, undefined, 201);
+  await beat(guest.token, 100, false);
+  await beat(guest.token, 101);
+  const written = Date.now();
+  for (const sequence of [102, 103]) {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    await beat(host.token, sequence);
+    await beat(guest.token, sequence);
+  }
+  await new Promise(resolve => setTimeout(resolve, Math.max(0, 2400 - (Date.now() - written))));
+  const state = await beat(guest.token, 100, false);
+  assert.equal(state.members.find(m => m.id === guest.memberId).ready, true, 'the report sent before the newest one is refused');
 });
 
 // A join judges the invite against the room it read first, and a rotate can commit before that seat is written, so

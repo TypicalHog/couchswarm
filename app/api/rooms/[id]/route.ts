@@ -143,10 +143,13 @@ async function handler(request: Request, context: { params: Promise<{ id: string
       // except the host's own seat, which the room can never resume without.
       // The couch travels with the report: inside the one write transaction the list already sees the row this
       // statement has just stamped, and the reply at the end needs both anyway.
+      // An older sequence is taken only from a seat that has written nothing for 5 s, which is a tab back with its
+      // count started over. The unchanged reports above leave a seat that reports every second up to 3 s unwritten,
+      // so a shorter wait let a report delayed in flight overwrite the newer one that had already landed.
       const [report, listed] = await db.batch([
         db.prepare('UPDATE members SET ready = ?, armed = ?, buffered = ?, epoch = CASE WHEN ? OR ((? OR epoch != ?) AND last_seen > ?) THEN ? ELSE ? END, last_seen = ?, report_sequence = ? WHERE id = ? AND (report_sequence < ? OR (last_seen > 0 AND last_seen < ?)) AND (last_seen > ? OR ? = ? OR (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ?)')
           .bind(ready, armed, buffered, actor.id === stored.host_id ? 1 : 0, ready && epoch === stored.epoch ? 1 : 0, SPECTATOR_EPOCH, now - PRESENCE_MS, epoch, SPECTATOR_EPOCH, now, body.sequence,
-            actor.id, body.sequence, now - 2000, now - PRESENCE_MS, actor.id, stored.host_id, id, now - PRESENCE_MS, MAX_SEATS),
+            actor.id, body.sequence, now - 5000, now - PRESENCE_MS, actor.id, stored.host_id, id, now - PRESENCE_MS, MAX_SEATS),
         memberQuery(),
       ]);
       couch = seated(listed.results as StoredMember[]);
