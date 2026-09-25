@@ -19,7 +19,10 @@ export function HelperConnection({ session, isHost, reconnectIfOwnHelper, adoptO
   // Adopting this participant's helper is worth a rebuilt pipeline only when it came up while they were sitting
   // here, which is what pairing one looks like. A tab that loads with one already running is streaming from it
   // already, so it has to see the helper offline first to arm this; once spent it stays spent, because a helper
-  // that drops is the pipeline's own business and it keeps a retry budget for it.
+  // that drops is the pipeline's own business and it keeps a retry budget for it. It fires once that helper can
+  // serve the movie, not the moment it connects: a helper still fetching metadata or checking its files would
+  // leave the rebuilt pipeline waiting on it with the video emptied, or put a guest straight back on the host's
+  // helper, which the pipeline then never leaves.
   const adopt = useRef<'idle' | 'armed' | 'spent'>('idle');
   useEffect(() => {
     const platform = (navigator as Navigator & { userAgentData?: { platform: string } }).userAgentData?.platform || navigator.userAgent;
@@ -39,7 +42,7 @@ export function HelperConnection({ session, isHost, reconnectIfOwnHelper, adoptO
         // Pressing the button while a claim was already in flight answers 409; once the helper reads as connected that complaint is stale.
         if (result.mine && result.online) { setPairingUrl(''); setError(''); }
         if (!result.mineOnline) { if (adopt.current === 'idle') adopt.current = 'armed'; }
-        else if (adopt.current === 'armed') { adopt.current = 'spent'; adoptOwnHelper(); }
+        else if (adopt.current === 'armed' && result.own && result.ready) { adopt.current = 'spent'; adoptOwnHelper(); }
         paired = result.paired;
       } catch { /* The room connection already reports connectivity failures. */ }
       finally { running = false; }
