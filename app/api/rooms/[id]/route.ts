@@ -68,13 +68,22 @@ async function handler(request: Request, context: { params: Promise<{ id: string
     // them, so a full couch must not refuse them, and the room's helper stays bound to that member id.
     const reclaim = typeof body.hostKey === 'string' && body.hostKey.length === 64 && await hash(body.hostKey) === stored.host_key_hash;
     const memberId = reclaim ? stored.host_id : crypto.randomUUID();
+    // The invite and the key were judged against the row read at the top, and a rotate can commit before this
+    // write lands: the seat it takes would outlive the rotate that was meant to clear it, and a re-claim with a
+    // key the host has just retired would take their seat back. So each write repeats the check it rests on.
+    const current = 'EXISTS (SELECT 1 FROM rooms WHERE id = ? AND invite_hash = ? AND host_key_hash = ?)';
+    const invalid = () => json({ error: 'This invite link is invalid.' }, 403);
     if (reclaim) {
-      await db.prepare('UPDATE members SET token_hash = ?, name = ?, ready = 0, armed = 0, buffered = 0, epoch = -1, last_seen = ?, report_sequence = 0 WHERE id = ?')
-        .bind(await hash(token), name, now, memberId).run();
+      const result = await db.prepare(`UPDATE members SET token_hash = ?, name = ?, ready = 0, armed = 0, buffered = 0, epoch = -1, last_seen = ?, report_sequence = 0 WHERE id = ? AND ${current}`)
+        .bind(await hash(token), name, now, memberId, id, stored.invite_hash, stored.host_key_hash).run();
+      if (!result.meta.changes) return invalid();
     } else {
-      const result = await db.prepare('INSERT INTO members (id, room_id, token_hash, name, last_seen, joined_at) SELECT ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ?')
-        .bind(memberId, id, await hash(token), name, now, now, id, now - PRESENCE_MS, MAX_SEATS).run();
-      if (!result.meta.changes) return json({ error: `This couch is full (${MAX_SEATS} people). Try again when a seat opens.` }, 409);
+      const result = await db.prepare(`INSERT INTO members (id, room_id, token_hash, name, last_seen, joined_at) SELECT ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM members WHERE room_id = ? AND last_seen > ?) < ? AND ${current}`)
+        .bind(memberId, id, await hash(token), name, now, now, id, now - PRESENCE_MS, MAX_SEATS, id, stored.invite_hash, stored.host_key_hash).run();
+      if (!result.meta.changes) {
+        if (!await db.prepare(`SELECT 1 AS n WHERE ${current}`).bind(id, stored.invite_hash, stored.host_key_hash).first<{ n: number }>()) return invalid();
+        return json({ error: `This couch is full (${MAX_SEATS} people). Try again when a seat opens.` }, 409);
+      }
     }
     // Nobody is waiting on the new arrival's buffer if the host is already gone: the room stopped at the lease,
     // and only this join is here to say so, because the lease check never runs for a room that is paused.
@@ -201,12 +210,16 @@ async function handler(request: Request, context: { params: Promise<{ id: string
       hostKey = secret();
       // Every seat taken with the old link goes with it, lapsed ones included: a token banked from that link
       // would otherwise heartbeat its way back into the room the host just cleared.
+      // A re-claim with the old key does not move the revision, so one landing after this request read the room
+      // would leave the new link and key answering 200 to a tab that no longer holds the seat, and whoever took
+      // it could rotate the host out in turn: the rotation only stands while the requester still holds the seat.
+      const holder = 'EXISTS (SELECT 1 FROM members WHERE id = ? AND token_hash = ?)';
       const rotation = await db.batch([
-        db.prepare('DELETE FROM helper_peers WHERE helper_id IN (SELECT id FROM helpers WHERE room_id = ?) AND (member_id != ? OR helper_id IN (SELECT id FROM helpers WHERE room_id = ? AND member_id != ?)) AND EXISTS (SELECT 1 FROM rooms WHERE id = ? AND revision = ?)').bind(id, stored.host_id, id, stored.host_id, id, stored.revision),
-        db.prepare('DELETE FROM helpers WHERE room_id = ? AND member_id != ? AND EXISTS (SELECT 1 FROM rooms WHERE id = ? AND revision = ?)').bind(id, stored.host_id, id, stored.revision),
-        db.prepare('DELETE FROM members WHERE room_id = ? AND id != ? AND EXISTS (SELECT 1 FROM rooms WHERE id = ? AND revision = ?)').bind(id, stored.host_id, id, stored.revision),
-        db.prepare('UPDATE rooms SET invite_hash = ?, host_key_hash = ?, revision = revision + 1 WHERE id = ? AND revision = ?')
-          .bind(await hash(invite), await hash(hostKey), id, stored.revision),
+        db.prepare(`DELETE FROM helper_peers WHERE helper_id IN (SELECT id FROM helpers WHERE room_id = ?) AND (member_id != ? OR helper_id IN (SELECT id FROM helpers WHERE room_id = ? AND member_id != ?)) AND EXISTS (SELECT 1 FROM rooms WHERE id = ? AND revision = ?) AND ${holder}`).bind(id, stored.host_id, id, stored.host_id, id, stored.revision, stored.host_id, tokenHash),
+        db.prepare(`DELETE FROM helpers WHERE room_id = ? AND member_id != ? AND EXISTS (SELECT 1 FROM rooms WHERE id = ? AND revision = ?) AND ${holder}`).bind(id, stored.host_id, id, stored.revision, stored.host_id, tokenHash),
+        db.prepare(`DELETE FROM members WHERE room_id = ? AND id != ? AND EXISTS (SELECT 1 FROM rooms WHERE id = ? AND revision = ?) AND ${holder}`).bind(id, stored.host_id, id, stored.revision, stored.host_id, tokenHash),
+        db.prepare(`UPDATE rooms SET invite_hash = ?, host_key_hash = ?, revision = revision + 1 WHERE id = ? AND revision = ? AND ${holder}`)
+          .bind(await hash(invite), await hash(hostKey), id, stored.revision, stored.host_id, tokenHash),
       ]);
       result = rotation[3];
     } else return json({ error: 'Unknown room action.' }, 400);

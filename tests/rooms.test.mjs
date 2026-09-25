@@ -243,3 +243,29 @@ test('a join-then-leave loop cannot outrun the join throttle', { timeout: 60000 
   const refused = await post(path, { action: 'join', invite: host.invite, name: 'One too many' }, undefined, 429);
   assert.match(refused.error, /Too many joins/, 'a join counts against the throttle however it ended');
 });
+
+// A join judges the invite against the room it read first, and a rotate can commit before that seat is written, so
+// the old link's seats must all be gone once a rotate has answered, however the two interleaved.
+test('a rotate takes the seats of the joins that were racing it', { timeout: 60000 }, async t => {
+  for (let trial = 0; trial < 5; trial++) {
+    const host = await post('/api/rooms', { source: magnet }, undefined, 201);
+    const path = `/api/rooms/${host.roomId}`;
+    t.after(() => post(path, { action: 'leave' }, host.token).catch(() => {}));
+    const { room } = await post(path, { action: 'snapshot' }, host.token);
+    const join = name => fetch(origin + path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'join', invite: host.invite, name }), signal: AbortSignal.timeout(10000) })
+      .then(async response => ({ status: response.status, data: await response.json() }));
+    const joins = [];
+    let rotation;
+    for (let i = 0; i < 8; i++) {
+      if (i === 4) rotation = post(path, { action: 'rotate', revision: room.revision }, host.token);
+      joins.push(join(`Old link ${i}`));
+      await new Promise(resolve => setTimeout(resolve, 2));
+    }
+    await rotation;
+    for (const { status, data } of await Promise.all(joins)) {
+      assert.ok(status === 201 || status === 403, `a join racing the rotate answered ${status}`);
+      if (status === 201) await post(path, { action: 'snapshot' }, data.token, 401);
+    }
+  }
+});
