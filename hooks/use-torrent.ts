@@ -133,6 +133,9 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     // Set when the MKV engine gave up and the file was handed to the video element instead.
     let mkvNative = false;
     let torrentFailed = false;
+    // Set when this torrent is refused before it is ready, so the ready callback stands down instead of listing
+    // and streaming it behind the message.
+    let refused = false;
     let gotMetadata = false;
     let peerTimer: ReturnType<typeof setTimeout> | undefined;
     let helperTimer: ReturnType<typeof setTimeout> | undefined;
@@ -417,8 +420,8 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
             if (metadata) added = new Uint8Array(metadata);
           }
         }
-        torrent = client.add(added, { strategy: 'sequential', deselect: true, destroyStoreOnDestroy: false, storeCacheSlots: 8, bitfield: verified?.source === source ? verified.bitfield : undefined, ...carried }, value => {
-          if (disposed) return;
+        torrent = client.add(added, { strategy: 'sequential', deselect: true, destroyStoreOnDestroy: false, storeCacheSlots: 8, bitfield: verified?.source === source ? verified.bitfield : undefined, ...carried }, async value => {
+          if (disposed || refused) return;
           // WebTorrent names this browser's store directory after the torrent, and a name holding a slash is
           // one the file system refuses. Nothing notices until the first piece is written, which is long after
           // this movie looked like it was loading, so refuse the name here instead.
@@ -463,11 +466,11 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           }
           // Selecting the file, and the open-ended ranges the video element asks for, pull the whole video into
           // this browser's store. A private window's allowance is fixed and far smaller than the disk, so a
-          // movie that can never fit is refused here rather than partway through the night.
-          void navigator.storage.estimate().then(({ quota }) => {
-            if (!disposed && quota !== undefined && file.length > quota)
-              fail('This movie is larger than the storage this browser allows CouchSwarm. A private window gets much less space than a normal one: open the invite in a normal window, free up disk space, or use another device.');
-          }).catch(() => {});
+          // movie that can never fit is refused here rather than partway through the night - and before any of
+          // it is selected, or the download goes on filling the allowance behind the message that refused it.
+          const fits = await navigator.storage.estimate().then(({ quota }) => quota === undefined || file.length <= quota, () => true);
+          if (disposed) return;
+          if (!fits) { fail('This movie is larger than the storage this browser allows CouchSwarm. A private window gets much less space than a normal one: open the invite in a normal window, free up disk space, or use another device.'); return; }
           file.select();
           const playNatively = () => {
             // A codec the browser cannot decode is dropped at demux and the audio plays on: no media error,
@@ -534,8 +537,10 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         torrent.on('metadata', () => {
           gotMetadata = true;
           // Verifying this many pieces takes tens of seconds and the picker below would list every file.
-          if (torrent!.files.length > MAX_TORRENT_FILES)
+          if (torrent!.files.length > MAX_TORRENT_FILES) {
+            refused = true;
             fail(`This torrent has ${torrent!.files.length} files; CouchSwarm handles up to ${MAX_TORRENT_FILES}. Ask the host to choose another torrent.`);
+          }
         });
         peerTimer = setTimeout(() => {
           if (disposed) return;
