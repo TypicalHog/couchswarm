@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { BufferSource, BufferTarget, EncodedAudioPacketSource, EncodedVideoPacketSource, Input, MP4, ADTS, MkvOutputFormat, Output } from 'mediabunny';
+import { BufferSource, BufferTarget, EncodedAudioPacketSource, EncodedPacket, EncodedPacketSink, EncodedVideoPacketSource, Input, MP4, ADTS, MkvOutputFormat, Output } from 'mediabunny';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 const playsvideo = import.meta.resolve('playsvideo');
@@ -294,6 +294,93 @@ test('an MKV whose cues index its subtitles too is planned from the video cues a
   const twoVideos = mkv(el(0x1654ae6b, el(0xae, uint(0xd7, 1), uint(0x83, 1), uint(0x88, 0)), el(0xae, uint(0xd7, 2), uint(0x83, 1))),
     [[0, 1], [0, 2], [5000, 1], [10000, 2], [15000, 1], [20000, 2], [25000, 1]]);
   assert.deepEqual((await parseMkvCueIndex(async (start, end) => twoVideos.subarray(start, end), twoVideos.length)).cuePoints.map(point => point.timestampMs), [0, 10000, 20000]);
+});
+
+test('converted MKV audio meets frame for frame at every segment seam', { timeout: 60000 }, async () => {
+  // AC-3 and E-AC-3 are converted to AAC a segment at a time, each segment in its own ffmpeg run. The encoder opens a
+  // run with a 1024-sample priming frame and closes it on a window with nothing after it; kept whole and stamped from
+  // the run's first packet, every segment opened on that priming, overlapped the tail of the one before, and played
+  // audio 21 ms older than its timestamps: a click at each seam, every few seconds of the film.
+  const source = await readFile(new URL('./pipeline/segment-processor.js', playsvideo), 'utf8');
+  const patches = JSON.parse(await readFile(new URL('../scripts/playsvideo-patches.json', import.meta.url), 'utf8'));
+  let code = source;
+  for (const { find, replace, count } of patches['pipeline/segment-processor.js']) {
+    assert.equal(code.split(find).length - 1, count, 'the patched segment-processor source moved');
+    code = code.replaceAll(find, replace);
+  }
+  // A data: module resolves no relative specifier, so point each at the file it would reach.
+  const load = text => import(`data:text/javascript,${encodeURIComponent(['demux', 'mux', 'source-signal'].reduce(
+    (out, name) => out.replace(`from './${name}.js'`, `from '${new URL(`./pipeline/${name}.js`, playsvideo).href}'`), text))}`);
+  const { processSegmentWithAbort: unpatched } = await load(source);
+  const { processSegmentWithAbort: patched } = await load(code);
+
+  const clip = await demuxFile(fileURLToPath(new URL('./fixtures/h264-aac.mp4', import.meta.url)));
+  // Keyframe cuts that fall between audio packets, as a 25 fps film's do.
+  const plan = [0, 0.52, 1.04].map((startSec, i, starts) => ({ startSec, durationSec: (starts[i + 1] ?? 2) - startSec }));
+  const convert = async (process, rate) => {
+    // An AC-3 track as mediabunny reads one from an MKV: 1536-sample packets stamped to the millisecond, each
+    // lasting until the next.
+    const stamps = Array.from({ length: Math.ceil(2.2 * rate / 1536) }, (_, i) => Math.round(i * 1536 / rate * 1000) / 1000);
+    const ac3 = stamps.map((at, i) => new EncodedPacket(new Uint8Array(1), 'key', at, (stamps[i + 1] ?? at + 1536 / rate) - at, i));
+    const audioSink = {
+      getFirstPacket: async () => ac3[0],
+      getPacket: async at => ac3.findLast(packet => packet.timestamp <= at) ?? null,
+      getNextPacket: async packet => ac3[packet.sequenceNumber + 1] ?? null,
+    };
+    // Stands in for ffmpeg: after its priming frame, one AAC frame per 1024 source samples, each carrying the source
+    // time it holds, so that what a frame plays can be checked against when it is stamped to play. ffmpeg's frames
+    // are ADTS, which the muxer strips, so these carry an ADTS header too.
+    const adts = payload => Uint8Array.from([0xff, 0xf1, 0x40 | [96000, 88200, 64000, 48000, 44100].indexOf(rate) << 2, 0x80,
+      (7 + payload.length) >> 3, ((7 + payload.length) & 7) << 5 | 0x1f, 0xfc, ...payload]);
+    const runs = [];
+    const transcodeAudio = async ({ packets, sampleRate, audioStartSec }) => {
+      const start = packets[0].timestamp, end = packets.at(-1).timestamp + packets.at(-1).duration, frameSec = 1024 / sampleRate;
+      runs.push({ start, end });
+      return {
+        packets: Array.from({ length: Math.ceil((Math.round((end - start) * sampleRate) + 1024) / 1024) }, (_, i) =>
+          new EncodedPacket(adts(new Uint8Array(new Float64Array([start + (i - 1) * frameSec]).buffer)), 'key', audioStartSec + i * frameSec, frameSec, i)),
+        decoderConfig: { codec: 'mp4a.40.2', numberOfChannels: 2, sampleRate },
+        metrics: { totalMs: 0, audioDurationSec: 0, realtimeRatio: 0, ffmpegMs: 0, ffmpegSpeed: null },
+      };
+    };
+    const config = { videoSink: clip.videoSink, audioSink, videoCodec: clip.videoCodec, audioCodec: 'ac3', sourceCodec: 'ac3',
+      videoDecoderConfig: clip.videoDecoderConfig, audioDecoderConfig: { codec: 'mp4a.40.2', numberOfChannels: 2, sampleRate: rate },
+      plan, doTranscode: true, transcodeAudio };
+    const segments = [];
+    for (let index = 0; index < plan.length; index++) {
+      const { initSegment, mediaData } = await process(config, index);
+      const played = new Input({ source: new BufferSource(Buffer.concat([initSegment, mediaData])), formats: [MP4] });
+      const sink = new EncodedPacketSink(await played.getPrimaryAudioTrack());
+      const frames = [];
+      for (let packet = await sink.getFirstPacket(); packet; packet = await sink.getNextPacket(packet)) {
+        frames.push({ at: packet.timestamp, end: packet.timestamp + packet.duration, holds: new Float64Array(packet.data.slice().buffer)[0] });
+      }
+      played.dispose();
+      segments.push(frames);
+    }
+    return { segments, runs };
+  };
+  try {
+    const before = await convert(unpatched, 48000);
+    assert.ok(before.segments.flat().every(frame => frame.at - frame.holds > .02), 'unpatched, every frame must still play audio 21 ms older than its stamp');
+    assert.ok(before.segments[1][0].at < before.segments[0].at(-1).end, 'unpatched, a segment must still overlap the one before');
+
+    const { segments, runs } = await convert(patched, 48000);
+    const frames = segments.flat(), frameSec = 1024 / 48000;
+    for (const frame of frames) assert.ok(Math.abs(frame.at - frame.holds) < 1e-6, `the frame at ${frame.at} s must play the audio stamped on it`);
+    for (let i = 1; i < frames.length; i++) assert.ok(Math.abs(frames[i].at - frames[i - 1].end) < 1e-6, `frames must meet with no gap or overlap, seams included (${frames[i].at} s)`);
+    for (let index = 1; index < plan.length; index++) {
+      const seam = segments[index][0].at;
+      assert.ok(seam <= plan[index].startSec && plan[index].startSec - seam < .065, 'a segment’s sound must start with its picture or just before it');
+      assert.ok(runs[index].start <= seam - 2 * frameSec, 'the encoder must reach the seam on real audio');
+      assert.ok(runs[index - 1].end >= seam + 2 * frameSec, 'and the run before it must carry on past the seam');
+    }
+
+    // A track whose packets sit on no whole-sample grid, like 44.1 kHz AC-3 stamped to the millisecond, is converted as before.
+    assert.deepEqual(await convert(patched, 44100), await convert(unpatched, 44100));
+  } finally {
+    clip.dispose();
+  }
 });
 
 test('the bundled audio WASM actually decodes MP3 and produces AAC', { timeout: 30000 }, async () => {

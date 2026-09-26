@@ -109,6 +109,28 @@
       "count": 1
     }
   ],
+  "pipeline/segment-processor.js": [
+    {
+      "find": "function elapsed(start) {",
+      "replace": "const audioGrids = new WeakMap();\nasync function planAudioSeam(config, index) {\n    if (!audioGrids.has(config.audioSink)) {\n        const sampleRate = config.audioDecoderConfig?.sampleRate ?? 48000;\n        const first = await config.audioSink.getFirstPacket({ metadataOnly: true });\n        const exact = first ? first.duration * sampleRate : 0;\n        const samples = Math.round(exact);\n        let grid = null;\n        if (samples > 0 && Math.abs(exact - samples) < 0.01) {\n            let divisor = samples;\n            for (let rest = 1024; rest;)\n                [divisor, rest] = [rest, divisor % rest];\n            const packetSec = samples / sampleRate;\n            const stepSec = (samples / divisor) * 1024 / sampleRate;\n            grid = {\n                origin: first.timestamp + Math.max(0, Math.ceil(-first.timestamp / packetSec - 1e-6)) * packetSec,\n                packetSec,\n                stepSec,\n                rollSec: Math.ceil(3072 / sampleRate / stepSec - 1e-6) * stepSec,\n                frameSec: 1024 / sampleRate,\n            };\n        }\n        audioGrids.set(config.audioSink, grid);\n    }\n    const grid = audioGrids.get(config.audioSink);\n    if (!grid)\n        return null;\n    const cut = (sec) => grid.origin + Math.max(0, Math.floor((sec - grid.origin) / grid.stepSec + 1e-6)) * grid.stepSec;\n    const next = config.plan[index + 1];\n    const keepFrom = cut(config.plan[index].startSec);\n    const keepTo = next ? cut(next.startSec) : Infinity;\n    return { ...grid, keepFrom, keepTo, from: Math.max(grid.origin, keepFrom - grid.rollSec), to: keepTo + grid.rollSec };\n}\nfunction elapsed(start) {",
+      "count": 1
+    },
+    {
+      "find": "    let audioPackets = config.audioSink\n        ? await collectPacketsInRange(config.audioSink, seg.startSec, endSec)\n        : [];",
+      "replace": "    let seam = config.doTranscode && config.audioSink ? await planAudioSeam(config, index) : null;\n    let audioPackets = [];\n    if (seam && seam.keepTo > seam.keepFrom) {\n        audioPackets = await collectPacketsInRange(config.audioSink, seam.from + seam.packetSec / 2, seam.to - seam.packetSec / 2);\n        if (!audioPackets.every((packet, i) => Math.abs(packet.timestamp - seam.from - i * seam.packetSec) < seam.packetSec / 4))\n            seam = null;\n    }\n    if (!seam && config.audioSink) {\n        audioPackets = await collectPacketsInRange(config.audioSink, seg.startSec, endSec);\n    }",
+      "count": 1
+    },
+    {
+      "find": "            audioStartSec: audioPackets[0].timestamp,",
+      "replace": "            audioStartSec: seam ? seam.from - seam.frameSec : audioPackets[0].timestamp,",
+      "count": 1
+    },
+    {
+      "find": "        audioPackets = transcoded.packets;",
+      "replace": "        audioPackets = seam\n            ? transcoded.packets.filter((packet) => packet.timestamp > seam.keepFrom - seam.frameSec / 2 && packet.timestamp < seam.keepTo - seam.frameSec / 2)\n            : transcoded.packets;",
+      "count": 1
+    }
+  ],
   "adapters/wasm-ffmpeg.js": [
     {
       "find": "/* @vite-ignore */",
