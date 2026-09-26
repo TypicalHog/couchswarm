@@ -107,11 +107,19 @@ async function handler(request: Request, context: { params: Promise<{ id: string
 
   // Evaluate the old lease before a returning host can renew it.
   let lapsed = false;
-  if (stored.playing) {
-    if (!hostLease || hostLease.last_seen <= now - PRESENCE_MS) {
+  if (!hostLease || hostLease.last_seen <= now - PRESENCE_MS) {
+    if (stored.playing) {
       const stoppedAt = hostLease ? Math.min(now, hostLease.last_seen + PRESENCE_MS) : now;
       await db.prepare('UPDATE rooms SET playing = 0, position = ?, revision = revision + 1, reason = ? WHERE id = ? AND revision = ?')
         .bind(timelinePosition(publicRoom(stored), stoppedAt), HOST_AWAY, id, stored.revision).run();
+      stored = (await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<StoredRoom>())!;
+      lapsed = true;
+    } else if (stored.reason === BUFFERING) {
+      // A buffering pause restarts the room by itself once everyone is ready, so a host who walked out of one came
+      // back to the movie starting three seconds after their tab did. A lapsed lease is the host's to resume from a
+      // pause as it is from playback, so the pause takes the same reason.
+      await db.prepare('UPDATE rooms SET revision = revision + 1, reason = ? WHERE id = ? AND revision = ? AND playing = 0 AND reason = ?')
+        .bind(HOST_AWAY, id, stored.revision, BUFFERING).run();
       stored = (await db.prepare('SELECT * FROM rooms WHERE id = ?').bind(id).first<StoredRoom>())!;
       lapsed = true;
     }
