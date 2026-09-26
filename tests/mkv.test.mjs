@@ -477,6 +477,11 @@ test('an MKV whose sound starts after its first segment or ends before its last 
     const soundEnds = Math.max(...offGrid.filter(frame => !frame.silent).map(frame => frame.at + frame.lasts));
     assert.ok(offGrid.some(frame => frame.silent) && offGrid.filter(frame => frame.silent).every(frame => frame.at >= soundEnds - 1e-6),
       'silence must start after the converted sound ends');
+
+    // HE-AAC v2 signalled implicitly reads as AAC-LC, but its AudioSpecificConfig declares one channel where the file
+    // says two, and AAC-LC silence would not decode there; it is left unpadded, as before.
+    const heAac = { start: 1.2, convert: false, channels: 1 };
+    assert.deepEqual(await playSegments(patched, clip, heAac), await playSegments(unpatched, clip, heAac), 'a stream that is not plain AAC-LC must get no silence');
   } finally {
     clip.dispose();
   }
