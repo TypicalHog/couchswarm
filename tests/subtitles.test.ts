@@ -208,6 +208,17 @@ test('a subtitle saved in a legacy codepage still reads as text', () => {
   assert.equal(decodeSubtitle(new Uint8Array([0xFE, 0xFF, 0, 0x63, 0, 0x61, 0, 0x66, 0, 0xE9])), 'café');
 });
 
+// Saved without a byte order mark, UTF-16 is still valid UTF-8 - zero bytes and all - so it decoded with a zero between
+// every two characters, no timing line matched, and the file was refused as holding no subtitles.
+test('a UTF-16 subtitle without a byte order mark still reads as text', () => {
+  const srt = '1\r\n00:00:01,000 --> 00:00:02,000\r\nHallo, schöne Welt 你好\r\n';
+  const le = Buffer.from(srt, 'utf16le');
+  const be = Buffer.from(le); be.swap16();
+  assert.equal(decodeSubtitle(new Uint8Array(le)), srt);
+  assert.equal(decodeSubtitle(new Uint8Array(be)), srt);
+  assert.equal(decodeSubtitle(new TextEncoder().encode(srt)), srt, 'UTF-8 carries no zero bytes and is left to the UTF-8 decode');
+});
+
 // Windows saved Chinese, Japanese, Korean and Thai subtitles in their own double-byte or national code pages, and
 // read as Western European every one of them arrived as a line of accented Latin letters.
 test('a CJK or Thai subtitle in its legacy code page reads in the reader’s language', () => {

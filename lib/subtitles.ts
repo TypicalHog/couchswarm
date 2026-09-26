@@ -62,6 +62,14 @@ export function decodeSubtitle(bytes: AllowSharedBufferSource, languages: readon
   // UTF-16 is not valid UTF-8, so without this every character would arrive separated by a null byte.
   if (view[0] === 0xFF && view[1] === 0xFE) return new TextDecoder('utf-16le').decode(bytes);
   if (view[0] === 0xFE && view[1] === 0xFF) return new TextDecoder('utf-16be').decode(bytes);
+  // Saved without its byte order mark UTF-16 still gives itself away: the digits, colons and line breaks every subtitle
+  // is made of carry a zero byte on the same side of each pair, where UTF-8 and the legacy code pages carry none. Such
+  // a file is also valid UTF-8, zero bytes and all, so it has to be caught before that decode.
+  let even = 0, odd = 0;
+  const sample = view.subarray(0, 4096);
+  for (let i = 0; i < sample.length; i++) if (!sample[i]) { if (i % 2) odd++; else even++; }
+  if (odd > sample.length / 16 && even * 4 < odd) return new TextDecoder('utf-16le').decode(bytes);
+  if (even > sample.length / 16 && odd * 4 < even) return new TextDecoder('utf-16be').decode(bytes);
   try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
   catch {
     for (const tag of languages) {
