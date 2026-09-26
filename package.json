@@ -1,6 +1,6 @@
 {
   "name": "couchswarm",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "private": true,
   "license": "Unlicense OR MIT OR Apache-2.0",
   "engines": {
