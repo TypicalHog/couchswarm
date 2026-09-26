@@ -205,6 +205,49 @@ test('an MKV whose first audio track is DTS plays on the track behind it', { tim
   assert.equal(workerCode.split(refusal.find).length - 1, refusal.count, 'the patched worker source moved');
 });
 
+test('an MKV whose cues index its subtitles too is planned from the video cues alone', async () => {
+  // mkvmerge and FFmpeg write a cue point for every subtitle event as well as for keyframes, and every one of them
+  // became a segment boundary: each segment starting between keyframes re-cuts the video from the keyframe before
+  // it, the appends overlap, and a seat near its buffer edge froze on the picture. The video is track 2 here, so
+  // taking track 1 for video would not pass either.
+  const vint = value => {
+    for (let length = 1; ; length++) if (value < 2 ** (7 * length) - 1) {
+      const bytes = Array.from({ length }, (_, i) => Math.floor(value / 256 ** (length - 1 - i)) % 256);
+      bytes[0] |= 0x80 >> (length - 1);
+      return bytes;
+    }
+  };
+  const id = value => { const length = Math.ceil(Math.log2(value + 1) / 8); return Array.from({ length }, (_, i) => (value >>> (8 * (length - 1 - i))) & 0xff); };
+  const el = (elementId, ...children) => { const body = children.flat(); return [...id(elementId), ...vint(body.length), ...body]; };
+  const uint = (elementId, value) => el(elementId, ...Array.from({ length: 4 }, (_, i) => Math.floor(value / 256 ** (3 - i)) % 256));
+  const duration = Buffer.alloc(8); duration.writeDoubleBE(30000);
+  const info = el(0x1549a966, uint(0x2ad7b1, 1_000_000), el(0x4489, ...duration));
+  const tracks = el(0x1654ae6b, el(0xae, uint(0xd7, 1), uint(0x83, 0x11)), el(0xae, uint(0xd7, 2), uint(0x83, 1)));
+  const cue = (ms, track) => el(0xbb, uint(0xb3, ms), el(0xb7, uint(0xf7, track), uint(0xf1, 0)));
+  const times = [[0, 2], [3100, 1], [6200, 1], [9300, 1], [10000, 2], [12400, 1], [15500, 1], [18600, 1], [20000, 2], [21700, 1]];
+  const cues = el(0x1c53bb6b, ...times.map(([ms, track]) => cue(ms, track)));
+  const seek = (target, position) => el(0x4dbb, el(0x53ab, ...id(target)), uint(0x53ac, position));
+  const seekHead = positions => el(0x114d9b74, seek(0x1549a966, positions[0]), seek(0x1654ae6b, positions[1]), seek(0x1c53bb6b, positions[2]));
+  const head = seekHead([0, 0, 0]).length;
+  const body = [...seekHead([head, head + info.length, head + info.length + tracks.length]), ...info, ...tracks, ...cues];
+  const movie = Uint8Array.from([...el(0x1a45dfa3, uint(0x4286, 1)), ...el(0x18538067, ...body)]);
+  const read = async (start, end) => movie.subarray(start, end);
+
+  const source = await readFile(new URL('./pipeline/mkv-keyframe-index.js', playsvideo), 'utf8');
+  const { parseMkvCueIndex: unpatched } = await import(`data:text/javascript,${encodeURIComponent(source)}`);
+  assert.equal((await unpatched(read, movie.length)).cuePoints.length, times.length, 'the unpatched parser must still take every cue point');
+  const patches = JSON.parse(await readFile(new URL('../scripts/playsvideo-patches.json', import.meta.url), 'utf8'));
+  let code = source;
+  for (const { find, replace, count } of patches['pipeline/mkv-keyframe-index.js']) {
+    assert.equal(code.split(find).length - 1, count, 'the patched cue parser source moved');
+    code = code.replaceAll(find, replace);
+  }
+  const { parseMkvCueIndex } = await import(`data:text/javascript,${encodeURIComponent(code)}`);
+  const parsed = await parseMkvCueIndex(read, movie.length);
+  assert.deepEqual(parsed.cuePoints.map(point => point.timestampMs), [0, 10000, 20000]);
+  assert.equal(parsed.durationSec, 30);
+});
+
 test('the bundled audio WASM actually decodes MP3 and produces AAC', { timeout: 30000 }, async () => {
   const wasmBinary = await readFile(new URL('./vendor/ffmpeg-core-audio/ffmpeg-core.wasm', playsvideo));
   // Supply the worker's location to the browser-targeted Emscripten factory;

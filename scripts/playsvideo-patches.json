@@ -65,6 +65,43 @@
       "count": 1
     }
   ],
+  "pipeline/mkv-keyframe-index.js": [
+    {
+      "find": "    let infoOffset;",
+      "replace": "    let infoOffset;\n    let tracksOffset;",
+      "count": 1
+    },
+    {
+      "find": "                    if (seekId === INFO_ID && seekPosition !== undefined) {",
+      "replace": "                    if (seekId === 0x1654ae6b && seekPosition !== undefined) {\n                        tracksOffset = segmentDataStart + seekPosition;\n                    }\n                    if (seekId === INFO_ID && seekPosition !== undefined) {",
+      "count": 1
+    },
+    {
+      "find": "        else if (el.id === INFO_ID) {",
+      "replace": "        else if (el.id === 0x1654ae6b) {\n            tracksOffset = absPos;\n        }\n        else if (el.id === INFO_ID) {",
+      "count": 1
+    },
+    {
+      "find": "    if (cuesOffset === undefined) {",
+      "replace": "    let videoTrack;\n    if (tracksOffset !== undefined) {\n        const tracksHdrBuf = await read(tracksOffset, Math.min(tracksOffset + 16, fileSize));\n        const tracksEl = readElementHeader(tracksHdrBuf, 0);\n        if (tracksEl && tracksEl.id === 0x1654ae6b && tracksEl.dataSize !== UNKNOWN_SIZE) {\n            const tracksStart = tracksOffset + tracksEl.dataStart;\n            const tracksBuf = await read(tracksStart, Math.min(tracksStart + tracksEl.dataSize, fileSize));\n            let tp = 0;\n            while (videoTrack === undefined && tp < tracksBuf.length - 2) {\n                const entry = readElementHeader(tracksBuf, tp);\n                if (!entry || entry.dataSize === UNKNOWN_SIZE)\n                    break;\n                if (entry.id === 0xae) {\n                    let trackNumber;\n                    let trackType;\n                    const entryEnd = tp + entry.dataStart + entry.dataSize;\n                    let ep = tp + entry.dataStart;\n                    while (ep < entryEnd && ep < tracksBuf.length - 2) {\n                        const field = readElementHeader(tracksBuf, ep);\n                        if (!field || field.dataSize === UNKNOWN_SIZE)\n                            break;\n                        if (field.id === 0xd7)\n                            trackNumber = readUint(tracksBuf, ep + field.dataStart, field.dataSize);\n                        else if (field.id === 0x83)\n                            trackType = readUint(tracksBuf, ep + field.dataStart, field.dataSize);\n                        ep += field.dataStart + field.dataSize;\n                    }\n                    if (trackType === 1 && trackNumber !== undefined)\n                        videoTrack = trackNumber;\n                }\n                tp += entry.dataStart + entry.dataSize;\n            }\n        }\n    }\n    if (cuesOffset === undefined) {",
+      "count": 1
+    },
+    {
+      "find": "            let clusterPosition;",
+      "replace": "            let clusterPosition;\n            const cueTracks = [];",
+      "count": 1
+    },
+    {
+      "find": "                        if (ctpChild.id === CUECLUSTERPOSITION_ID) {",
+      "replace": "                        if (ctpChild.id === 0xf7) {\n                            cueTracks.push(readUint(cuesBuf, ctpInner + ctpChild.dataStart, ctpChild.dataSize));\n                        }\n                        if (ctpChild.id === CUECLUSTERPOSITION_ID) {",
+      "count": 1
+    },
+    {
+      "find": "            if (cueTime !== undefined && clusterPosition !== undefined) {",
+      "replace": "            if (cueTime !== undefined && clusterPosition !== undefined && (videoTrack === undefined || cueTracks.length === 0 || cueTracks.includes(videoTrack))) {",
+      "count": 1
+    }
+  ],
   "pipeline/segment-plan.js": [
     {
       "find": "let segmentStartSec = 0;",
