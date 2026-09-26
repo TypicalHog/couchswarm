@@ -264,15 +264,17 @@ test('an MKV whose cues index its subtitles too is planned from the video cues a
   const uint = (elementId, value) => el(elementId, ...Array.from({ length: 4 }, (_, i) => Math.floor(value / 256 ** (3 - i)) % 256));
   const duration = Buffer.alloc(8); duration.writeDoubleBE(30000);
   const info = el(0x1549a966, uint(0x2ad7b1, 1_000_000), el(0x4489, ...duration));
-  const tracks = el(0x1654ae6b, el(0xae, uint(0xd7, 1), uint(0x83, 0x11)), el(0xae, uint(0xd7, 2), uint(0x83, 1)));
   const cue = (ms, track) => el(0xbb, uint(0xb3, ms), el(0xb7, uint(0xf7, track), uint(0xf1, 0)));
-  const times = [[0, 2], [3100, 1], [6200, 1], [9300, 1], [10000, 2], [12400, 1], [15500, 1], [18600, 1], [20000, 2], [21700, 1]];
-  const cues = el(0x1c53bb6b, ...times.map(([ms, track]) => cue(ms, track)));
   const seek = (target, position) => el(0x4dbb, el(0x53ab, ...id(target)), uint(0x53ac, position));
   const seekHead = positions => el(0x114d9b74, seek(0x1549a966, positions[0]), seek(0x1654ae6b, positions[1]), seek(0x1c53bb6b, positions[2]));
-  const head = seekHead([0, 0, 0]).length;
-  const body = [...seekHead([head, head + info.length, head + info.length + tracks.length]), ...info, ...tracks, ...cues];
-  const movie = Uint8Array.from([...el(0x1a45dfa3, uint(0x4286, 1)), ...el(0x18538067, ...body)]);
+  const mkv = (tracks, times) => {
+    const cues = el(0x1c53bb6b, ...times.map(([ms, track]) => cue(ms, track)));
+    const head = seekHead([0, 0, 0]).length;
+    const body = [...seekHead([head, head + info.length, head + info.length + tracks.length]), ...info, ...tracks, ...cues];
+    return Uint8Array.from([...el(0x1a45dfa3, uint(0x4286, 1)), ...el(0x18538067, ...body)]);
+  };
+  const times = [[0, 2], [3100, 1], [6200, 1], [9300, 1], [10000, 2], [12400, 1], [15500, 1], [18600, 1], [20000, 2], [21700, 1]];
+  const movie = mkv(el(0x1654ae6b, el(0xae, uint(0xd7, 1), uint(0x83, 0x11)), el(0xae, uint(0xd7, 2), uint(0x83, 1))), times);
   const read = async (start, end) => movie.subarray(start, end);
 
   const source = await readFile(new URL('./pipeline/mkv-keyframe-index.js', playsvideo), 'utf8');
@@ -288,6 +290,10 @@ test('an MKV whose cues index its subtitles too is planned from the video cues a
   const parsed = await parseMkvCueIndex(read, movie.length);
   assert.deepEqual(parsed.cuePoints.map(point => point.timestampMs), [0, 10000, 20000]);
   assert.equal(parsed.durationSec, 30);
+  // Of two video tracks mediabunny plays the first enabled one flagged default, so that is the one whose cues plan it.
+  const twoVideos = mkv(el(0x1654ae6b, el(0xae, uint(0xd7, 1), uint(0x83, 1), uint(0x88, 0)), el(0xae, uint(0xd7, 2), uint(0x83, 1))),
+    [[0, 1], [0, 2], [5000, 1], [10000, 2], [15000, 1], [20000, 2], [25000, 1]]);
+  assert.deepEqual((await parseMkvCueIndex(async (start, end) => twoVideos.subarray(start, end), twoVideos.length)).cuePoints.map(point => point.timestampMs), [0, 10000, 20000]);
 });
 
 test('the bundled audio WASM actually decodes MP3 and produces AAC', { timeout: 30000 }, async () => {
