@@ -23,6 +23,11 @@ test('line endings, a byte-order mark and a stray arrow never corrupt the cues',
   assert.ok(!crlf.includes('\r') && !crlf.includes('﻿'));
   assert.match(crlf, /^Hello$/m);
   assert.match(toWebVTT('1\r00:00:01,000 --> 00:00:02,000\rHello', 'a.srt'), /^00:00:01\.000 --> 00:00:02\.000$/m);
+  // Converted to CRLF twice: each break is CR CR LF, and none of them may read as the blank line that ends a cue.
+  for (const name of ['a.srt', 'a.vtt']) {
+    const twice = toWebVTT(`${name.endsWith('.vtt') ? 'WEBVTT\r\r\n\r\r\n' : ''}1\r\r\n00:00:01,000 --> 00:00:02,000\r\r\nHello\r\r\n`.replace(/,000/g, name.endsWith('.vtt') ? '.000' : ',000'), name);
+    assert.match(twice, /^00:00:01\.000 --> 00:00:02\.000\nHello$/m, `${name}: the cue lost its text to a phantom blank line`);
+  }
   const arrow = toWebVTT('1\n00:00:01,000 --> 00:00:02,000\nprofit --> loss\n', 'a.srt');
   assert.match(arrow, /^profit --&gt; loss$/m);
   assert.equal((arrow.match(/ --> /g) ?? []).length, 1, 'an arrow left in cue text starts a phantom cue');

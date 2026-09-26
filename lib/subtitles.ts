@@ -81,7 +81,9 @@ const stripOverrides = (text: string) => {
 // WebVTT is the only format a <track> can load. Styling, positioning and karaoke are dropped to plain text,
 // which is what the MKV player already does with the same subtitle muxed into the movie.
 export function toWebVTT(text: string, filename: string) {
-  const body = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  // A file converted to CRLF twice ends its lines in CR CR LF, and read as a line break plus a lone CR each of those
+  // is a blank line - which ends a WebVTT cue straight after its timing, so every cue arrived empty.
+  const body = text.replace(/^\uFEFF/, '').replace(/\r*\n|\r/g, '\n');
   // A browser rejects a whole .vtt whose signature is missing, so only a real one skips the rewrite below;
   // an .srt that was renamed .vtt falls through and is repaired instead of attaching an empty track.
   if (/\.vtt$/i.test(filename) && /^WEBVTT([ \t\n]|$)/.test(body)) return body;
