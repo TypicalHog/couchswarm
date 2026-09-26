@@ -24,10 +24,9 @@ services:
       - "--no-tls"
       - "--no-tcp-relay"
       - "--no-multicast-peers"
-      - "--no-cli"
-      - "--no-software-attribute"
-      - "--response-origin-only-with-rfc5780"
-      - "--no-rfc5780"
+      # coturn 4.18 answers a STUN Binding with XOR-MAPPED-ADDRESS alone and keeps its CLI off unless asked, so the
+      # flags that once asked for that are gone: they are deprecated there, and one it drops stops turnserver
+      # (--no-stun-backward-compatibility did). CI starts this file and checks that answer with scripts/stun-probe.mjs.
       - "--user-quota=48"
       - "--total-quota=128"
       - "--max-bps=3000000"
