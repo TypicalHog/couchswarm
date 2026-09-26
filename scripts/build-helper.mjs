@@ -147,7 +147,10 @@ async function copyPackage(name, parent, optional = false) {
   // instead of sending the reader somewhere that says nothing.
   const declared = manifest.license || [manifest.licenses].flat().map(entry => entry?.type || entry).filter(Boolean).join(' OR ') || 'license not declared';
   const holder = [manifest.author, ...(manifest.contributors || [])].map(who => typeof who === 'string' ? who : who?.name).filter(Boolean).join(', ');
-  notices.push(`${manifest.name}@${manifest.version} — ${declared}\n${text || `No license file ships with this package. Declared license: ${declared}; copyright holder(s) per package.json: ${holder || 'not declared'}.`}`);
+  // MPL-2.0 asks the recipient to be told where the source is, and node-datachannel reaches them as a compiled binding
+  // with only part of its sources beside it; the site's notices name every package's source the same way.
+  const source = typeof manifest.repository === 'string' ? manifest.repository : manifest.repository?.url || manifest.homepage || '';
+  notices.push(`${manifest.name}@${manifest.version} — ${declared}${source ? `\nSource: ${source.replace(/^git\+/, '').replace(/\.git$/, '')}` : ''}\n${text || `No license file ships with this package. Declared license: ${declared}; copyright holder(s) per package.json: ${holder || 'not declared'}.`}`);
   await fs.cp(directory, path.join(app, path.relative(root, directory)), {
     recursive: true, filter: file => {
       const parts = path.relative(directory, file).split(path.sep);
