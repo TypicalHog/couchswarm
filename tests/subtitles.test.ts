@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decodeSubtitle, subtitleFiles, toWebVTT } from '../lib/subtitles.ts';
+import { decodeSubtitle, subtitleFiles, subtitleLabels, toWebVTT } from '../lib/subtitles.ts';
 
 test('SRT cues are re-emitted in the WebVTT timestamp grammar', () => {
   const vtt = toWebVTT('1\n00:00:01,000 --> 00:00:02,500\nHello\n', 'a.srt');
@@ -137,6 +137,23 @@ test('text subtitles are offered and bitmap subtitles are not', () => {
   ];
   assert.deepEqual(subtitleFiles(files).map(file => file.path), ['Signs.ASS', 'Subs/English.srt', 'Subs/Spanish.srt']);
   assert.equal(files[0].name, 'Movie.mkv', 'selection must not reorder the torrent metadata');
+});
+
+// Packs that keep one folder of identically named subtitles per episode put the first episode's on top for every
+// episode, under names the picker could not tell apart.
+test('a season pack offers the playing episode’s subtitles first, each under a name of its own', () => {
+  const episode = (n: number) => `Show.S01E0${n}.1080p.WEB.x264-GRP`;
+  const files = [1, 2, 3].flatMap(n => [
+    { name: `${episode(n)}.mkv`, path: `Show.S01/${episode(n)}.mkv` },
+    { name: '2_English.srt', path: `Show.S01/Subs/${episode(n)}/2_English.srt` },
+    { name: '3_English.srt', path: `Show.S01/Subs/${episode(n)}/3_English.srt` },
+  ]);
+  const offered = subtitleFiles(files, `${episode(2)}.mkv`);
+  assert.deepEqual(offered.slice(0, 2).map(file => file.path), [`Show.S01/Subs/${episode(2)}/2_English.srt`, `Show.S01/Subs/${episode(2)}/3_English.srt`]);
+  assert.deepEqual(subtitleLabels(offered).slice(0, 3), [`${episode(2)}/2_English.srt`, `${episode(2)}/3_English.srt`, `${episode(1)}/2_English.srt`]);
+  // A name that appears once keeps its bare name, and folders that repeat one level up are walked past.
+  assert.deepEqual(subtitleLabels([{ name: 'English.srt', path: 'E01/Subs/English.srt' }, { name: 'English.srt', path: 'E02/Subs/English.srt' },
+    { name: 'Signs.ass', path: 'E01/Signs.ass' }]), ['E01/Subs/English.srt', 'E02/Subs/English.srt', 'Signs.ass']);
 });
 
 test('a subtitle saved in a legacy codepage still reads as text', () => {

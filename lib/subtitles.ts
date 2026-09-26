@@ -1,13 +1,38 @@
 // Bitmap subtitles (.sub with its .idx, .sup) are image streams, and a frame-based .sub needs a frame rate
 // nothing knows before playback, so neither can reach a <track> and neither is offered.
 // A season pack carries a subtitle for every episode, and path order puts the one belonging to the video being
-// played wherever the torrent happens to put it, so the files named after that video come first. A release group
-// that renamed its subtitles matches nothing here and simply keeps the order it had: everything stays listed.
+// played wherever the torrent happens to put it, so the files named after that video come first - and so do the
+// ones in a folder named after it, the way a pack that keeps Subs/<episode>/2_English.srt for every episode does.
+// A release group that renamed its subtitles matches nothing here and simply keeps the order it had: everything
+// stays listed.
 export function subtitleFiles<T extends { name: string; path: string }>(files: T[], videoName = ''): T[] {
   const stem = videoName.replace(/\.[^.]+$/, '').toLowerCase();
-  const episode = (file: T) => (stem && file.name.toLowerCase().startsWith(stem) ? 0 : 1);
+  const episode = (file: T) => (stem && file.path.toLowerCase().split(/[\\/]/).some(part => part.startsWith(stem)) ? 0 : 1);
   return files.filter(file => /\.(srt|ass|ssa|vtt)$/i.test(file.name))
     .sort((a, b) => episode(a) - episode(b) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+// Such a pack lists 2_English.srt once per episode, and the picker cannot show them all under that one name: a
+// repeated name carries as many of its folders as it takes to tell it from the others.
+export function subtitleLabels(files: { name: string; path: string }[]) {
+  const labels = files.map(file => file.name);
+  const groups = new Map<string, number[]>();
+  for (const [index, file] of files.entries()) {
+    const group = groups.get(file.name);
+    if (group) group.push(index); else groups.set(file.name, [index]);
+  }
+  for (const twins of groups.values()) {
+    const parts = twins.map(index => files[index].path.split(/[\\/]/));
+    // One folder deeper at a time, and only for the twins still sharing a label: counted, not compared pairwise.
+    let pending = twins.map((_, k) => k);
+    for (let depth = 1; pending.length > 1 && pending.some(k => parts[k].length > depth); depth++) {
+      const label = (k: number) => parts[k].slice(-depth - 1).join('/');
+      const counts = new Map<string, number>();
+      for (const k of pending) counts.set(label(k), (counts.get(label(k)) ?? 0) + 1);
+      pending = pending.filter(k => { if (counts.get(label(k)) !== 1) return true; labels[twins[k]] = label(k); return false; });
+    }
+  }
+  return labels;
 }
 
 // Nothing inside an SRT or an ASS names its code page, so a file that is not UTF-8 has to be guessed at. The
