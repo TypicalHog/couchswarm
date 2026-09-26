@@ -145,6 +145,11 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     let healthyTimer: ReturnType<typeof setTimeout> | undefined;
     let cancelProbe: ReturnType<typeof setInterval> | undefined;
     let releaseLock: (() => void) | undefined;
+    // The ready callback's sweep of every other movie's store. Deleting one of a thousand piece files takes seconds,
+    // and a switch back to that movie inside them opened the half-deleted directory: its writes failed and pieces it
+    // had just verified vanished. So the teardown holds the media lock until the sweep is done, and the next start()
+    // waits on it with the rest of the teardown.
+    let sweep: Promise<void> = Promise.resolve();
     const abort = new AbortController();
     // Helper retry budgets are per movie, not per hook mount.
     const movie = `${source}|${mediaVersion}|${fileIndex}`;
@@ -437,7 +442,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           if (/[\\/]/.test(value.name)) { fail('This torrent’s name contains a slash or backslash, which browsers cannot store. Ask the host for another torrent.'); return; }
           // The store survives teardown so a reconnect resumes; nothing else holds one while this tab
           // owns the media lock, so reclaim every other movie here.
-          void (async () => {
+          sweep = (async () => {
             const root = await navigator.storage.getDirectory();
             const keep = `${value.name} - ${value.infoHash!.slice(0, 8)}`;
             for await (const key of (root as unknown as { keys(): AsyncIterable<string> }).keys())
@@ -624,7 +629,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         const server = (client as unknown as { _server?: { workerKeepAliveInterval?: ReturnType<typeof setInterval> } })._server;
         const stopKeepAlive = () => clearInterval(server?.workerKeepAliveInterval);
         stopKeepAlive();
-        teardownRef.current = new Promise<void>(resolve => client!.destroy(() => { stopKeepAlive(); releaseLock?.(); resolve(); }));
+        teardownRef.current = new Promise<void>(resolve => client!.destroy(() => { stopKeepAlive(); void sweep.then(() => { releaseLock?.(); resolve(); }); }));
       } else releaseLock?.();
     };
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- session identity is covered by roomId/token
