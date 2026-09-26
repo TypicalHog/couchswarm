@@ -21,6 +21,13 @@ const LEGACY: [RegExp, string][] = [
   [/^(he|iw)\b/i, 'windows-1255'],
   [/^(ar|fa|ur)\b/i, 'windows-1256'],
   [/^(et|lt|lv)\b/i, 'windows-1257'],
+  [/^vi\b/i, 'windows-1258'],
+  [/^th\b/i, 'windows-874'],
+  // Traditional Chinese first: every other Chinese tag falls to GB18030, which reads GBK and GB2312 files too.
+  [/^zh-(hant|tw|hk|mo)\b/i, 'big5'],
+  [/^zh\b/i, 'gb18030'],
+  [/^ja\b/i, 'shift_jis'],
+  [/^ko\b/i, 'euc-kr'],
 ];
 
 // Valid UTF-8 always decodes, so a fatal throw means a legacy code page. Western European is what a language

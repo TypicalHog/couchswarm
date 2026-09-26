@@ -147,3 +147,15 @@ test('a subtitle saved in a legacy codepage still reads as text', () => {
   assert.equal(decodeSubtitle(new Uint8Array([0xFF, 0xFE, 0x63, 0, 0x61, 0, 0x66, 0, 0xE9, 0])), 'café');
   assert.equal(decodeSubtitle(new Uint8Array([0xFE, 0xFF, 0, 0x63, 0, 0x61, 0, 0x66, 0, 0xE9])), 'café');
 });
+
+// Windows saved Chinese, Japanese, Korean and Thai subtitles in their own double-byte or national code pages, and
+// read as Western European every one of them arrived as a line of accented Latin letters.
+test('a CJK or Thai subtitle in its legacy code page reads in the reader’s language', () => {
+  const bytes = (...values: number[]) => new Uint8Array(values);
+  assert.equal(decodeSubtitle(bytes(0xC4, 0xE3, 0xBA, 0xC3, 0xA3, 0xAC, 0xCA, 0xC0, 0xBD, 0xE7, 0xA1, 0xA3), ['zh-CN', 'en']), '你好，世界。');
+  assert.equal(decodeSubtitle(bytes(0xA7, 0x41, 0xA6, 0x6E), ['zh-TW']), '你好', 'traditional Chinese is Big5, not GBK');
+  assert.equal(decodeSubtitle(bytes(0x82, 0xB1, 0x82, 0xF1, 0x82, 0xC9, 0x82, 0xBF, 0x82, 0xCD, 0x81, 0x41, 0x90, 0xA2, 0x8A, 0x45, 0x81, 0x42), ['ja']), 'こんにちは、世界。');
+  assert.equal(decodeSubtitle(bytes(0xBE, 0xC8, 0xB3, 0xE7, 0xC7, 0xCF, 0xBC, 0xBC, 0xBF, 0xE4), ['ko-KR']), '안녕하세요');
+  assert.equal(decodeSubtitle(bytes(0xCA, 0xC7, 0xD1, 0xCA, 0xB4, 0xD5), ['th']), 'สวัสดี');
+  assert.equal(decodeSubtitle(bytes(0x43, 0xF5, 0x6E, 0x20, 0x6D, 0xFD, 0x61), ['vi-VN']), 'Cơn mưa');
+});
