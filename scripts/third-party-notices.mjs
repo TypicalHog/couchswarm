@@ -6,8 +6,9 @@ const inside = (base, target) => { const relative = path.relative(base, target);
 
 // Reads the licence text out of node_modules for `names` and everything they depend on, so a notice file can be
 // generated from what is actually installed rather than kept by hand. Returns the notices in install order and the
-// packages that ship no licence file, which are named from their manifest instead.
-export async function collectNotices(names, root) {
+// packages that ship no licence file, which are named from their manifest instead. `sources` names the source of a
+// package whose manifest points somewhere else, a fork's at its upstream, say.
+export async function collectNotices(names, root, sources = {}) {
   const visited = new Set();
   const notices = [];
   const unlicensed = [];
@@ -34,7 +35,7 @@ export async function collectNotices(names, root) {
     const holder = [manifest.author, ...(manifest.contributors || [])].map(who => typeof who === 'string' ? who : who?.name).filter(Boolean).join(', ');
     // MPL-2.0 and the LGPL ask the recipient to be told where the source is; every other package is easier to find
     // with it too, and the manifest is the only place that knows.
-    const source = typeof manifest.repository === 'string' ? manifest.repository : manifest.repository?.url || manifest.homepage || '';
+    const source = sources[manifest.name] || (typeof manifest.repository === 'string' ? manifest.repository : manifest.repository?.url || manifest.homepage || '');
     notices.push(`${manifest.name}@${manifest.version} — ${declared}${source ? `\nSource: ${source.replace(/^git\+/, '').replace(/\.git$/, '')}` : ''}\n`
       + (text || `No licence file ships with this package. Declared licence: ${declared}; copyright holder(s) per package.json: ${holder || 'not declared'}.\n`));
     for (const dependency of Object.keys({ ...manifest.dependencies, ...manifest.optionalDependencies, ...manifest.peerDependencies }))

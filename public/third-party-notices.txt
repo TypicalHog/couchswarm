@@ -6059,7 +6059,7 @@ THE SOFTWARE.
 ----
 
 mediabunny@1.38.1 — MPL-2.0
-Source: https://github.com/Vanilagy/mediabunny
+Source: https://github.com/kzahel/mediabunny/tree/cd3cd2b
 Mozilla Public License Version 2.0
 ==================================
 
