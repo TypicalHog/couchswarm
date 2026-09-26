@@ -79,10 +79,10 @@ const TIMING = /^\s*(\d+):(\d{1,2}):(\d{1,2})[.,](\d+) *--> *(\d+):(\d{1,2}):(\d
 // so a browser prints them. Only a brace block that opens with a backslash goes, which leaves a brace someone
 // actually said alone; stopping the class at the next brace keeps the scan linear on a hostile line.
 const SRT_OVERRIDE = /\{\\[^{}]*\}/g;
-// Layer, Start, End, then the six fields before Text, which keeps every comma of its own. A \s* in front of
-// [^,]* would let the two split a run of spaces every possible way, which a crafted line stretches into
-// minutes; Text matches every character rather than '.', which alone never crosses a U+2028 or U+2029.
-const DIALOGUE = /^Dialogue:[^,]*,([^,]+),([^,]+),(?:[^,]*,){6}([\s\S]*)$/;
+// The fields of a Dialogue line when [Events] names none: ASS v4+. SSA opens with Marked where these have Layer,
+// v4++ carries MarginT and MarginB where these have MarginV, and a hand-written script may list only Start, End and
+// Text; each says so in its own Format line, and Text, which keeps every comma of its own, always comes last.
+const ASS_FIELDS = ['layer', 'start', 'end', 'style', 'name', 'marginl', 'marginr', 'marginv', 'effect', 'text'];
 
 const clock = (h: string, m: string, s: string, ms: string) =>
   `${h.padStart(2, '0')}:${m.padStart(2, '0')}:${s.padStart(2, '0')}.${ms.slice(0, 3).padEnd(3, '0')}`;
@@ -121,14 +121,31 @@ export function toWebVTT(text: string, filename: string) {
   if (/\.vtt$/i.test(filename) && /^WEBVTT([ \t\n]|$)/.test(body)) return body;
   if (/\.(ass|ssa)$/i.test(filename)) {
     const cues = [];
+    let fields = ASS_FIELDS, events = false;
     for (const line of body.split('\n')) {
-      const dialogue = DIALOGUE.exec(line);
+      if (line.startsWith('[')) { events = /^\[events\]\s*$/i.test(line); continue; }
+      if (events && /^Format:/i.test(line)) {
+        const named = line.slice(7).split(',').map(field => field.trim().toLowerCase());
+        if (named.at(-1) === 'text' && named.includes('start') && named.includes('end')) fields = named;
+        continue;
+      }
+      if (!line.startsWith('Dialogue:')) continue;
+      // Cut at the first commas only, one indexOf after another, so a crafted line costs one pass over it.
+      const values: string[] = [];
+      let from = 'Dialogue:'.length;
+      while (values.length < fields.length - 1) {
+        const comma = line.indexOf(',', from);
+        if (comma < 0) break;
+        values.push(line.slice(from, comma));
+        from = comma + 1;
+      }
+      const text = line.slice(from);
       // A vector drawing keeps its coordinates in the text field and would render as visible gibberish.
-      if (!dialogue || /\\p[1-9]/.test(dialogue[3])) continue;
-      const start = assClock(dialogue[1]), end = assClock(dialogue[2]);
+      if (values.length < fields.length - 1 || /\\p[1-9]/.test(text)) continue;
+      const start = assClock(values[fields.indexOf('start')]), end = assClock(values[fields.indexOf('end')]);
       // A \N\N asks for a vertical gap, but WebVTT ends the cue at the empty line and everything the dialogue
       // says after it is never shown, so the gap goes and the words stay.
-      const cue = escapeCue(stripOverrides(dialogue[3]).replaceAll('\\h', ' ').replace(/\\[Nn]/g, '\n')).split('\n').filter(part => part.trim()).join('\n').trim();
+      const cue = escapeCue(stripOverrides(text).replaceAll('\\h', ' ').replace(/\\[Nn]/g, '\n')).split('\n').filter(part => part.trim()).join('\n').trim();
       if (start && end && cue) cues.push(`${start} --> ${end}\n${cue}`);
     }
     return `WEBVTT\n\n${cues.join('\n\n')}\n`;

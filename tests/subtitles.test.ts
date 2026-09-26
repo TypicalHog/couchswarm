@@ -97,6 +97,17 @@ test('an ASS dialogue becomes a plain-text cue', () => {
   assert.match(out, /^Legacy SSA$/m);
 });
 
+// v4++ carries MarginT and MarginB where v4+ has MarginV, so a layout fixed at ten fields took the Effect field and
+// its comma for the start of the text, and every line of such a file showed as ',Eleven fields'.
+test('an ASS file is read by the fields its own Format line names', () => {
+  const v4pp = toWebVTT(['[Script Info]', 'ScriptType: v4.00++', '', '[V4++ Styles]', 'Format: Name, Fontname, Fontsize', '', '[Events]',
+    'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginT, MarginB, Effect, Text',
+    'Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,0,,Eleven fields, and a comma'].join('\n'), 'a.ass');
+  assert.match(v4pp, /^00:00:01\.000 --> 00:00:03\.000\nEleven fields, and a comma$/m);
+  const minimal = toWebVTT('[Events]\nFormat: Start, End, Text\nDialogue: 0:00:01.00,0:00:02.00,Hello, there', 'a.ass');
+  assert.match(minimal, /^00:00:01\.000 --> 00:00:02\.000\nHello, there$/m, 'a script that names three fields has three');
+});
+
 test('a crafted ASS line is converted without blocking the thread', () => {
   const dialogue = (text: string) => `[Events]\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,${text}`;
   // Each of these took 20 seconds or more before the scans were bounded — long past the 12 seconds that keep
