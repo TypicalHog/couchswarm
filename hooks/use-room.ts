@@ -463,7 +463,9 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   // lastSeen carries the server's clock, so presence is judged against the snapshot's own timestamp, as allReady does.
   const hostPresent = !!(room && snapshot && snapshot.members.some(m => m.id === room.hostId && m.lastSeen > snapshot.serverNow - PRESENCE_MS));
   const inviteStale = !!room?.inviteTag && hashed.invite === sessionInvite && room.inviteTag !== hashed.tag;
-  return { session, room, members: snapshot?.members || [], invitation, error: error || networkError, unsupported, busy, connected, refused, armed, playhead,
+  return { session, room, members: snapshot?.members || [], invitation, error: error || networkError,
+    // The connection trouble the error box is showing, if that is what it shows: an error of the page's own outranks it.
+    connectionError: error ? '' : networkError, unsupported, busy, connected, refused, armed, playhead,
     buffered, duration, countdown, media, isHost, everyoneReady, hostPresent, inviteStale, seatLost, create, join, control, enable, leave, clearError,
     inviteUrl: session ? `${typeof location === 'undefined' ? '' : location.origin}/?room=${session.roomId}#invite=${session.invite}` : '',
   };

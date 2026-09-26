@@ -133,8 +133,8 @@ export default function CouchSwarm() {
   const needsEnable = members.some(m => !m.armed && m.epoch !== SPECTATOR_EPOCH && (m.stocked || m.buffered >= BUFFER_SECONDS));
   const playHint = hostAway ? 'Your host has stepped away' : !isHost ? 'Your host controls the room' : !swarm.everyoneReady && !isPlaying ? needsEnable ? 'Waiting for everyone to enable playback' : 'Waiting for everyone to buffer' : 'You control the room';
   // An error is read out by the alert box that shows it, so it is not repeated here, and neither is a lost connection
-  // that box is already reporting.
-  const announcement = hasSource && swarm.countdown > 0 && swarm.armed ? `Starting in ${swarm.countdown}` : swarm.seatLost ? 'Your seat was taken. Waiting for a free seat.' : !swarm.connected && session && !swarm.refused ? (room ? swarm.error ? '' : 'Connection lost, reconnecting' : 'Connecting to the room') : (hostAway ? hostAwayNote : room?.reason) || '';
+  // that box is already reporting - but one showing some other error says nothing about the connection.
+  const announcement = hasSource && swarm.countdown > 0 && swarm.armed ? `Starting in ${swarm.countdown}` : swarm.seatLost ? 'Your seat was taken. Waiting for a free seat.' : !swarm.connected && session && !swarm.refused ? (room ? swarm.connectionError ? '' : 'Connection lost, reconnecting' : 'Connecting to the room') : (hostAway ? hostAwayNote : room?.reason) || '';
   // .player-card is the fullscreen element, so the pause reason beside it and the error box below it cannot be
   // seen from fullscreen, and a control that failed changes nothing near the button anywhere. The in-card notice
   // already paints over the video, so the text that explains a stopped movie goes there too.
