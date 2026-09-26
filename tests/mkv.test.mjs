@@ -205,6 +205,48 @@ test('an MKV whose first audio track is DTS plays on the track behind it', { tim
   assert.equal(workerCode.split(refusal.find).length - 1, refusal.count, 'the patched worker source moved');
 });
 
+test('an MKV whose DTS main track is followed by a commentary plays the film’s other soundtrack', { timeout: 60000 }, async () => {
+  // Releases pair a DTS main track with a director's commentary and a dub. The fallback took the first track it
+  // could play, which was the commentary: the room watched the film with the director talking over it.
+  const clip = await demuxFile(fileURLToPath(new URL('./fixtures/h264-aac.mp4', import.meta.url)));
+  const videoPackets = await collectPacketsInRange(clip.videoSink, 0, 2, { startFromKeyframe: true });
+  const audioPackets = await collectPacketsInRange(clip.audioSink, 0, 2);
+  const target = new BufferTarget();
+  const output = new Output({ format: new MkvOutputFormat(), target });
+  const video = new EncodedVideoPacketSource(clip.videoCodec);
+  const tracks = [
+    { languageCode: 'eng', name: 'English DTS-HD MA', disposition: { default: true } },
+    { languageCode: 'eng', name: 'Commentary with the director', disposition: { default: false, commentary: true } },
+    { languageCode: 'fre', name: 'Français', disposition: { default: false } },
+  ].map(metadata => ({ source: new EncodedAudioPacketSource(clip.audioCodec), metadata }));
+  output.addVideoTrack(video);
+  for (const { source, metadata } of tracks) output.addAudioTrack(source, metadata);
+  await output.start();
+  for (const packet of videoPackets) await video.add(packet, { decoderConfig: clip.videoDecoderConfig });
+  for (const packet of audioPackets) for (const { source } of tracks) await source.add(packet.clone({}), { decoderConfig: clip.audioDecoderConfig });
+  video.close(); for (const { source } of tracks) source.close();
+  await output.finalize();
+  clip.dispose();
+  const movie = Buffer.from(target.buffer);
+  movie.write('A_DTS', movie.indexOf('A_AAC', 0, 'latin1'), 'latin1');
+
+  const patches = JSON.parse(await readFile(new URL('../scripts/playsvideo-patches.json', import.meta.url), 'utf8'));
+  let code = await readFile(new URL('./pipeline/demux.js', playsvideo), 'utf8');
+  for (const { find, replace, count } of patches['pipeline/demux.js']) {
+    assert.equal(code.split(find).length - 1, count, 'the patched demux source moved');
+    code = code.replaceAll(find, replace);
+  }
+  code = code.replace("from 'mediabunny'", `from '${import.meta.resolve('mediabunny')}'`)
+    .replace("from './subtitle.js'", `from '${new URL('./pipeline/subtitle.js', playsvideo).href}'`);
+  const { demuxBlob: demuxPatched } = await import(`data:text/javascript,${encodeURIComponent(code)}`);
+  const patched = await demuxPatched(new Blob([movie]));
+  try {
+    assert.equal(patched.audioCodec, 'aac');
+    assert.equal(patched.audioTrack.disposition.commentary, false, 'the commentary was chosen over the dub');
+    assert.equal(patched.audioTrack.languageCode, 'fre');
+  } finally { patched.dispose(); }
+});
+
 test('an MKV whose cues index its subtitles too is planned from the video cues alone', async () => {
   // mkvmerge and FFmpeg write a cue point for every subtitle event as well as for keyframes, and every one of them
   // became a segment boundary: each segment starting between keyframes re-cuts the video from the keyframe before

@@ -61,7 +61,7 @@
   "pipeline/demux.js": [
     {
       "find": "audioTrack = await input.getPrimaryAudioTrack();",
-      "replace": "audioTrack = (await input.getAudioTracks()).find(track => track.codec) ?? await input.getPrimaryAudioTrack();",
+      "replace": "audioTrack = await (async () => { const tracks = await input.getAudioTracks(); const main = tracks.find(track => track.disposition.default) ?? tracks[0]; const rank = track => (track.disposition.commentary || /comm?ent|kommentar/i.test(track.name ?? '') ? 2 : 0) + (main && track.languageCode !== main.languageCode ? 1 : 0); return tracks.filter(track => track.codec).sort((a, b) => rank(a) - rank(b))[0] ?? await input.getPrimaryAudioTrack(); })();",
       "count": 1
     }
   ],
