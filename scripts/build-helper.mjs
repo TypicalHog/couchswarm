@@ -191,6 +191,16 @@ if (native) {
     elf(binding, 'The node-datachannel binding');
     await fs.writeFile(path.join(app, path.relative(root, native), 'build', 'Release', 'node_datachannel.node'), binding);
   }
+  // The binding is native code every helper runs facing the network, and nothing on its way here checks it: the
+  // lockfile's hash covers the npm tarball, not what prebuild-install then fetches, and the Linux one comes from the
+  // release above. So its SHA-256 is kept beside the notices, against the same version, and a binding that differs
+  // from the release that was reviewed stops the build.
+  const target = linux ? 'linux-x64' : 'win32-x64';
+  const pins = path.join(root, 'scripts', 'native-notices', `node-datachannel-${nativeVersion}.sha256`);
+  const pinned = (await fs.readFile(pins, 'utf8').catch(() => { throw new Error(`Record the SHA-256 of node-datachannel@${nativeVersion}'s release bindings in ${pins}.`); }))
+    .split('\n').map(line => line.trim().split(/\s+/)).find(([, name]) => name === target)?.[0];
+  const staged = createHash('sha256').update(await fs.readFile(path.join(app, path.relative(root, native), 'build', 'Release', 'node_datachannel.node'))).digest('hex');
+  if (staged !== pinned) throw new Error(`The ${target} node-datachannel binding does not match ${pins} (${staged} against ${pinned || 'no line for that target'}).`);
 }
 await fs.writeFile(path.join(stage, 'THIRD-PARTY-NOTICES.txt'), notices.join('\n\n----\n\n'));
 // The archive is the whole of what most people ever receive, so CouchSwarm's own terms have to travel with it.
