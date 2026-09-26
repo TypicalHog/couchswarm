@@ -68,10 +68,11 @@ const MAX_SUBTITLE_BYTES = 8_000_000;
 // The pick effect and the upload check below have to accept and refuse exactly the same files, so both parse
 // through here. A file the picker could not parse would otherwise attach an empty track and show nothing at
 // all. A .vtt is passed through untouched, so its arrow spacing is the author's and WebVTT allows none at all:
-// look for a cue timing rather than for the spaced arrow only the conversions write.
+// look for a cue timing rather than for the spaced arrow only the conversions write. The timing has to carry text
+// on the line under it: a file whose every cue came out empty attaches a track that shows nothing just the same.
 function toSubtitleCues(bytes: AllowSharedBufferSource, name: string) {
   const vtt = toWebVTT(decodeSubtitle(bytes, navigator.languages), name);
-  if (!/\d{2}\.\d+[ \t]*-->/.test(vtt)) throw new Error('No subtitles could be read out of that file.');
+  if (!/\d{2}\.\d+[ \t]*-->[^\n]*\n[ \t]*\S/.test(vtt)) throw new Error('No subtitles could be read out of that file.');
   return vtt;
 }
 
