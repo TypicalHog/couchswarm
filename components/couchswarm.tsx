@@ -138,8 +138,12 @@ export default function CouchSwarm() {
   // .player-card is the fullscreen element, so the pause reason beside it and the error box below it cannot be
   // seen from fullscreen, and a control that failed changes nothing near the button anywhere. The in-card notice
   // already paints over the video, so the text that explains a stopped movie goes there too.
-  const playerMessage = swarm.error && !swarm.invitation && !formVisible ? swarm.error
-    : isFullscreen && hasSource && !isPlaying ? room?.reason || '' : '';
+  const playerMessage = [swarm.error && !swarm.invitation && !formVisible ? swarm.error
+    : isFullscreen && hasSource && !isPlaying ? room?.reason || '' : '',
+    // In fullscreen this notice is all that assistive technology can reach, and an error of the page's own outranks
+    // the lost connection in it, so there the loss is said beside it.
+    isFullscreen && room && !swarm.connected && !swarm.refused && !swarm.connectionError ? 'Connection lost, reconnecting.' : '']
+    .filter(Boolean).join(' ');
   // A rotation takes every guest's seat with it, so the only tab that can still hold a replaced link is the host's
   // own, when its rotate committed and the reply carrying the new link never arrived. That is the failed rotate the
   // dialog already offers to repeat, not a guest to be told to ask their host - and the key this tab holds is dead too.
