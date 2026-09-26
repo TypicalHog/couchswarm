@@ -295,10 +295,13 @@ export default function CouchSwarm() {
   // bar; the next Space then presses that button again - leaving fullscreen, or toggling mute - instead of
   // reaching the room. Keeping the click off the focus ring costs nothing: Tab still focuses these buttons.
   const keepFocus = (event: SyntheticEvent) => event.preventDefault();
-  function revealControls() {
+  // A touch screen has no hover to bring the fullscreen bar back, and the bar lies over the picture where subtitles
+  // are drawn, so there too it goes 2.5 s after the last touch, taking no taps while hidden. Only a finished tap shows
+  // it: shown on the way down, or on a finger's jitter, it would take the very tap that asked for it.
+  function revealControls(extendOnly = false) {
     const card = playerRef.current;
     if (!card || !isFullscreen) return;
-    if (!('active' in card.dataset)) card.dataset.active = '';
+    if (!('active' in card.dataset)) { if (extendOnly) return; card.dataset.active = ''; }
     clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => { delete card.dataset.active; }, 2500);
   }
@@ -316,7 +319,8 @@ export default function CouchSwarm() {
     <main>
       <div className="room-heading"><div><div className="eyebrow"><span className={`dot ${swarm.connected || !session ? 'live' : ''}`}/>{session ? `ROOM ${session.roomId.slice(0, 8).toUpperCase()}` : 'YOUR OWN LITTLE CINEMA'}</div><h1 tabIndex={-1} ref={headingRef}>The living room</h1></div><div className="heading-actions"><span className="pill"><LockKeyhole size={12}/> Invite only</span><button className="primary-button" ref={inviteRef} aria-busy={swarm.busy} onClick={() => { if (!swarm.busy) void invite(); }} disabled={!!swarm.invitation || swarm.unsupported || swarm.refused}><Users size={16}/> Invite friends <ArrowRight size={15}/></button></div></div>
       <div className="workspace"><section aria-label="Room player">
-        <div className="player-card" ref={playerRef} onPointerMove={revealControls}>
+        {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- a tap here only shows the bar, which keyboard focus already shows. */}
+        <div className="player-card" ref={playerRef} onPointerMove={event => revealControls(event.pointerType !== 'mouse')} onClick={() => revealControls()}>
           <div className="screen">
             {/* eslint-disable-next-line jsx-a11y/media-has-caption -- each viewer attaches their own track at runtime, so there is none to declare here. */}
             <video ref={videoRef} playsInline preload="auto" muted={muted} disablePictureInPicture aria-label="Shared room video" style={{ visibility: hasSource ? 'visible' : 'hidden' }}/>
