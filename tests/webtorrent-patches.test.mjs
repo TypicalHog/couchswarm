@@ -13,6 +13,13 @@ const bundle = fileURLToPath(import.meta.resolve('webtorrent/dist/webtorrent.min
 // The loader can only refuse a patch it is handed, and only a build hands it one, so the occurrence counts are
 // checked here too: an upgrade that reminifies the bundle or rewrites a patched string fails in the offline
 // suite, with no build needed, and a rule that stopped routing the bundle to the loader at all fails with it.
+// The video worker is patched as prepare-streaming copies it into public/, which predev and prebuild run.
+test('every video worker patch reaches the installed worker', () => {
+  const worker = readFileSync(fileURLToPath(import.meta.resolve('webtorrent/dist/sw.min.js')), 'utf8');
+  for (const { find, count } of JSON.parse(readFileSync(new URL('../scripts/sw-patches.json', import.meta.url), 'utf8')))
+    assert.equal(worker.split(find).length - 1, count, 'a patched string moved in sw.min.js');
+});
+
 test('every webtorrent patch reaches the installed bundle', () => {
   const rule = nextConfig.webpack({ module: { rules: [] } }).module.rules.find(({ use }) => use.endsWith('webtorrent-loader.cjs'));
   const code = readFileSync(bundle, 'utf8');
