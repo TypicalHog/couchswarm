@@ -214,7 +214,7 @@ class CouchSwarmHelper : Form {
     readonly ToolTip tips = new ToolTip();
     readonly JavaScriptSerializer json = new JavaScriptSerializer();
     Process helper;
-    bool quitting, running, spoke;
+    bool quitting, running, spoke, stopping;
     int viewers;
     string lastLink = "", site = "";
 
@@ -318,8 +318,28 @@ class CouchSwarmHelper : Form {
         };
         stop.Click += (s, e) => {
             stop.Enabled = false;
+            stopping = true;
             Say(keep.Checked ? "Stopping. Downloaded movies stay in your folder." : "Stopping and clearing temporary movie data…", Skin.Muted);
             Send(new { action = "stop" });
+            // The helper finishes its own stop well inside this, but one blocked on a folder that stopped answering never
+            // reports back, and both buttons stayed greyed out on 'Stopping' for good. Past the deadline it is ended here, as
+            // closing the window already does, and the next pairing starts a fresh one. SetRunning clears the flag, so a stop
+            // that did finish - or a new session paired since - is left alone.
+            var deadline = new System.Windows.Forms.Timer { Interval = 20000 };
+            deadline.Tick += (s2, e2) => {
+                deadline.Stop();
+                deadline.Dispose();
+                if (!stopping) return;
+                var stuck = helper;
+                helper = null;
+                try { if (stuck != null && !stuck.HasExited) stuck.Kill(); } catch {}
+                site = "";
+                meta.Text = "";
+                viewers = 0;
+                Say("The helper did not finish stopping, so it was ended. Paste a new pairing link to share again.", Skin.Alarm);
+                SetRunning(false);
+            };
+            deadline.Start();
         };
         browse.Click += (s, e) => {
             using (var dialog = new FolderBrowserDialog()) {
@@ -400,6 +420,7 @@ class CouchSwarmHelper : Form {
     void Say(string text, Color dot) { status.Text = text; statusCard.Dot = dot; statusCard.Invalidate(); }
     void SetRunning(bool value) {
         running = value;
+        stopping = false;
         // Nothing a user-mode process sends over the network resets the idle timer, so a helper PC
         // nobody watches on sleeps mid-movie and every viewer stalls. The request is per thread and
         // SetRunning only runs on the UI thread; Stop, a helper error and process exit all release it.
@@ -483,6 +504,8 @@ class CouchSwarmHelper : Form {
             int code = ((Process)s).ExitCode;
             OnUi(() => {
                 if (quitting) { Close(); return; }
+                // One ended past its stop deadline has already been reported, and a newer one may be running by now.
+                if (!ReferenceEquals(s, helper)) return;
                 // A helper that never reported anything did not get far enough for a pairing link to be the
                 // problem: a partial extraction or a quarantined runtime dies here, and the only account of it
                 // is the log this app keeps of its stderr.
