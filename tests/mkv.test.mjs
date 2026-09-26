@@ -313,17 +313,22 @@ async function segmentProcessors() {
 }
 
 const SILENT_STEREO_AAC = [0x21, 0x00, 0x49, 0x90, 0x02, 0x19, 0x00, 0x23, 0x80];
+const AAC_RATES = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
 
-// Runs a three-segment plan, cut between audio packets as a 25 fps film's keyframes are, over a soundtrack that
-// runs from `start` to `end` seconds: AC-3 converted by a stand-in for ffmpeg, or AAC-LC passed through. Returns what
-// each segment's fMP4 declares and plays, and the span of audio each conversion run was given.
-async function playSegments(process, clip, { rate = 48000, start = 0, end = 2.2, convert = true } = {}) {
-  const plan = [0, 0.53, 1.12].map((startSec, i, starts) => ({ startSec, durationSec: (starts[i + 1] ?? 2) - startSec }));
+// Runs a plan, by default three segments to 2 s cut between audio packets as a 25 fps film's keyframes are, over a
+// stand-in soundtrack running from `start` to `end` seconds: AC-3 converted by a stand-in for ffmpeg, or AAC-LC passed
+// through (`channels` is what its AudioSpecificConfig declares). `stamp` moves packets, to make a track irregular.
+// Returns what each segment's fMP4 declares and plays, and the span of audio each conversion run was given.
+async function playSegments(process, clip, { rate = 48000, start = 0, end = 2.2, convert = true, cuts = [0, 0.53, 1.12], until = 2, stamp = at => at, channels = 2, size = convert ? 1536 : 1024 } = {}) {
+  const plan = cuts.map((startSec, i) => ({ startSec, durationSec: (cuts[i + 1] ?? until) - startSec }));
   // The track as mediabunny reads one from an MKV: packets of 1536 (AC-3) or 1024 (AAC) samples stamped to the
-  // millisecond, each lasting until the next and carrying its own timestamp.
-  const size = convert ? 1536 : 1024;
-  const stamps = Array.from({ length: Math.ceil((end - start) * rate / size) }, (_, i) => start + Math.round(i * size / rate * 1000) / 1000);
-  const track = stamps.map((at, i) => new EncodedPacket(new Uint8Array(new Float64Array([at]).buffer), 'key', at, (stamps[i + 1] ?? at + size / rate) - at, i));
+  // millisecond, each lasting until the next and carrying its stamp, its duration and the exact time its sound starts.
+  const count = Math.ceil((end - start) * rate / size);
+  const stamps = Array.from({ length: count }, (_, i) => stamp(start + Math.round(i * size / rate * 1000) / 1000));
+  const track = stamps.map((at, i) => {
+    const lasts = (stamps[i + 1] ?? at + size / rate) - at;
+    return new EncodedPacket(new Uint8Array(new Float64Array([at, lasts, stamp(start + i * size / rate)]).buffer), 'key', at, lasts, i);
+  });
   const audioSink = {
     getFirstPacket: async () => track[0],
     getPacket: async at => track.findLast(packet => packet.timestamp <= at) ?? null,
@@ -332,42 +337,56 @@ async function playSegments(process, clip, { rate = 48000, start = 0, end = 2.2,
   // Stands in for ffmpeg: after its priming frame, one AAC frame per 1024 source samples, each carrying the source
   // time it holds, so that what a frame plays can be checked against when it is stamped to play. ffmpeg's frames
   // are ADTS, which the muxer strips, so these carry an ADTS header too.
-  const adts = payload => Uint8Array.from([0xff, 0xf1, 0x40 | [96000, 88200, 64000, 48000, 44100].indexOf(rate) << 2, 0x80,
+  const adts = payload => Uint8Array.from([0xff, 0xf1, 0x40 | AAC_RATES.indexOf(rate) << 2, 0x80,
     (7 + payload.length) >> 3, ((7 + payload.length) & 7) << 5 | 0x1f, 0xfc, ...payload]);
   const runs = [];
   const transcodeAudio = async ({ packets, sampleRate, audioStartSec }) => {
     const from = packets[0].timestamp, to = packets.at(-1).timestamp + packets.at(-1).duration, frameSec = 1024 / sampleRate;
+    const sound = new Float64Array(packets[0].data.slice().buffer)[2];
     runs.push({ start: from, end: to });
     return {
       packets: Array.from({ length: Math.ceil((Math.round((to - from) * sampleRate) + 1024) / 1024) }, (_, i) =>
-        new EncodedPacket(adts(new Uint8Array(new Float64Array([from + (i - 1) * frameSec]).buffer)), 'key', audioStartSec + i * frameSec, frameSec, i)),
+        new EncodedPacket(adts(new Uint8Array(new Float64Array([sound + (i - 1) * frameSec]).buffer)), 'key', audioStartSec + i * frameSec, frameSec, i)),
       decoderConfig: { codec: 'mp4a.40.2', numberOfChannels: 2, sampleRate },
       metrics: { totalMs: 0, audioDurationSec: 0, realtimeRatio: 0, ffmpegMs: 0, ffmpegSpeed: null },
     };
   };
-  // A passed-through track's decoder config carries its AudioSpecificConfig: AAC-LC, 48 kHz, stereo.
+  const asc = 2 << 11 | AAC_RATES.indexOf(rate) << 7 | channels << 3;
   const audio = convert
     ? { audioCodec: 'ac3', sourceCodec: 'ac3', doTranscode: true, transcodeAudio, audioDecoderConfig: { codec: 'mp4a.40.2', numberOfChannels: 2, sampleRate: rate } }
-    : { audioCodec: 'aac', doTranscode: false, audioDecoderConfig: { codec: 'mp4a.40.2', numberOfChannels: 2, sampleRate: rate, description: Uint8Array.from([0x11, 0x90]) } };
+    : { audioCodec: 'aac', doTranscode: false, audioDecoderConfig: { codec: 'mp4a.40.2', numberOfChannels: 2, sampleRate: rate, description: Uint8Array.from([asc >> 8, asc & 0xff]) } };
   const config = { videoSink: clip.videoSink, audioSink, videoCodec: clip.videoCodec, videoDecoderConfig: clip.videoDecoderConfig, plan, ...audio };
   const segments = [];
   for (let index = 0; index < plan.length; index++) {
     const { initSegment, mediaData } = await process(config, index);
     const played = new Input({ source: new BufferSource(Buffer.concat([initSegment, mediaData])), formats: [MP4] });
-    const track = await played.getPrimaryAudioTrack();
+    const audioTrack = await played.getPrimaryAudioTrack();
     const frames = [];
-    if (track) {
-      const sink = new EncodedPacketSink(track);
+    if (audioTrack) {
+      const sink = new EncodedPacketSink(audioTrack);
       for (let packet = await sink.getFirstPacket(); packet; packet = await sink.getNextPacket(packet)) {
+        // The muxer rewrites each duration to the gap before the next frame, so a frame's own length comes from its
+        // payload: a passed-through packet carries it, and a converted or silent frame lasts 1024 samples.
         const data = packet.data.slice();
-        frames.push({ at: packet.timestamp, end: packet.timestamp + packet.duration, silent: data.join() === SILENT_STEREO_AAC.join(),
-          holds: data.length === 8 ? new Float64Array(data.buffer)[0] : undefined });
+        const [holds, lasts] = data.length === 8 || data.length === 24 ? new Float64Array(data.buffer) : [];
+        frames.push({ at: packet.timestamp, silent: data.join() === SILENT_STEREO_AAC.join(), holds, lasts: lasts ?? 1024 / rate });
       }
     }
     played.dispose();
-    segments.push({ declaresAudio: track !== null, format: track && `${track.sampleRate} Hz × ${track.numberOfChannels}`, frames });
+    segments.push({ declaresAudio: audioTrack !== null, format: audioTrack && `${audioTrack.sampleRate} Hz × ${audioTrack.numberOfChannels}`, frames });
   }
   return { plan, segments, runs, trackEnd: track.at(-1).timestamp + track.at(-1).duration };
+}
+
+// Each frame must start where the one before it ends. Played as it is, a segment repeats the packet that straddles its
+// start, as playsvideo always has, and the append replaces it; with `overlaps`, a frame may also start early, never late.
+function assertMeets(frames, what, { overlaps = false } = {}) {
+  for (let i = 1; i < frames.length; i++) {
+    const [before, frame] = [frames[i - 1], frames[i]];
+    if (frame.at === before.at && frame.holds === before.holds) continue;
+    const gap = frame.at - (before.at + before.lasts);
+    assert.ok(overlaps ? gap < 1e-6 : Math.abs(gap) < 1e-6, `${what} (${frame.at} s)`);
+  }
 }
 
 test('converted MKV audio meets frame for frame at every segment seam', { timeout: 60000 }, async () => {
@@ -380,12 +399,12 @@ test('converted MKV audio meets frame for frame at every segment seam', { timeou
   try {
     const before = (await playSegments(unpatched, clip)).segments.map(segment => segment.frames);
     assert.ok(before.flat().every(frame => frame.at - frame.holds > .02), 'unpatched, every frame must still play audio 21 ms older than its stamp');
-    assert.ok(before[1][0].at < before[0].at(-1).end, 'unpatched, a segment must still overlap the one before');
+    assert.ok(before[1][0].at < before[0].at(-1).at + before[0].at(-1).lasts, 'unpatched, a segment must still overlap the one before');
 
     const { plan, segments, runs } = await playSegments(patched, clip);
     const frames = segments.flatMap(segment => segment.frames), frameSec = 1024 / 48000;
     for (const frame of frames) assert.ok(Math.abs(frame.at - frame.holds) < 1e-6, `the frame at ${frame.at} s must play the audio stamped on it`);
-    for (let i = 1; i < frames.length; i++) assert.ok(Math.abs(frames[i].at - frames[i - 1].end) < 1e-6, `frames must meet with no gap or overlap, seams included (${frames[i].at} s)`);
+    assertMeets(frames, 'frames must meet with no gap or overlap, seams included');
     for (let index = 1; index < plan.length; index++) {
       const seam = segments[index].frames[0].at;
       assert.ok(seam <= plan[index].startSec && plan[index].startSec - seam < .065, 'a segment’s sound must start with its picture or just before it');
@@ -408,28 +427,25 @@ test('an MKV whose sound starts after its first segment or ends before its last 
   // sound did. Either way the browser plays only where both tracks have data.
   const { unpatched, patched } = await segmentProcessors();
   const clip = await demuxFile(fileURLToPath(new URL('./fixtures/h264-aac.mp4', import.meta.url)));
-  const frameSec = 1024 / 48000;
   try {
     for (const convert of [true, false]) {
       const late = await playSegments(unpatched, clip, { start: 1.2, convert });
       assert.equal(late.segments[0].declaresAudio, false, 'unpatched, a late soundtrack must still leave the first segment without audio');
       const early = await playSegments(unpatched, clip, { end: 0.9, convert });
-      assert.ok(early.segments[2].frames.every(frame => frame.end <= early.plan[2].startSec), 'unpatched, a segment past an early end must still carry only sound from before it');
+      assert.ok(early.segments[2].frames.every(frame => frame.at + frame.lasts <= early.plan[2].startSec),
+        'unpatched, a segment past an early end must still carry only sound from before it');
 
       for (const cut of [{ start: 1.2 }, { end: 0.9 }]) {
+        const rate = cut.rate ?? 48000, frameSec = 1024 / rate;
         const { plan, segments, trackEnd } = await playSegments(patched, clip, { ...cut, convert });
-        assert.ok(segments.every(segment => segment.format === '48000 Hz × 2'), 'every segment must declare the soundtrack as it plays');
+        assert.ok(segments.every(segment => segment.format === `${rate} Hz × 2`), 'every segment must declare the soundtrack as it plays');
         assert.ok(segments.every(({ frames: [first] }, index) => first.at <= plan[index].startSec + 1e-6 || (index === 0 && first.at < frameSec)),
           'each segment’s sound must start with its picture or just before it');
         const frames = segments.flatMap(segment => segment.frames);
-        for (let i = 1; i < frames.length; i++) {
-          // Played as it is, a segment repeats the packet that straddles its start, as playsvideo always has; the append replaces it.
-          if (!convert && frames[i].at === frames[i - 1].at && frames[i].holds === frames[i - 1].holds) continue;
-          assert.ok(Math.abs(frames[i].at - frames[i - 1].end) < 1e-6, `frames must meet with no gap or overlap (${frames[i].at} s)`);
-        }
-        assert.ok(frames.at(-1).end >= 2 - 1e-6, 'sound must run to the end of the picture');
+        assertMeets(frames, 'frames must meet with no gap or overlap');
+        assert.ok(frames.at(-1).at + frames.at(-1).lasts >= 2 - 1e-6, 'sound must run to the end of the picture');
         const silent = frames.filter(frame => frame.silent);
-        if (cut.start) assert.ok(frames.every(frame => frame.silent === frame.at < 1.2 - 1e-6), 'silence must fill exactly the stretch before the soundtrack');
+        if (cut.start) assert.ok(frames.every(frame => frame.silent === frame.at < cut.start - 1e-6), 'silence must fill exactly the stretch before the soundtrack');
         else assert.ok(silent.length && frames.every(frame => frame.silent === frame.at >= silent[0].at) && Math.abs(silent[0].at - trackEnd) < frameSec,
           'silence must fill exactly the stretch after the soundtrack');
       }
