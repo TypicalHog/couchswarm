@@ -422,6 +422,13 @@ test('converted MKV audio meets frame for frame at every segment seam', { timeou
       assert.deepEqual(await playSegments(patched, clip, irregular), await playSegments(unpatched, clip, irregular));
     }
 
+    // Stamps that jump 10 ms after the stretch the grid is measured on take the segments after the jump off the grid.
+    // Their sound starts where the grid cut the one before, so none of it is missing.
+    const jumped = await playSegments(patched, clip, { cuts: [0, 0.53, 1.12, 2.6, 3.2], until: 4, end: 4.2, stamp: at => at >= 2.6 ? at + 0.01 : at });
+    assert.ok(jumped.segments.slice(0, 3).every(segment => segment.frames.every(frame => Math.abs(frame.at - frame.holds) < 1e-6)), 'the grid must hold before the jump');
+    assert.ok(jumped.segments.every(segment => segment.declaresAudio));
+    assertMeets(jumped.segments.flatMap(segment => segment.frames), 'no sound may be missing where the grid gives way', { overlaps: true });
+
     // A first segment shorter than a grid step still carries sound, or the init segment cut from it declares none.
     const short = await playSegments(patched, clip, { cuts: [0, 0.03, 0.56, 1.12] });
     assert.ok(short.segments.every(segment => segment.format === '48000 Hz × 2'), 'every segment, the first included, must declare the soundtrack');
