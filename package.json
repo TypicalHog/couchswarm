@@ -4,7 +4,7 @@
   "private": true,
   "license": "Unlicense OR MIT OR Apache-2.0",
   "engines": {
-    "node": ">=22.13.0"
+    "node": "^22.13.0 || ^24.0.0"
   },
   "browserslist": [
     "chrome >= 116",

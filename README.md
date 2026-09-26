@@ -18,7 +18,7 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for the Vercel database, helper downloads, an
 
 ## Run locally
 
-Requires Node.js 22.13 or newer.
+Requires Node.js 22.13 or a later 22, or Node.js 24: the two lines CI tests, and the range package.json holds a Vercel deployment to, so a new Node major is never picked up untested.
 
 ```powershell
 npm.cmd install

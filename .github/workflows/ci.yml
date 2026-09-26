@@ -7,7 +7,7 @@ permissions: { contents: read }
 jobs:
   checks:
     runs-on: ubuntu-latest
-    # package.json promises >=22.13.0 and the helper is packaged on 24, so both ends of that range run here.
+    # package.json promises Node 22.13+ and 24, and the helper is packaged on 24, so both of those run here.
     strategy: { matrix: { node: ['22.13.0', '24'] } }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
