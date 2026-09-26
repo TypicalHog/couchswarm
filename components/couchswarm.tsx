@@ -145,19 +145,6 @@ export default function CouchSwarm() {
   // dialog already offers to repeat, not a guest to be told to ask their host - and the key this tab holds is dead too.
   const staleLink = swarm.inviteStale && !isHost;
   const linkGone = rotateFailed || (swarm.inviteStale && isHost);
-  // canPlay already requires the host, so both the button and the space bar reach the room only for them.
-  const togglePlayback = () => {
-    // Wall time can step backwards - an NTP correction after a resume, say - and every toggle from then until the
-    // clock catches up reads as one that has just happened. performance.now() only ever moves forward.
-    if (!canPlay || performance.now() - lastToggle.current < 400) return;
-    lastToggle.current = performance.now();
-    // Arrow keys on the timeline seek 400 ms after the last press, and a Space inside that wait reached the room first:
-    // the movie started from the old place and the seek landed on top of it, stopping everyone again - or, behind a
-    // slow reply, was refused as stale and the place the host chose was lost. The seek goes now, and alone: it stops
-    // the room at the new place, and a play there has to wait for everyone to buffer anyway.
-    if (keySeek.current !== null) { clearTimeout(seekTimer.current); const position = keySeek.current; keySeek.current = null; sendSeek(position); return; }
-    void swarm.control(isPlaying ? 'pause' : 'play');
-  };
   // Two clicks on the timeline before the first reply lands carry the same room revision, so the server takes the
   // first and refuses the second with 'The room changed', and the thumb springs back to a place nobody asked for.
   // Hold the later position and send it once the one in flight settles, so the last place the host chose wins.
@@ -170,6 +157,19 @@ export default function CouchSwarm() {
       nextSeek.current = null;
       if (queued === null) setSeek(null); else sendSeek(queued);
     });
+  };
+  // canPlay already requires the host, so both the button and the space bar reach the room only for them.
+  const togglePlayback = () => {
+    // Wall time can step backwards - an NTP correction after a resume, say - and every toggle from then until the
+    // clock catches up reads as one that has just happened. performance.now() only ever moves forward.
+    if (!canPlay || performance.now() - lastToggle.current < 400) return;
+    lastToggle.current = performance.now();
+    // Arrow keys on the timeline seek 400 ms after the last press, and a Space inside that wait reached the room first:
+    // the movie started from the old place and the seek landed on top of it, stopping everyone again - or, behind a
+    // slow reply, was refused as stale and the place the host chose was lost. The seek goes now, and alone: it stops
+    // the room at the new place, and a play there has to wait for everyone to buffer anyway.
+    if (keySeek.current !== null) { clearTimeout(seekTimer.current); const position = keySeek.current; keySeek.current = null; sendSeek(position); return; }
+    void swarm.control(isPlaying ? 'pause' : 'play');
   };
   // iOS keeps the audio level for the hardware buttons and drops a write to .volume without saying so, leaving a
   // slider that reports a level the movie never took and whose only working end is 0, because that sets muted.
