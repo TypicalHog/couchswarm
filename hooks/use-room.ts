@@ -341,11 +341,16 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
         // at its own end has nowhere further to go, which is all the room asks of it at the wrap.
         && (Math.abs(video.currentTime - target) < 1.5 || (outOfContact() && ahead > 0) || (video.ended && target >= video.duration - 0.2))
         && hasBuffer(reach, target, video.duration, current.playing && !spectating));
+      // The buffer half of that on its own, so the couch can tell a seat with only its button left to press from
+      // one still filling up: buffered is the player's own number, which can sit a second under the gate on a
+      // progressive file with the rest of the movie already saved.
+      const stocked = !!(current && video && state.media.loadedVersion === current.mediaVersion
+        && hasBuffer(reach, target, video.duration, current.playing && !spectating));
       const sent = performance.now();
       pending.current = true;
       try {
         const data = await request<Snapshot>(`/api/rooms/${session.roomId}`, { action: current ? 'heartbeat' : 'snapshot',
-          ready, armed: state.armed, buffered: ahead, epoch: current?.epoch ?? -1,
+          ready, armed: state.armed, stocked, buffered: ahead, epoch: current?.epoch ?? -1,
           mediaVersion: state.media.loadedVersion, duration: video && Number.isFinite(video.duration) ? video.duration : 0,
           sequence: ++sequence.current,
         }, session.token);

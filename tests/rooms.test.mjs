@@ -117,10 +117,12 @@ test('rejects malformed requests, rewinds at the end, and gates seats, moderatio
   const guest = await post(path, { action: 'join', invite: host.invite, name: 'Guest' }, undefined, 201);
   state = await beat(guest.token, 1, { duration: 999 });
   assert.equal(state.room.duration, 0, 'only the host reports the duration');
-  state = await beat(host.token, 1, { armed: true });
+  state = await beat(host.token, 1, { armed: true, stocked: true, buffered: 7.66 });
   assert.equal(state.room.duration, 120);
   assert.equal(state.members.find(member => member.id === host.memberId).armed, true, 'the couch carries who has unlocked playback');
   assert.equal(state.members.find(member => member.id === guest.memberId).armed, false, 'a seat that never enabled playback is not reported as one still buffering');
+  assert.equal(state.members.find(member => member.id === host.memberId).stocked, true, 'a seat whose saved pieces meet the gate says so while its player holds less');
+  assert.equal(state.members.find(member => member.id === guest.memberId).stocked, false, 'a seat that has not said so is not taken for one that has');
   await call({ action: 'seek', position: 'start', revision: state.room.revision }, 400);
   state = await call({ action: 'play', revision: state.room.revision });
   assert.equal(state.room.playing, true, state.room.reason);

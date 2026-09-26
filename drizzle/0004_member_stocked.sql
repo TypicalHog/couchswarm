@@ -1,0 +1,1 @@
+ALTER TABLE `members` ADD `stocked` integer DEFAULT 0 NOT NULL;
