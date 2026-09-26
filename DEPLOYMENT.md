@@ -15,7 +15,7 @@ npm.cmd run build:helper
 
 The build also needs .NET Framework 4.x (`%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe`), `tar.exe` (`%WINDIR%\System32\tar.exe`) — both inbox on Windows 10 1803 and newer — and internet access to `raw.githubusercontent.com`, from which it downloads the LICENSE of the exact Node version it bundles. Output is staged under `work/helper-package/`.
 
-If your shell uses an older Node version, set `COUCHSWARM_NODE_BINARY` to a Node 24 binary before building — `node.exe` for the Windows package, `node` for the Linux one. The build produces a SHA-256 checksum beside the ZIP, `THIRD-PARTY-NOTICES.txt` covering every bundled npm package, and `runtime\LICENSE` for the Node runtime. Upload the ZIP and checksum to your release/download host, then set `COUCHSWARM_HELPER_DOWNLOAD_URL` to the public HTTPS ZIP URL.
+If your shell uses an older Node version, set `COUCHSWARM_NODE_BINARY` to a Node 24 `node.exe` before building; the Windows package bundles that binary. The build produces a SHA-256 checksum beside the ZIP, `THIRD-PARTY-NOTICES.txt` covering every bundled npm package, and `runtime\LICENSE` for the Node runtime. Upload the ZIP and checksum to your release/download host, then set `COUCHSWARM_HELPER_DOWNLOAD_URL` to the public HTTPS ZIP URL.
 
 The locally built Linux file is `public/downloads/CouchSwarm-Helper-linux-x64.tar.gz`. Extract it and run `helper-package/couchswarm-helper`, which is a terminal application: a host running it gets no window. It bundles the same Node 24 runtime and native dependencies, so that host installs nothing either. Build a fresh package on Linux x64 using Node 24 LTS:
 
@@ -24,7 +24,7 @@ npm ci
 npm run build:helper:linux
 ```
 
-That writes the tarball with its own SHA-256 checksum beside it, the same `THIRD-PARTY-NOTICES.txt`, and `runtime/LICENSE`. Upload both and set `COUCHSWARM_HELPER_DOWNLOAD_URL_LINUX` to the public HTTPS tarball URL.
+That writes the tarball with its own SHA-256 checksum beside it, the same `THIRD-PARTY-NOTICES.txt`, and `runtime/LICENSE`. The Linux package never bundles the Node running the build: it downloads the pinned Linux runtime, Node v24.21.0, from `nodejs.org`, checks it against that release's `SHASUMS256.txt` and caches it under `work/`. To supply one yourself, set `COUCHSWARM_NODE_BINARY_LINUX` to its `node` and `COUCHSWARM_NODE_VERSION_LINUX` to its version (`v24.x.y`); `COUCHSWARM_NODE_VERSION_LINUX` alone picks another version to download. Besides `raw.githubusercontent.com`, this build needs `nodejs.org`, unless the runtime is cached or supplied, and GitHub release downloads (`github.com`), for node-datachannel's Linux binding. Upload both and set `COUCHSWARM_HELPER_DOWNLOAD_URL_LINUX` to the public HTTPS tarball URL.
 
 Generated ZIPs are excluded from Git. Each download button in the production interface appears only when its own URL is set, so publishing one build, the other, or both all work; with neither set the step says the download is not configured for this site.
 
