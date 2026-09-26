@@ -52,6 +52,7 @@ export default function CouchSwarm() {
   const seekTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const seekInFlight = useRef(false);
   const nextSeek = useRef<number | null>(null);
+  const keySeek = useRef<number | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastToggle = useRef(0);
   const helpRef = useRef<HTMLButtonElement>(null);
@@ -145,6 +146,11 @@ export default function CouchSwarm() {
     // clock catches up reads as one that has just happened. performance.now() only ever moves forward.
     if (!canPlay || performance.now() - lastToggle.current < 400) return;
     lastToggle.current = performance.now();
+    // Arrow keys on the timeline seek 400 ms after the last press, and a Space inside that wait reached the room first:
+    // the movie started from the old place and the seek landed on top of it, stopping everyone again - or, behind a
+    // slow reply, was refused as stale and the place the host chose was lost. The seek goes now, and alone: it stops
+    // the room at the new place, and a play there has to wait for everyone to buffer anyway.
+    if (keySeek.current !== null) { clearTimeout(seekTimer.current); const position = keySeek.current; keySeek.current = null; sendSeek(position); return; }
     void swarm.control(isPlaying ? 'pause' : 'play');
   };
   // Two clicks on the timeline before the first reply lands carry the same room revision, so the server takes the
@@ -189,7 +195,7 @@ export default function CouchSwarm() {
     const note = [say(missing(now, before), 'joined'), say(missing(before, now), 'left')].filter(Boolean).join(' ');
     if (note) setPresence(note);
   }, [members, swarm.connected]);
-  useEffect(() => { if (seekLost) { clearTimeout(seekTimer.current); nextSeek.current = null; setSeek(null); } }, [seekLost]);
+  useEffect(() => { if (seekLost) { clearTimeout(seekTimer.current); keySeek.current = nextSeek.current = null; setSeek(null); } }, [seekLost]);
   // The rejoin dialog portals to the body, outside the fullscreen player card, so it cannot paint until we leave.
   // iPhone has no Element.requestFullscreen, so fullscreen() hands the movie to the native player instead, and
   // document.fullscreenElement never sees that presentation: ask the element itself to come back down as well,
@@ -333,7 +339,7 @@ export default function CouchSwarm() {
             {!hasSource && <span className="screen-corner">MAKE YOURSELF AT HOME.</span>}
           </div>
           <div className="player-controls">
-            <div className="timeline"><span className="time">{time(seek ?? swarm.playhead)}</span><Slider aria-label="Playback position" getAriaValueText={(_, v) => time(v)} value={[seek ?? swarm.playhead]} min={0} max={swarm.duration || 1} step={1} disabled={seekLost} onValueChange={value => setSeek(Array.isArray(value) ? value[0] : value)} onValueCommitted={(value, details) => { const position = Array.isArray(value) ? value[0] : value; const send = () => sendSeek(position); clearTimeout(seekTimer.current); if (details.reason === 'keyboard') seekTimer.current = setTimeout(send, 400); else send(); }}/><span className="time">{swarm.duration ? time(swarm.duration) : '--:--'}</span></div>
+            <div className="timeline"><span className="time">{time(seek ?? swarm.playhead)}</span><Slider aria-label="Playback position" getAriaValueText={(_, v) => time(v)} value={[seek ?? swarm.playhead]} min={0} max={swarm.duration || 1} step={1} disabled={seekLost} onValueChange={value => setSeek(Array.isArray(value) ? value[0] : value)} onValueCommitted={(value, details) => { const position = Array.isArray(value) ? value[0] : value; clearTimeout(seekTimer.current); keySeek.current = null; if (details.reason !== 'keyboard') { sendSeek(position); return; } keySeek.current = position; seekTimer.current = setTimeout(() => { keySeek.current = null; sendSeek(position); }, 400); }}/><span className="time">{swarm.duration ? time(swarm.duration) : '--:--'}</span></div>
             <div className="control-row"><div className="control-group"><button className="play-button" onMouseDown={keepFocus} aria-disabled={!canPlay} aria-describedby="play-hint" title={isHost ? `${isPlaying ? 'Pause' : atEnd ? 'Back to the start' : 'Play'} for everyone (space)` : undefined} onClick={togglePlayback}>{isPlaying ? <Pause size={15} fill="currentColor"/> : <Play size={15} fill="currentColor"/>}{isPlaying ? 'Pause for all' : atEnd ? 'Back to the start' : 'Play for all'}</button><div className="volume-control" onMouseEnter={() => setVolumeOpen(true)} onMouseLeave={e => { /* A mouse click on Mute, or a drag of the thumb, leaves focus in here; only a keyboard visitor needs the popover held open over the seek bar. */ if (!e.currentTarget.querySelector(':focus-visible')) setVolumeOpen(false); }} onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setVolumeOpen(false); }}><button className="icon-button" onMouseDown={keepFocus} aria-label={muted ? 'Unmute' : 'Mute'} title={!canSetVolume ? (muted ? 'Unmute' : 'Mute') : muted ? 'Unmute; volume slider opens above' : 'Mute; volume slider opens above'} onPointerDown={() => { /* A tap fires mouseenter, focus and click together, so the pop-over it opens would be muted in the same breath. pointerdown lands first: remember whether there was anything to open. */ volumeWasOpen.current = volumeOpen || !canSetVolume; }} onClick={() => { if (!volumeWasOpen.current) { volumeWasOpen.current = true; return; } if (!muted) { setMuted(true); return; } const v = volume > 0 ? volume : .5; setVolume(v); applyVolume(v); setMuted(false); }} onFocus={() => setVolumeOpen(true)}>{muted ? <VolumeX size={19}/> : <Volume2 size={19}/>}</button>{volumeOpen && canSetVolume && <div className="volume-slider"><Slider aria-label="Your volume" getAriaValueText={(_, v) => `${Math.round(v * 100)}%`} value={[muted ? 0 : volume]} min={0} max={1} step={.01} largeStep={.1} onValueChange={value => { const v = Array.isArray(value) ? value[0] : value; setVolume(v); setMuted(v === 0); applyVolume(v); }}/></div>}</div><span className="control-hint" id="play-hint"><Crown size={13}/>{playHint}</span></div><div className="control-group"><span className="pill"><span className={`dot ${swarm.everyoneReady ? 'live' : ''}`}/>{swarm.seatLost ? 'Seat taken' : !hasSource ? 'Waiting for a movie' : !swarm.connected ? 'Reconnecting' : isPlaying ? 'In sync' : swarm.everyoneReady ? 'Everyone ready' : hostAway ? 'Host away' : 'Buffering'}</span><button className="icon-button" onMouseDown={keepFocus} aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'} onClick={() => void fullscreen()}><Maximize size={18}/></button></div></div>
           </div>
           <output className="notice">{feedback || playerMessage}</output>
