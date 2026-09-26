@@ -117,6 +117,8 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
   // Whether this tab is streaming from its own paired helper at this moment. The room's status says a paired
   // row exists, which a stopped or offline helper leaves behind, so it cannot answer that.
   const ownHelperLive = useRef(false);
+  // Set while this pipeline is still connecting to a paired helper, before ownHelperLive can say where it landed.
+  const helperConnecting = useRef(false);
   const movieRef = useRef('');
   const sourceRef = useRef('');
   // Where the subtitle effect, which has no torrent of its own, can see the standalone helper's seed URL.
@@ -158,6 +160,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     setHelper(null);
     setHelperPending(false);
     ownHelperLive.current = false;
+    helperConnecting.current = false;
     // The file list belongs to the torrent, not the selection: keep it across a file switch so the picker stays mounted.
     if (sourceRef.current !== source) { sourceRef.current = source; setFiles([]); }
     setError('');
@@ -275,6 +278,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           setStatus(`${helperReason || 'The helper could not be reached.'} Using browser peers…`);
           return null;
         };
+        helperConnecting.current = !!session;
         const remote = session ? await connectRemoteHelper(session, mediaVersion, abort.signal, setStatus,
           own => {
             ownHelperLive.current = false;
@@ -301,6 +305,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         // Cleared after the helper is reported, so the two never read false at the same moment. Every way
         // out of the attempt — connected, unpaired mid-wait, offline too long, failed — passes here.
         setHelperPending(false);
+        helperConnecting.current = false;
         const bridge = session && !remote ? await connectHelper(session, source, mediaVersion, abort.signal, value => {
           if (disposed) return;
           setHelper({ peers: value.peers });
@@ -701,8 +706,13 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
   // The other half: a helper the viewer has only just paired. The watcher above adopts one on its own solely
   // before any video bytes have landed, and a room cannot be opened without a torrent, so the host — who can
   // only pair after that — would otherwise spend the whole movie on browser peers. Someone who has just pasted
-  // a pairing link has asked for the interruption a rebuild costs.
-  const adoptOwnHelper = useCallback(() => { if (!ownHelperLive.current) reconnect(); }, [reconnect]);
+  // a pairing link has asked for the interruption a rebuild costs. A pipeline still connecting is left to finish,
+  // since it is most likely connecting to that very helper; this answers false so the caller asks again later.
+  const adoptOwnHelper = useCallback(() => {
+    if (helperConnecting.current) return false;
+    if (!ownHelperLive.current) reconnect();
+    return true;
+  }, [reconnect]);
   const chooseSubtitle = useCallback((next: number | File | null) => { setSubtitle(next); setPicked(count => count + 1); }, []);
 
   // The effect's cleanup pulls the attached <track> the moment the pick changes, so committing an upload before

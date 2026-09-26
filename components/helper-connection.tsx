@@ -6,7 +6,7 @@ import { helperRequest, helperStatus, type HelperStatus } from '@/lib/remote-hel
 import { PAIR_TTL_MS, type Session } from '@/lib/sync';
 
 export function HelperConnection({ session, isHost, reconnectIfOwnHelper, adoptOwnHelper, needed, open, onOpenChange }:
-  { session: Session; isHost: boolean; reconnectIfOwnHelper: () => void; adoptOwnHelper: () => void; needed: boolean; open: boolean; onOpenChange: (open: boolean) => void }) {
+  { session: Session; isHost: boolean; reconnectIfOwnHelper: () => void; adoptOwnHelper: () => boolean; needed: boolean; open: boolean; onOpenChange: (open: boolean) => void }) {
   const [status, setStatus] = useState<HelperStatus | null>(null);
   const [pairingUrl, setPairingUrl] = useState('');
   const [pairingExpires, setPairingExpires] = useState(0);
@@ -42,7 +42,7 @@ export function HelperConnection({ session, isHost, reconnectIfOwnHelper, adoptO
         // Pressing the button while a claim was already in flight answers 409; once the helper reads as connected that complaint is stale.
         if (result.mine && result.online) { setPairingUrl(''); setError(''); }
         if (!result.mineOnline) { if (adopt.current === 'idle') adopt.current = 'armed'; }
-        else if (adopt.current === 'armed' && result.own && result.ready) { adopt.current = 'spent'; adoptOwnHelper(); }
+        else if (adopt.current === 'armed' && result.own && result.ready && adoptOwnHelper()) adopt.current = 'spent';
         paired = result.paired;
       } catch { /* The room connection already reports connectivity failures. */ }
       finally { running = false; }
