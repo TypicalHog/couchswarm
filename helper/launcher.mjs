@@ -19,6 +19,10 @@ const note = text => {
     appendFileSync(helperLog, `${new Date().toISOString()} ${text}\n`);
   } catch {}
 };
+// The agent and the torrent stack say why a room request, a folder or a torrent failed on the error output, and the
+// Windows launcher logs every line of it; so does this one, rather than leave the reason in a terminal already closed.
+const toTerminal = process.stderr.write.bind(process.stderr);
+process.stderr.write = (chunk, ...rest) => { note(String(chunk).trimEnd()); return toTerminal(chunk, ...rest); };
 
 const io = createInterface({ input: process.stdin, output: process.stdout });
 // Readline holds the terminal in raw mode while it asks, and answers Ctrl+C itself: without this the keystroke
@@ -81,10 +85,11 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
 });
 // Whatever the torrent stack throws lands in the terminal by default and nowhere else; the log is the half that
 // survives the terminal closing.
-process.on('uncaughtException', error => { const text = error?.stack || String(error); console.error(text); note(text); process.exit(1); });
+process.on('uncaughtException', error => { console.error(error?.stack || String(error)); process.exit(1); });
 
 await agent.pair(link).catch(async error => {
-  console.error(error.message);
+  // The terminal gets the sentence and the log the stack under it, once.
+  toTerminal(`${error.message}\n`);
   note(error.stack || error.message);
   await agent.stop().catch(() => {});
   process.exit(1);
