@@ -23,8 +23,18 @@
       "count": 1
     },
     {
+      "find": "    const existing = segmentTasks.get(index);\n    if (existing) {\n        return existing;\n    }\n    const task = (async () => {",
+      "replace": "    const existing = segmentTasks.get(index);\n    if (existing && !existing.signal?.aborted) {\n        return existing;\n    }\n    const signal = segmentAbortControllers.get(index)?.signal;\n    const task = (async () => {",
+      "count": 1
+    },
+    {
       "find": "const result = await processSegmentWithAbort(makeProcessorConfig(), index);",
-      "replace": "const result = await processSegmentWithAbort(makeProcessorConfig(), index, segmentAbortControllers.get(index)?.signal);",
+      "replace": "const result = await processSegmentWithAbort(makeProcessorConfig(), index, signal);",
+      "count": 1
+    },
+    {
+      "find": "    })().finally(() => {\n        segmentTasks.delete(index);\n    });\n    segmentTasks.set(index, task);",
+      "replace": "    })().finally(() => {\n        if (segmentTasks.get(index) === task) segmentTasks.delete(index);\n    });\n    task.signal = signal;\n    segmentTasks.set(index, task);",
       "count": 1
     },
     {
