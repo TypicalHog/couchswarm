@@ -42,6 +42,15 @@ const patches = [
     replace: 'if(!this.files||this.chunks[e]){const t=this.chunks[e]??await(await this.chunksDirPromise).getFileHandle(e).then(q=>this.chunks[e]=q,()=>null);if(!t)throw new Error("Index "+e+" does not exist");',
     count: 1,
   },
+  // A WebSocket tracker whose socket drops destroys itself and arms a reconnect, and the client's own destroy
+  // then finds it destroyed already and returns without clearing that timer - which reopens the socket, sets
+  // destroyed back to false and announces the torrent with fresh WebRTC offers for the rest of the page's life.
+  // Every Reconnect, switch or helper change while a tracker was in back-off (a dead one always is) left one behind.
+  {
+    find: 'if(this.destroyed)return e(null);this.destroyed=!0,clearInterval(this.interval),clearTimeout(this.reconnectTimer);',
+    replace: 'if(this.destroyed)return clearTimeout(this.reconnectTimer),this.reconnecting=!1,e(null);this.destroyed=!0,clearInterval(this.interval),clearTimeout(this.reconnectTimer);',
+    count: 1,
+  },
 ];
 module.exports = function (code) {
   for (const { find, replace, count } of patches) {
