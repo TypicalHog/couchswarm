@@ -401,19 +401,31 @@ test('converted MKV audio meets frame for frame at every segment seam', { timeou
     assert.ok(before.flat().every(frame => frame.at - frame.holds > .02), 'unpatched, every frame must still play audio 21 ms older than its stamp');
     assert.ok(before[1][0].at < before[0].at(-1).at + before[0].at(-1).lasts, 'unpatched, a segment must still overlap the one before');
 
-    const { plan, segments, runs } = await playSegments(patched, clip);
-    const frames = segments.flatMap(segment => segment.frames), frameSec = 1024 / 48000;
-    for (const frame of frames) assert.ok(Math.abs(frame.at - frame.holds) < 1e-6, `the frame at ${frame.at} s must play the audio stamped on it`);
-    assertMeets(frames, 'frames must meet with no gap or overlap, seams included');
-    for (let index = 1; index < plan.length; index++) {
-      const seam = segments[index].frames[0].at;
-      assert.ok(seam <= plan[index].startSec && plan[index].startSec - seam < .065, 'a segment’s sound must start with its picture or just before it');
-      assert.ok(runs[index].start <= seam - 2 * frameSec, 'the encoder must reach the seam on real audio');
-      assert.ok(runs[index - 1].end >= seam + 2 * frameSec, 'and the run before it must carry on past the seam');
+    // 44.1 kHz AC-3 packets last no whole number of milliseconds, so their stamps are uneven; the grid fits them all the same.
+    for (const rate of [48000, 44100]) {
+      const { plan, segments, runs } = await playSegments(patched, clip, { rate });
+      const frames = segments.flatMap(segment => segment.frames), frameSec = 1024 / rate;
+      for (const frame of frames) assert.ok(Math.abs(frame.at - frame.holds) < 1e-6, `the frame at ${frame.at} s must play the audio stamped on it`);
+      assertMeets(frames, 'frames must meet with no gap or overlap, seams included');
+      for (let index = 1; index < plan.length; index++) {
+        const seam = segments[index].frames[0].at;
+        assert.ok(seam <= plan[index].startSec && plan[index].startSec - seam < 3072 / rate, 'a segment’s sound must start with its picture or just before it');
+        assert.ok(runs[index].start <= seam - 2 * frameSec, 'the encoder must reach the seam on real audio');
+        assert.ok(runs[index - 1].end >= seam + 2 * frameSec, 'and the run before it must carry on past the seam');
+      }
     }
 
-    // A track whose packets sit on no whole-sample grid, like 44.1 kHz AC-3 stamped to the millisecond, is converted as before.
-    assert.deepEqual(await playSegments(patched, clip, { rate: 44100 }), await playSegments(unpatched, clip, { rate: 44100 }));
+    // A track the grid does not fit keeps the old conversion throughout, rather than one grid measured off a single
+    // packet: a first packet that runs 63 ms, as after a dropped frame; a stretch shifted by 5 ms; packets of 1000
+    // samples, whose grid step with 1024-sample AAC frames would be 2.7 s.
+    for (const irregular of [{ stamp: at => at && at + 0.031 }, { stamp: at => at >= 0.1 && at < 0.5 ? at + 0.005 : at }, { size: 1000 }]) {
+      assert.deepEqual(await playSegments(patched, clip, irregular), await playSegments(unpatched, clip, irregular));
+    }
+
+    // A first segment shorter than a grid step still carries sound, or the init segment cut from it declares none.
+    const short = await playSegments(patched, clip, { cuts: [0, 0.03, 0.56, 1.12] });
+    assert.ok(short.segments.every(segment => segment.format === '48000 Hz × 2'), 'every segment, the first included, must declare the soundtrack');
+    assertMeets(short.segments.flatMap(segment => segment.frames), 'no sound may be missing around a short first segment', { overlaps: true });
   } finally {
     clip.dispose();
   }
