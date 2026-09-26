@@ -267,10 +267,11 @@ export default function CouchSwarm() {
     if (swarm.busy) return;
     if (!await swarm.control('kick', { memberId: member.id })) return;
     // Their row, and the button that was pressed, went with the kick, so focus has somewhere to go either way - and a
-    // host told only that the room could not be reached would take it that the link they asked to reset was reset.
+    // host told only that the room could not be reached would take it that the link they asked to reset was reset. A
+    // rotate whose reply was lost may have gone through, so the doubt is all that can be said.
     if (resetLink && !await swarm.control('rotate')) {
       couchRef.current?.focus();
-      setFeedback(`${member.name} is out, but the invite link was not reset and still lets them in. Create a new one from Invite to the couch.`);
+      setFeedback(`${member.name} is out, but the invite link may not have been reset and could still let them in. Create a new one from Invite to the couch.`);
       return;
     }
     couchRef.current?.focus();
