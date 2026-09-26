@@ -278,7 +278,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
         const remote = session ? await connectRemoteHelper(session, mediaVersion, abort.signal, setStatus,
           own => {
             ownHelperLive.current = false;
-            if (fileRef.current?.progress === 1) return;
+            if (fileRef.current?.done) return;
             setHelper(null);
             lostHelper.current = true;
             // Selection has already re-pointed at the host's helper, and a helper reloads a torrent that failed
@@ -331,7 +331,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
               bridge.release();
               // Once the whole video is in this browser there is nothing left to ask the helper for, and an error
               // here would only stop the room, as the paired helper's drop handler already knows.
-              if (fileRef.current?.progress === 1) return;
+              if (fileRef.current?.done) return;
               const reported = err instanceof Error && code !== undefined ? err.message : '';
               if (!disposed) fail(reported || 'The torrent helper disconnected. Reconnect to the movie to try again.');
               return;
@@ -353,7 +353,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           // What lands is counted off the network: a reload verifies the kept store into `downloaded` before the
           // swarm has sent a byte, and a tab reloaded while its helper was away would take that for a live swarm,
           // stop watching, play out what it kept and stall the room with no way back. A finished file needs nobody.
-          const fed = () => !lostHelper.current && (!!torrent?.received || fileRef.current?.progress === 1);
+          const fed = () => !lostHelper.current && (!!torrent?.received || !!fileRef.current?.done);
           const upgrade = (own: boolean) => {
             if (fed()) return;
             if (helperFailed) fail(`${own ? 'Your' : 'The host’s'} helper is available again. Reconnect to the movie to use it.`);

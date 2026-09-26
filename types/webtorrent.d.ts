@@ -10,6 +10,9 @@ declare module 'webtorrent/dist/webtorrent.min.js' {
   }
   export interface TorrentFile {
     name: string; path: string; length: number; downloaded: number; progress: number;
+    // Whether every piece of the file has verified. progress cannot say so: for a file that ends exactly on a piece
+    // boundary, WebTorrent 3.0.21 subtracts that whole last piece from downloaded, so it never reaches 1.
+    done: boolean;
     // Where the file starts in the torrent's bytes, which is what places it among the pieces.
     offset: number;
     streamURL: string;
