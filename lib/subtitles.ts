@@ -95,6 +95,10 @@ const escapeCue = (line: string) => line
   // <font color=…> is common in SRT and browsers drop it today, so drop it here too rather than print it. The scan
   // stops at the next '<', or every '<font' of a crafted line would rescan to its end.
   .replace(/<\/?font\b[^<>]*>/gi, '')
+  // The same goes for the rest of the HTML some SRT files carry: a <br> breaks the line it sits in, emphasis keeps the
+  // look WebVTT has for it, and strike, span and the like go, their words left in place.
+  .replace(/<br\s*\/?>/gi, '\n').replace(/<(\/?)em>/gi, '<$1i>').replace(/<(\/?)strong>/gi, '<$1b>')
+  .replace(/<\/?(?:s|strike|del|span|sub|sup|small|big)\b[^<>]*>/gi, '')
   .replace(CUE_TAG, match => match === '<' ? '&lt;' : match === '-->' ? '--&gt;' : match);
 
 // ASS counts hundredths where WebVTT counts thousandths.
@@ -164,8 +168,9 @@ export function toWebVTT(text: string, filename: string) {
     // Only a truly empty line ends a cue, so a separator holding a space or a tab leaves the cue open and it
     // swallows the next cue's number; a line the override strip emptied is the mirror image and just goes.
     if (!line.trim()) return '';
-    const text = escapeCue(line.replace(SRT_OVERRIDE, ''));
-    return text.trim() ? text : [];
+    // A <br> at either end, or two in a row, would leave an empty line, and that ends the cue.
+    const text = escapeCue(line.replace(SRT_OVERRIDE, '')).split('\n').filter(part => part.trim()).join('\n');
+    return text || [];
   });
   // A cue number that follows the last cue's text with no blank line between is read as one more line of that text
   // and shows on screen, since only the timing under it starts the next cue: give it the blank line it was missing.

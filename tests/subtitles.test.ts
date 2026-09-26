@@ -139,6 +139,16 @@ test('a crafted ASS line is converted without blocking the thread', () => {
   assert.match(toWebVTT(dialogue('Hi\u2028there'), 'a.ass'), /Hi\u2028there/, 'a line separator is legal cue text');
 });
 
+// Browsers drop a tag WebVTT does not know, so before '<' was escaped these rendered cleanly, and after it they
+// printed: 'First line<br>second line' and '<s>struck</s>' came up on screen as written.
+test('the HTML an SRT carries renders the way a browser would have rendered it', () => {
+  const out = toWebVTT(['1', '00:00:01,000 --> 00:00:02,000', '<br>First line<br>second line<br /><br>', '',
+    '2', '00:00:03,000 --> 00:00:04,000', '<s>struck</s> <em>said</em> <strong>loud</strong> <span style="color:red">plain</span>', ''].join('\n'), 'a.srt');
+  assert.match(out, /^00:00:01\.000 --> 00:00:02\.000\nFirst line\nsecond line\n\n2$/m, 'a line break, and no empty line to end the cue early');
+  assert.match(out, /^struck <i>said<\/i> <b>loud<\/b> plain$/m);
+  assert.ok(!out.includes('&lt;'), 'nothing is printed as a tag');
+});
+
 test('a crafted SRT line is converted without blocking the thread', () => {
   // 40,000 of these took 9 seconds, and the time grew with the square of the line.
   const started = performance.now();
