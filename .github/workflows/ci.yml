@@ -40,3 +40,15 @@ jobs:
         run: |
           & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /platform:x64 /out:"$env:RUNNER_TEMP\launcher.exe" /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll helper\Launcher.cs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  relay:
+    runs-on: ubuntu-latest
+    # Nothing else here ever starts the relay, so a flag in compose.yaml that the pinned coturn does not know - it
+    # stops turnserver before it listens - reached operators once. Start that image from that file, on loopback with
+    # a throwaway secret, and check the STUN answer it gives against what the file asks for.
+    env: { COUCHSWARM_TURN_SECRET: ci-only-secret, TURN_REALM: relay.ci.invalid, TURN_PUBLIC_IP: 127.0.0.1 }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: docker compose -f deploy/turn/compose.yaml up -d
+      - run: node scripts/stun-probe.mjs 127.0.0.1 3478
+      - if: always()
+        run: docker compose -f deploy/turn/compose.yaml logs --no-color

@@ -59,6 +59,8 @@ docker compose up -d
 docker compose logs --tail=50
 ```
 
+From another machine with this repository, `node scripts/stun-probe.mjs YOUR_PUBLIC_IP` confirms that the relay answers through the firewall, and with only what this configuration lets a STUN answer carry. CI starts the pinned image from this file and runs the same probe, so a flag the image no longer accepts fails there first.
+
 The relay’s own public address has to stay an allowed peer so that two relayed clients can reach each other, and coturn’s peer list matches addresses, not ports; relayed UDP therefore reaches every other UDP port on this host over loopback, past the provider firewall, coturn’s own 3478 included. Either run no other UDP service on the relay host, or drop that traffic on the host itself:
 
 ```sh
