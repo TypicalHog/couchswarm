@@ -57,6 +57,7 @@ const LEGACY: [RegExp, string][] = [
   [/^ja\b/i, 'shift_jis'],
   [/^ko\b/i, 'euc-kr'],
 ];
+const DOUBLE_BYTE = new Set(['big5', 'gb18030', 'shift_jis', 'euc-kr']);
 
 // Valid UTF-8 always decodes, so a fatal throw means a legacy code page. Western European is what a language
 // list says nothing about falls back to, as every subtitle that is not already UTF-8 did before.
@@ -77,10 +78,18 @@ export function decodeSubtitle(bytes: AllowSharedBufferSource, languages: readon
   catch {
     for (const tag of languages) {
       const legacy = LEGACY.find(([match]) => match.test(tag));
-      // A reader's languages do not say what the file is: a Chinese reader's English subtitle is Western European,
-      // and read as GB18030 its 'I’m' is 'I抦'. A double-byte page takes a byte only in pairs it knows, and Western
-      // text all but always holds one that pairs with nothing, so a page that refuses the file is the wrong guess.
-      if (legacy) try { return new TextDecoder(legacy[1], { fatal: true }).decode(bytes); } catch { /* Not in that page. */ }
+      if (!legacy) continue;
+      const text = new TextDecoder(legacy[1]).decode(bytes);
+      // A single-byte page maps nearly every byte, and one it cannot is a sibling page of the same language - the
+      // Baltic ISO quotes at A1 and A5, say - so its reading stands. But a reader's languages do not say what the
+      // file is: a Chinese reader's English subtitle is Western European, and read as GB18030 its 'I’m' is 'I抦'.
+      // A double-byte page takes a byte only in pairs it knows, which leaves a fifth to all of a Western file's
+      // accents and curly quotes unpaired, where a real file of that page has one bad character in hundreds - a cut
+      // last line, a stray byte. So a double-byte reading more than 5% replacement characters is the wrong guess.
+      if (!DOUBLE_BYTE.has(legacy[1])) return text;
+      let replaced = 0, wide = 0;
+      for (const char of text) if (char > '\x7f') { wide++; if (char === '�') replaced++; }
+      if (replaced * 20 <= wide) return text;
     }
     return new TextDecoder('windows-1252').decode(bytes);
   }

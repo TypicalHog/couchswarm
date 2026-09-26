@@ -238,4 +238,11 @@ test('a CJK or Thai subtitle in its legacy code page reads in the reader’s lan
   // The same readers still get a Western European file as one: a double-byte page that refuses it is the wrong guess.
   const western = Uint8Array.from(Buffer.from('1\r\n00:00:01,000 --> 00:00:02,000\r\nCaf\xe9 au lait, d\xe9j\xe0 vu.\r\n', 'latin1'));
   for (const language of ['zh-CN', 'zh-TW', 'ja', 'ko']) assert.match(decodeSubtitle(western, [language, 'en']), /Café au lait, déjà vu\./, language);
+  // But a real file with one bad byte is still read in its page: a GBK subtitle whose last character was cut in half.
+  const cut = bytes(...Array.from({ length: 10 }, () => [0xC4, 0xE3, 0xBA, 0xC3, 0xA3, 0xAC, 0xCA, 0xC0, 0xBD, 0xE7, 0xA1, 0xA3]).flat(), 0xC4);
+  assert.equal(decodeSubtitle(cut, ['zh-CN']), `${'你好，世界。'.repeat(10)}�`);
+  // And a single-byte page keeps its reading of a sibling page's file: ISO-8859-13 puts the Baltic quotes where
+  // windows-1257 has nothing, and only those two are lost.
+  const baltic = bytes(...Buffer.from('Jis pasak', 'latin1'), 0xEB, 0x3A, 0x20, 0xA5, 0xDE, 0x69, 0xFB, 0x72, 0xEB, 0x6B, 0x2C, 0x20, 0xE8, 0x69, 0x61, 0x20, 0xF0, 0x75, 0x6F, 0x2E, 0xA1);
+  assert.equal(decodeSubtitle(baltic, ['lt', 'en']), 'Jis pasakė: �Žiūrėk, čia šuo.�');
 });
