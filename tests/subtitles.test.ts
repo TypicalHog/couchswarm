@@ -139,6 +139,14 @@ test('a crafted ASS line is converted without blocking the thread', () => {
   assert.match(toWebVTT(dialogue('Hi\u2028there'), 'a.ass'), /Hi\u2028there/, 'a line separator is legal cue text');
 });
 
+test('a crafted SRT line is converted without blocking the thread', () => {
+  // 40,000 of these took 9 seconds, and the time grew with the square of the line.
+  const started = performance.now();
+  toWebVTT(`1\n00:00:01,000 --> 00:00:02,000\n${'<font'.repeat(200_000)}\n`, 'a.srt');
+  assert.ok(performance.now() - started < 2000, 'a crafted line must not block the thread');
+  assert.match(toWebVTT('1\n00:00:01,000 --> 00:00:02,000\n<font color="#ffff00">Yellow</font>\n', 'a.srt'), /^Yellow$/m);
+});
+
 test('a WebVTT file is already the target format', () => {
   const vtt = 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello\n';
   assert.equal(toWebVTT(vtt, 'a.vtt'), vtt);

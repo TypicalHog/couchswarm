@@ -92,8 +92,9 @@ const clock = (h: string, m: string, s: string, ms: string) =>
 // renders as 'I '. Keep the tags a browser really renders and escape every other '<'.
 const CUE_TAG = /<\/?(?:c|i|b|u|v|ruby|rt|lang)(?:[.\s][^<>]*)?>|<\d{1,2}:\d{2}(?::\d{2})?\.\d{3}>|-->|</gi;
 const escapeCue = (line: string) => line
-  // <font color=…> is common in SRT and browsers drop it today, so drop it here too rather than print it.
-  .replace(/<\/?font\b[^>]*>/gi, '')
+  // <font color=…> is common in SRT and browsers drop it today, so drop it here too rather than print it. The scan
+  // stops at the next '<', or every '<font' of a crafted line would rescan to its end.
+  .replace(/<\/?font\b[^<>]*>/gi, '')
   .replace(CUE_TAG, match => match === '<' ? '&lt;' : match === '-->' ? '--&gt;' : match);
 
 // ASS counts hundredths where WebVTT counts thousandths.
