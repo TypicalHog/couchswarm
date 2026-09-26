@@ -198,7 +198,9 @@ export default function CouchSwarm() {
     const missing = (from: Map<string, string>, other: Map<string, string>) => [...from].filter(([id]) => !other.has(id)).map(([, name]) => name);
     const say = (who: string[], verb: string) => who.length ? `${who.length > 2 ? `${who.length} people` : who.join(' and ')} ${verb} the couch.` : '';
     const note = [say(missing(now, before), 'joined'), say(missing(before, now), 'left')].filter(Boolean).join(' ');
-    if (note) setPresence(note);
+    // The same note twice running - two guests called Sam - is the same state to React, which never touches the region
+    // for it, so nothing is read out: a repeat alternates a trailing no-break space, which a screen reader does not say.
+    if (note) setPresence(previous => previous === note ? `${note}\u00a0` : note);
   }, [members, swarm.connected]);
   useEffect(() => { if (seekLost) { clearTimeout(seekTimer.current); keySeek.current = nextSeek.current = null; setSeek(null); } }, [seekLost]);
   // The rejoin dialog portals to the body, outside the fullscreen player card, so it cannot paint until we leave.
