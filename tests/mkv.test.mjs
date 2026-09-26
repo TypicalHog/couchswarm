@@ -315,14 +315,14 @@ async function segmentProcessors() {
 const SILENT_STEREO_AAC = [0x21, 0x00, 0x49, 0x90, 0x02, 0x19, 0x00, 0x23, 0x80];
 
 // Runs a three-segment plan, cut between audio packets as a 25 fps film's keyframes are, over a soundtrack that
-// starts `start` seconds in: AC-3 converted by a stand-in for ffmpeg, or AAC-LC passed through. Returns what each
-// segment's fMP4 declares and plays, and the span of audio each conversion run was given.
-async function playSegments(process, clip, { rate = 48000, start = 0, convert = true } = {}) {
-  const plan = [0, 0.53, 1.04].map((startSec, i, starts) => ({ startSec, durationSec: (starts[i + 1] ?? 2) - startSec }));
+// runs from `start` to `end` seconds: AC-3 converted by a stand-in for ffmpeg, or AAC-LC passed through. Returns what
+// each segment's fMP4 declares and plays, and the span of audio each conversion run was given.
+async function playSegments(process, clip, { rate = 48000, start = 0, end = 2.2, convert = true } = {}) {
+  const plan = [0, 0.53, 1.12].map((startSec, i, starts) => ({ startSec, durationSec: (starts[i + 1] ?? 2) - startSec }));
   // The track as mediabunny reads one from an MKV: packets of 1536 (AC-3) or 1024 (AAC) samples stamped to the
   // millisecond, each lasting until the next and carrying its own timestamp.
   const size = convert ? 1536 : 1024;
-  const stamps = Array.from({ length: Math.ceil((2.2 - start) * rate / size) }, (_, i) => start + Math.round(i * size / rate * 1000) / 1000);
+  const stamps = Array.from({ length: Math.ceil((end - start) * rate / size) }, (_, i) => start + Math.round(i * size / rate * 1000) / 1000);
   const track = stamps.map((at, i) => new EncodedPacket(new Uint8Array(new Float64Array([at]).buffer), 'key', at, (stamps[i + 1] ?? at + size / rate) - at, i));
   const audioSink = {
     getFirstPacket: async () => track[0],
@@ -367,7 +367,7 @@ async function playSegments(process, clip, { rate = 48000, start = 0, convert = 
     played.dispose();
     segments.push({ declaresAudio: track !== null, format: track && `${track.sampleRate} Hz × ${track.numberOfChannels}`, frames });
   }
-  return { plan, segments, runs };
+  return { plan, segments, runs, trackEnd: track.at(-1).timestamp + track.at(-1).duration };
 }
 
 test('converted MKV audio meets frame for frame at every segment seam', { timeout: 60000 }, async () => {
@@ -400,25 +400,39 @@ test('converted MKV audio meets frame for frame at every segment seam', { timeou
   }
 });
 
-test('an MKV whose sound starts after its first segment plays from the start', { timeout: 60000 }, async () => {
+test('an MKV whose sound starts after its first segment or ends before its last plays the whole picture', { timeout: 60000 }, async () => {
   // A soundtrack that starts seconds into the film left the first segment with no audio at all. The init segment is
   // cut from that one, so it declared no audio track, and every later segment's append failed and reset the player,
-  // over and over. A first segment with some sound was no better off before it: the browser plays only where both
-  // tracks have data.
+  // over and over. One that ends seconds early handed each segment past its end the soundtrack's last packet, from
+  // before the segment, and hls.js dropped the fragment or found it added nothing: the picture stopped where the
+  // sound did. Either way the browser plays only where both tracks have data.
   const { unpatched, patched } = await segmentProcessors();
   const clip = await demuxFile(fileURLToPath(new URL('./fixtures/h264-aac.mp4', import.meta.url)));
+  const frameSec = 1024 / 48000;
   try {
     for (const convert of [true, false]) {
-      const before = await playSegments(unpatched, clip, { start: 1.2, convert });
-      assert.equal(before.segments[0].declaresAudio, false, 'unpatched, the first segment must still declare no audio');
+      const late = await playSegments(unpatched, clip, { start: 1.2, convert });
+      assert.equal(late.segments[0].declaresAudio, false, 'unpatched, a late soundtrack must still leave the first segment without audio');
+      const early = await playSegments(unpatched, clip, { end: 0.9, convert });
+      assert.ok(early.segments[2].frames.every(frame => frame.end <= early.plan[2].startSec), 'unpatched, a segment past an early end must still carry only sound from before it');
 
-      const { plan, segments } = await playSegments(patched, clip, { start: 1.2, convert });
-      assert.ok(segments.every(segment => segment.format === '48000 Hz × 2'), 'every segment, the first included, must declare the soundtrack as it plays');
-      const frames = segments.flatMap(segment => segment.frames);
-      assert.ok(segments.every(({ frames: [first] }, index) => first.at <= plan[index].startSec + 1e-6 || (index === 0 && first.at < 1024 / 48000)),
-        'each segment’s sound must start with its picture or just before it');
-      for (let i = 1; i < frames.length; i++) assert.ok(Math.abs(frames[i].at - frames[i - 1].end) < 1e-6, `frames must meet with no gap or overlap (${frames[i].at} s)`);
-      assert.ok(frames.every(frame => frame.silent === frame.at < 1.2 - 1e-6), 'silence must fill exactly the stretch before the soundtrack');
+      for (const cut of [{ start: 1.2 }, { end: 0.9 }]) {
+        const { plan, segments, trackEnd } = await playSegments(patched, clip, { ...cut, convert });
+        assert.ok(segments.every(segment => segment.format === '48000 Hz × 2'), 'every segment must declare the soundtrack as it plays');
+        assert.ok(segments.every(({ frames: [first] }, index) => first.at <= plan[index].startSec + 1e-6 || (index === 0 && first.at < frameSec)),
+          'each segment’s sound must start with its picture or just before it');
+        const frames = segments.flatMap(segment => segment.frames);
+        for (let i = 1; i < frames.length; i++) {
+          // Played as it is, a segment repeats the packet that straddles its start, as playsvideo always has; the append replaces it.
+          if (!convert && frames[i].at === frames[i - 1].at && frames[i].holds === frames[i - 1].holds) continue;
+          assert.ok(Math.abs(frames[i].at - frames[i - 1].end) < 1e-6, `frames must meet with no gap or overlap (${frames[i].at} s)`);
+        }
+        assert.ok(frames.at(-1).end >= 2 - 1e-6, 'sound must run to the end of the picture');
+        const silent = frames.filter(frame => frame.silent);
+        if (cut.start) assert.ok(frames.every(frame => frame.silent === frame.at < 1.2 - 1e-6), 'silence must fill exactly the stretch before the soundtrack');
+        else assert.ok(silent.length && frames.every(frame => frame.silent === frame.at >= silent[0].at) && Math.abs(silent[0].at - trackEnd) < frameSec,
+          'silence must fill exactly the stretch after the soundtrack');
+      }
     }
   } finally {
     clip.dispose();
