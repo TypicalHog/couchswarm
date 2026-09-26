@@ -229,4 +229,7 @@ test('a CJK or Thai subtitle in its legacy code page reads in the reader’s lan
   assert.equal(decodeSubtitle(bytes(0xBE, 0xC8, 0xB3, 0xE7, 0xC7, 0xCF, 0xBC, 0xBC, 0xBF, 0xE4), ['ko-KR']), '안녕하세요');
   assert.equal(decodeSubtitle(bytes(0xCA, 0xC7, 0xD1, 0xCA, 0xB4, 0xD5), ['th']), 'สวัสดี');
   assert.equal(decodeSubtitle(bytes(0x43, 0xF5, 0x6E, 0x20, 0x6D, 0xFD, 0x61), ['vi-VN']), 'Cơn mưa');
+  // The same readers still get a Western European file as one: a double-byte page that refuses it is the wrong guess.
+  const western = Uint8Array.from(Buffer.from('1\r\n00:00:01,000 --> 00:00:02,000\r\nCaf\xe9 au lait, d\xe9j\xe0 vu.\r\n', 'latin1'));
+  for (const language of ['zh-CN', 'zh-TW', 'ja', 'ko']) assert.match(decodeSubtitle(western, [language, 'en']), /Café au lait, déjà vu\./, language);
 });

@@ -74,7 +74,10 @@ export function decodeSubtitle(bytes: AllowSharedBufferSource, languages: readon
   catch {
     for (const tag of languages) {
       const legacy = LEGACY.find(([match]) => match.test(tag));
-      if (legacy) return new TextDecoder(legacy[1]).decode(bytes);
+      // A reader's languages do not say what the file is: a Chinese reader's English subtitle is Western European,
+      // and read as GB18030 its 'I’m' is 'I抦'. A double-byte page takes a byte only in pairs it knows, and Western
+      // text all but always holds one that pairs with nothing, so a page that refuses the file is the wrong guess.
+      if (legacy) try { return new TextDecoder(legacy[1], { fatal: true }).decode(bytes); } catch { /* Not in that page. */ }
     }
     return new TextDecoder('windows-1252').decode(bytes);
   }
