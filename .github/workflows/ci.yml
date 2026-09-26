@@ -10,8 +10,8 @@ jobs:
     # package.json promises Node 22.13+ and 24, and the helper is packaged on 24, so both of those run here.
     strategy: { matrix: { node: ['22.13.0', '24'] } }
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with: { node-version: '${{ matrix.node }}', cache: npm }
       # ip-set's preinstall fetches only-allow from the registry outside the lockfile's integrity hashes, so this
       # job installs no dependency code at all; node-datachannel's prebuilt binding is the one the suites need back.
@@ -33,7 +33,7 @@ jobs:
   launcher:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The launcher is only ever compiled while packaging on Windows, so a C# 6 idiom the inbox compiler
       # rejects reaches the owner's build machine as a surprise. Compile it here with the same csc.exe.
       - shell: pwsh
@@ -47,7 +47,7 @@ jobs:
     # a throwaway secret, and check the STUN answer it gives against what the file asks for.
     env: { COUCHSWARM_TURN_SECRET: ci-only-secret, TURN_REALM: relay.ci.invalid, TURN_PUBLIC_IP: 127.0.0.1 }
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker compose -f deploy/turn/compose.yaml up -d
       - run: node scripts/stun-probe.mjs 127.0.0.1 3478
       - if: always()
