@@ -327,7 +327,7 @@ export default function CouchSwarm() {
 
   return <div className="shell">
     <output className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</output>
-    <output className="sr-only" aria-live="polite" aria-atomic="true">{hasSource && !isPlaying && swarm.connected && swarm.everyoneReady ? (isHost ? 'Everyone is ready. You can press play.' : 'Everyone is ready.') : ''}</output>
+    <output className="sr-only" aria-live="polite" aria-atomic="true">{hasSource && !isPlaying && swarm.connected && swarm.everyoneReady ? (isHost ? atEnd ? 'Everyone is ready. You can go back to the start.' : 'Everyone is ready. You can press play.' : 'Everyone is ready.') : ''}</output>
     <output className="sr-only" aria-live="polite" aria-atomic="true">{presence}</output>
     {/* Nothing here ever makes a client navigation: a plain click is handled below and leaves through
         location.assign, and a modifier click opens a new document. So the route data a Link fetches for '/' on
