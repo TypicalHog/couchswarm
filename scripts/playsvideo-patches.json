@@ -14,6 +14,16 @@
       "find": "enableWorker: false,",
       "replace": "enableWorker: false,\n            maxBufferLength: 60,\n            maxMaxBufferLength: 60,",
       "count": 1
+    },
+    {
+      "find": "        loading: { start: now, first: now, end: now },",
+      "replace": "        loading: { start: now, first: 0, end: now },",
+      "count": 1
+    },
+    {
+      "find": "this.stats.loading.end = performance.now();",
+      "replace": "this.stats.loading.end = this.stats.loading.first = performance.now();",
+      "count": 5
     }
   ],
   "worker.js": [
