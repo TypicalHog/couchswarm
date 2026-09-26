@@ -197,6 +197,12 @@ test('a season pack offers the playing episode’s subtitles first, each under a
   // A name that appears once keeps its bare name, and folders that repeat one level up are walked past.
   assert.deepEqual(subtitleLabels([{ name: 'English.srt', path: 'E01/Subs/English.srt' }, { name: 'English.srt', path: 'E02/Subs/English.srt' },
     { name: 'Signs.ass', path: 'E01/Signs.ass' }]), ['E01/Subs/English.srt', 'E02/Subs/English.srt', 'Signs.ass']);
+  // Twins told apart only by a folder hundreds deep took 2.8 seconds a render; past six folders the whole path decides.
+  const deep = Array.from({ length: 500 }, (_, i) => ({ name: 'English.srt', path: `${i}/${'s/'.repeat(400)}English.srt` }));
+  const started = performance.now();
+  const labels = subtitleLabels(deep);
+  assert.ok(performance.now() - started < 1000, 'labelling a crafted pack must not block the thread');
+  assert.equal(new Set(labels).size, deep.length, 'every twin keeps a label of its own');
 });
 
 test('a subtitle saved in a legacy codepage still reads as text', () => {

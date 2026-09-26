@@ -1,5 +1,5 @@
 'use client';
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { subtitleLabels } from '@/lib/subtitles';
@@ -15,7 +15,8 @@ export function SubtitleSelection({ subtitles, value, busy, error, onChange, onU
   const uploadRef = useRef<HTMLInputElement>(null);
   // Kept here so the file stays on the list after trying one of the torrent's own, rather than only while it is chosen.
   const [uploaded, setUploaded] = useState<File | null>(null);
-  const labels = subtitleLabels(subtitles.slice(0, LISTED));
+  // The room re-renders this on every heartbeat, and the list only changes when the torrent does.
+  const labels = useMemo(() => subtitleLabels(subtitles.slice(0, LISTED)), [subtitles]);
   const chosen = value instanceof File ? 'upload' : value === null ? 'off' : String(value);
   return <div className="video-selection subtitle-selection">
     <label id="subtitle-label" htmlFor="subtitle">Subtitles</label>

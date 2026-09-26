@@ -23,14 +23,17 @@ export function subtitleLabels(files: { name: string; path: string }[]) {
   }
   for (const twins of groups.values()) {
     const parts = twins.map(index => files[index].path.split(/[\\/]/));
-    // One folder deeper at a time, and only for the twins still sharing a label: counted, not compared pairwise.
+    // One folder deeper at a time, and only for the twins still sharing a label: counted, not compared pairwise. Each
+    // step joins the folders so far again, so a crafted pack buried hundreds deep cost seconds per render; past six
+    // folders the whole path, which a torrent never repeats, tells the rest apart.
     let pending = twins.map((_, k) => k);
-    for (let depth = 1; pending.length > 1 && pending.some(k => parts[k].length > depth); depth++) {
+    for (let depth = 1; pending.length > 1 && depth <= 6 && pending.some(k => parts[k].length > depth); depth++) {
       const label = (k: number) => parts[k].slice(-depth - 1).join('/');
       const counts = new Map<string, number>();
       for (const k of pending) counts.set(label(k), (counts.get(label(k)) ?? 0) + 1);
       pending = pending.filter(k => { if (counts.get(label(k)) !== 1) return true; labels[twins[k]] = label(k); return false; });
     }
+    if (pending.length > 1) for (const k of pending) labels[twins[k]] = parts[k].join('/');
   }
   return labels;
 }
