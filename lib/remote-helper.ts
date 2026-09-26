@@ -12,7 +12,7 @@ export async function helperRequest<T>(session: Session, body: object, signal?: 
 export const helperStatus = (session: Session, signal?: AbortSignal) => helperRequest<HelperStatus>(session, { action: 'status' }, signal);
 
 export async function connectRemoteHelper(session: Session, mediaVersion: number, signal: AbortSignal,
-  report: (message: string) => void, disconnected: (own: boolean) => void) {
+  report: (message: string) => void, disconnected: (own: boolean) => void, switched = false) {
   let status = await helperStatus(session, signal);
   if (!status.paired) return null;
   const sleep = () => new Promise<void>((resolve, reject) => {
@@ -24,9 +24,15 @@ export async function connectRemoteHelper(session: Session, mediaVersion: number
   const deadline = Date.now() + 120000, offlineDeadline = Date.now() + 20000;
   // A guest whose own helper is up but still loading this movie would take the host's the moment that one is ready,
   // and nothing moves a connected stream again: after a switch of video both helpers reload at once, and which one
-  // answered first was chance. So their own is given a little longer before the host's is taken instead.
-  const ownDeadline = Date.now() + 20000;
-  const awaitingOwn = () => status.ready && !status.own && status.mineOnline && Date.now() < ownDeadline;
+  // answered first was chance. So on the first connect after a switch their own is given a little longer, counted
+  // from when the host's is ready. Any other connect takes the host's at once: a helper whose load failed stays up and
+  // unready for good, and waiting on it would hold the whole room paused every time the stream reconnects.
+  let ownDeadline = 0;
+  const awaitingOwn = () => {
+    if (!switched || !status.ready || status.own || !status.mineOnline) return false;
+    ownDeadline ||= Date.now() + 20000;
+    return Date.now() < ownDeadline;
+  };
   let misses = 0;
   while (!status.ready || awaitingOwn()) {
     // Offline for a while: stream browser-only now; the readiness watcher upgrades when the helper returns.

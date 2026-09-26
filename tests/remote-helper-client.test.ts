@@ -7,8 +7,8 @@ const session: Session = { roomId: 'room', memberId: 'member', token: 'a'.repeat
 const helperStatus = (extra: Partial<HelperStatus> = {}): HelperStatus => ({ paired: true, online: true, ready: false,
   own: true, mine: true, mineOnline: true, mineStatus: '', status: 'Finding torrent peers…', infoHash: '',
   downloadUrl: '', downloadUrlLinux: '', iceServers: [], relayAvailable: false, ...extra });
-const connect = (report: (message: string) => void = () => {}) =>
-  connectRemoteHelper(session, 0, new AbortController().signal, report, () => {});
+const connect = (report: (message: string) => void = () => {}, switched = false) =>
+  connectRemoteHelper(session, 0, new AbortController().signal, report, () => {}, switched);
 const realFetch = globalThis.fetch;
 // Every reply is served from memory, so one setImmediate drains the whole request before the next tick.
 const flush = () => new Promise<void>(resolve => { setImmediate(() => resolve()); });
@@ -95,7 +95,7 @@ test('three failed readiness polls are tolerated and a fourth gives up', async t
 test('a guest waits a while for their own loading helper before taking the host’s', async t => {
   const reports: string[] = [];
   stub(t, call => helperStatus({ ready: true, own: call >= 4, mineOnline: true }));
-  const connecting = connect(message => reports.push(message));
+  const connecting = connect(message => reports.push(message), true);
   // Past the wait it goes on to connect, which this suite cannot do; what it connects to is what it reported.
   void connecting.catch(() => {});
   await advance(5);
@@ -103,12 +103,32 @@ test('a guest waits a while for their own loading helper before taking the host�
   assert.equal(reports.at(-1), 'Connecting to your helper…', 'the guest took the host’s helper while their own was still loading');
   const later: string[] = [];
   stub(t, () => helperStatus({ ready: true, own: false, mineOnline: true }));
-  const fallback = connect(message => later.push(message));
+  const fallback = connect(message => later.push(message), true);
   void fallback.catch(() => {});
   await advance(18);
   assert.ok(!later.some(message => message.startsWith('Connecting to')), 'the host’s helper was taken before the guest’s own had its chance');
   await advance(4);
   assert.equal(later.at(-1), 'Connecting to the host’s helper…', 'a guest whose helper never finishes loading still gets the host’s');
+});
+
+// Only the connect right after a switch waits: a helper whose load failed stays up and unready for good, and every
+// reconnect in the middle of a film that waited on it would hold the whole room paused for nothing.
+test('a reconnect in the middle of a film takes the host’s helper at once, and the wait runs from its readiness', async t => {
+  const reports: string[] = [];
+  stub(t, () => helperStatus({ ready: true, own: false, mineOnline: true }));
+  const rebuilt = connect(message => reports.push(message));
+  void rebuilt.catch(() => {});
+  await advance(1);
+  assert.equal(reports.at(-1), 'Connecting to the host’s helper…', 'a rebuild waited on a helper that may never load');
+  // Both helpers still loading the new video for 25 s: the guest’s own gets its 20 s from when the host’s is ready.
+  const later: string[] = [];
+  stub(t, call => helperStatus({ ready: call > 25, own: false, mineOnline: true }));
+  const slow = connect(message => later.push(message), true);
+  void slow.catch(() => {});
+  await advance(40);
+  assert.ok(!later.some(message => message.startsWith('Connecting to')), 'the wait ran out while the host’s helper was still loading');
+  await advance(8);
+  assert.equal(later.at(-1), 'Connecting to the host’s helper…');
 });
 
 test('a revoked pairing fails the wait without retrying', async t => {

@@ -148,6 +148,9 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
     const abort = new AbortController();
     // Helper retry budgets are per movie, not per hook mount.
     const movie = `${source}|${mediaVersion}|${fileIndex}`;
+    // The room has moved on to another video, as against a first load or a rebuild of this one: every helper is
+    // reloading at once, which is when a guest's own can lose the race for their stream to the host's.
+    const switched = movieRef.current !== '' && movieRef.current !== movie;
     // A subtitle chosen for the last movie would index a file list this one does not have. The list itself goes too:
     // it is ordered for the video being played, so a pick made from the last one's order before this one lists its
     // files would resolve to another episode's subtitle.
@@ -292,7 +295,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
             fail(`${own ? 'Your' : 'The host’s'} helper disconnected. Reconnect to the movie to try again.`);
           // A stale chunk is not a helper that could not be reached: it tells the viewer to reload instead of
           // spending this movie's one upgrade attempt on a browser-only stream.
-          }).catch(err => { if (abort.signal.aborted || (err as { stale?: boolean }).stale) throw err; helperFailed = retriedUpgrade.current; retriedUpgrade.current = true; return fallBack(err); }) : null;
+          }, switched).catch(err => { if (abort.signal.aborted || (err as { stale?: boolean }).stale) throw err; helperFailed = retriedUpgrade.current; retriedUpgrade.current = true; return fallBack(err); }) : null;
         if (remote) {
           ownHelperLive.current = remote.own;
           setHelper({ host: !remote.own });
