@@ -42,6 +42,10 @@ function readFromHelper(seedUrl: string, file: TorrentFile) {
     .then(async response => response.ok ? new Uint8Array(await response.arrayBuffer()) : null).catch(() => null);
 }
 
+// The last sweep of other movies' stores, whichever mount started it: a remount - an error boundary's reset - has a
+// teardown of its own to wait on and none of the one before it, which holds the media lock until its sweep is done.
+let sweeping: Promise<void> = Promise.resolve();
+
 // Nothing outside the next torrent's add callback ever frees this browser's movie store, so a viewer who left
 // the room kept the whole download as site data. A tab showing no movie, with no room in its address bar to
 // rejoin, is the moment that store is certainly nobody's: take the same lock a stream takes — a tab still
@@ -184,6 +188,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
       // Torrent stores are keyed by info hash. A replacement must wait for the
       // old store to be destroyed before opening the same torrent again.
       await teardownRef.current;
+      await sweeping;
       if (disposed) return;
       if (!window.isSecureContext) { fail('Use a current browser over HTTPS or localhost to stream torrents.'); return; }
       // A private window hides navigator.serviceWorker in Firefox before 138, and in-app browsers do much the
@@ -442,7 +447,7 @@ export function useTorrent(source: string, fileIndex: number, mediaVersion: numb
           if (/[\\/]/.test(value.name)) { fail('This torrent’s name contains a slash or backslash, which browsers cannot store. Ask the host for another torrent.'); return; }
           // The store survives teardown so a reconnect resumes; nothing else holds one while this tab
           // owns the media lock, so reclaim every other movie here.
-          sweep = (async () => {
+          sweep = sweeping = (async () => {
             const root = await navigator.storage.getDirectory();
             const keep = `${value.name} - ${value.infoHash!.slice(0, 8)}`;
             for await (const key of (root as unknown as { keys(): AsyncIterable<string> }).keys())
