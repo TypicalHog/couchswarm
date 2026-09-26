@@ -1,7 +1,7 @@
 [
   {
     "find": "pull:s=>new Promise(t=>{i.onmessage=({data:e})=>{e?s.enqueue(e):(d(),s.close()),t()},e||(clearTimeout(c),\"document\"!==a&&(c=setTimeout(()=>{d(),t()},5e3))),i.postMessage(!0)})",
-    "replace": "pull:s=>new Promise(t=>{clearTimeout(c),i.onmessage=({data:n})=>{clearTimeout(c),n?(s.enqueue(n),e||\"document\"===a||(c=setTimeout(d,6e4))):(d(),s.close()),t()},e||\"document\"===a||(c=setTimeout(()=>{d(),t()},5e3)),i.postMessage(!0)})",
+    "replace": "pull:s=>new Promise(t=>{clearTimeout(c),i.onmessage=({data:n})=>{clearTimeout(c),n?(s.enqueue(n),e||\"document\"===a||(c=setTimeout(()=>{e||d()},6e4))):(d(),s.close()),t()},e||\"document\"===a||(c=setTimeout(()=>{e||(d(),t())},5e3)),i.postMessage(!0)})",
     "count": 1
   }
 ]
