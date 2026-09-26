@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { Slider as SliderPrimitive } from '@base-ui/react/slider';
 
 import { cn } from '@/lib/utils';
@@ -9,12 +10,22 @@ function Slider({
   min = 0,
   max = 100,
   'aria-label': ariaLabel,
+  'aria-disabled': ariaDisabled,
   getAriaValueText,
   ...props
 }: Omit<SliderPrimitive.Root.Props, 'children'> &
   Pick<SliderPrimitive.Thumb.Props, 'getAriaValueText'>) {
   const source = value ?? defaultValue;
   const thumbCount = Array.isArray(source) ? source.length : 1;
+  // base-ui builds each thumb input's attributes from a fixed list, so a slider held without being disabled marks its
+  // inputs here: a screen reader then hears the thumb as unavailable while it keeps its focus.
+  const inputs = useRef<(HTMLInputElement | null)[]>([]);
+  useEffect(() => {
+    for (const input of inputs.current) {
+      if (ariaDisabled === true || ariaDisabled === 'true') input?.setAttribute('aria-disabled', 'true');
+      else input?.removeAttribute('aria-disabled');
+    }
+  }, [ariaDisabled]);
 
   return (
     // base-ui gives Root role="group", so a name here is read out again just before the thumb announces the same
@@ -45,6 +56,7 @@ function Slider({
             key={index}
             aria-label={ariaLabel}
             getAriaValueText={getAriaValueText}
+            inputRef={input => { inputs.current[index] = input; }}
             className="border-ring ring-ring/50 relative size-3 rounded-full border bg-white transition-[color,box-shadow] after:absolute after:-inset-2 hover:ring-3 focus-visible:ring-3 focus-visible:outline-hidden active:ring-3 block shrink-0 select-none disabled:pointer-events-none disabled:opacity-50"
           />
         ))}
