@@ -80,13 +80,15 @@ npm.cmd test
 npm.cmd run test:rooms
 npm.cmd run test:mkv
 npm.cmd run test:helper
+npm.cmd run test:migrate
+npm.cmd run test:patches
 npm.cmd run test:remote
 npm.cmd run typecheck
 npm.cmd run lint
 npm.cmd run build
 ```
 
-`npm run test:offline` runs the three suites that need no server. `npm run test:rooms` and `npm run test:remote` use the running local server at `http://localhost:3001`; set `TEST_ORIGIN` if your printed URL differs. Set `COUCHSWARM_PACKAGED_TEST=1` to run `test:remote` against the built `work/helper-package` agent instead of `helper/`. The room integration test creates isolated rooms and checks invite access, host permissions, readiness, scheduled starts, buffer stalls, stale reports, seeking, source replacement, and leaving. The MKV check uses actual synthetic video/audio, reads an MKV over HTTP ranges, verifies a small cue-table read, remuxes its first and later segments, and checks both tracks and timestamps. Real WebRTC media playback still depends on an available swarm and the browser's codec support.
+`npm run test:offline` runs every suite that needs no server - `test`, `test:mkv`, `test:helper`, `test:migrate` and `test:patches` - after checking that each test file belongs to one of the scripts. `npm run test:rooms` and `npm run test:remote` use the running local server at `http://localhost:3001`; set `TEST_ORIGIN` if your printed URL differs. Set `COUCHSWARM_PACKAGED_TEST=1` to run `test:remote` against the built `work/helper-package` agent instead of `helper/`. The room integration test creates isolated rooms and checks invite access, host permissions, readiness, scheduled starts, buffer stalls, stale reports, seeking, source replacement, and leaving. The MKV check uses actual synthetic video/audio, reads an MKV over HTTP ranges, verifies a small cue-table read, remuxes its first and later segments, and checks both tracks and timestamps. Real WebRTC media playback still depends on an available swarm and the browser's codec support.
 
 Helper tests seed synthetic files over loopback TCP, retrieve magnet metadata, and download the full single-file and multi-file payloads through a webseed-only consumer with piece-hash verification. They cover first-byte and mid-file seeking, `HEAD`, invalid ranges, separate viewer capabilities, shared downloads, cache deletion, origin/room authentication, idle expiry, the request body size limit, and rejection of private-network torrent URLs. No public movie torrent or browser UI is used by these tests. WebTorrent exposes no bind address, so the synthetic seeders here and the two clients in `npm test` listen on every interface for the few seconds a check runs; nothing advertises the ephemeral port and Windows Firewall may prompt once.
 
