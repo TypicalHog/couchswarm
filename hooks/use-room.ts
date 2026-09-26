@@ -417,6 +417,8 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     try {
       const data = await request<Snapshot>(`/api/rooms/${state.session.roomId}`, { action, revision, ...extra }, state.session.token);
       if (!accept(data, sent)) { setError('The room sent an unexpected reply. Try that again.'); return false; }
+      // The room just answered, so an earlier attempt's 'could not be reached', held against the heartbeat, is over.
+      controlError.current = 0; setNetworkError('');
       const rotated = data as unknown as { invite?: string; hostKey?: string };
       if (rotated.invite) saveSession({ ...state.session, invite: rotated.invite, ...(rotated.hostKey ? { hostKey: rotated.hostKey } : {}) });
       return true;
