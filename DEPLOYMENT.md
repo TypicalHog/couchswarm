@@ -9,9 +9,12 @@ The locally built Windows file is `public/downloads/CouchSwarm-Helper-win-x64.zi
 Build a fresh package on Windows x64 using Node 24 LTS:
 
 ```powershell
-npm.cmd ci
+npm.cmd ci --ignore-scripts
+npm.cmd rebuild node-datachannel
 npm.cmd run build:helper
 ```
+
+The install runs no dependency scripts, as CI and Vercel do: `ip-set`'s preinstall would otherwise fetch `only-allow` from the registry, outside the lockfile's integrity hashes, on the machine that produces what every host runs. The rebuild then fetches `node-datachannel`'s prebuilt binding alone, and the build refuses one that does not match the SHA-256 pinned in `scripts/native-notices/`.
 
 The build also needs .NET Framework 4.x (`%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe`), `tar.exe` (`%WINDIR%\System32\tar.exe`) — both inbox on Windows 10 1803 and newer — and internet access to `raw.githubusercontent.com`, from which it downloads the LICENSE of the exact Node version it bundles. Output is staged under `work/helper-package/`.
 
@@ -20,7 +23,8 @@ If your shell uses an older Node version, set `COUCHSWARM_NODE_BINARY` to a Node
 The locally built Linux file is `public/downloads/CouchSwarm-Helper-linux-x64.tar.gz`. Extract it and run `helper-package/couchswarm-helper`, which is a terminal application: a host running it gets no window. It bundles the same Node 24 runtime and native dependencies, so that host installs nothing either. Build a fresh package on Linux x64 using Node 24 LTS:
 
 ```sh
-npm ci
+npm ci --ignore-scripts
+npm rebuild node-datachannel
 npm run build:helper:linux
 ```
 
