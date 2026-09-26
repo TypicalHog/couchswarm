@@ -69,6 +69,13 @@ test('a blank line never lands inside a cue', () => {
   assert.match(ass('Top\\N{\\i1}\\NBottom'), /^Top\nBottom$/m);
 });
 
+test('a cue number with no blank line before it starts its cue instead of ending the last one', () => {
+  const vtt = toWebVTT('1\n00:00:01,000 --> 00:00:02,000\nHello there\n2\n00:00:03,000 --> 00:00:04,000\nGeneral Kenobi\n', 'a.srt');
+  assert.match(vtt, /^Hello there\n\n2\n00:00:03\.000 --> 00:00:04\.000\nGeneral Kenobi$/m, 'the next cue number shows as a line of the cue before it');
+  assert.match(toWebVTT('1\n00:00:01,000 --> 00:00:02,000\nIt was 1999\n\n2\n00:00:03,000 --> 00:00:04,000\nx\n', 'a.srt'), /^It was 1999\n\n2\n/m,
+    'a well-formed file is left as it was');
+});
+
 test('an ASS dialogue becomes a plain-text cue', () => {
   const out = toWebVTT([
     '[Events]',

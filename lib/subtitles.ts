@@ -112,5 +112,7 @@ export function toWebVTT(text: string, filename: string) {
     const text = escapeCue(line.replace(SRT_OVERRIDE, ''));
     return text.trim() ? text : [];
   });
-  return `WEBVTT\n\n${lines.join('\n')}\n`;
+  // A cue number that follows the last cue's text with no blank line between is read as one more line of that text
+  // and shows on screen, since only the timing under it starts the next cue: give it the blank line it was missing.
+  return `WEBVTT\n\n${lines.join('\n').replace(/([^\n])\n(\d+\n\d{2}:\d{2}:\d{2}\.\d{3} --> )/g, '$1\n\n$2')}\n`;
 }
