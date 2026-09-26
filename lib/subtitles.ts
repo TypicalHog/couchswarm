@@ -120,7 +120,7 @@ export function toWebVTT(text: string, filename: string) {
   // an .srt that was renamed .vtt falls through and is repaired instead of attaching an empty track.
   if (/\.vtt$/i.test(filename) && /^WEBVTT([ \t\n]|$)/.test(body)) return body;
   if (/\.(ass|ssa)$/i.test(filename)) {
-    const cues = [];
+    const cues = [], seen = new Set<string>();
     let fields = ASS_FIELDS, events = false;
     for (const line of body.split('\n')) {
       if (line.startsWith('[')) { events = /^\[events\]\s*$/i.test(line); continue; }
@@ -142,11 +142,16 @@ export function toWebVTT(text: string, filename: string) {
       const text = line.slice(from);
       // A vector drawing keeps its coordinates in the text field and would render as visible gibberish.
       if (values.length < fields.length - 1 || /\\p[1-9]/.test(text)) continue;
+      // Karaoke templating writes a line per syllable, each placed by position tags no cue can keep, and marks them
+      // 'fx': converted, a dozen fragments stacked up over the translation.
+      if (values[fields.indexOf('effect')]?.trim().toLowerCase() === 'fx') continue;
       const start = assClock(values[fields.indexOf('start')]), end = assClock(values[fields.indexOf('end')]);
       // A \N\N asks for a vertical gap, but WebVTT ends the cue at the empty line and everything the dialogue
       // says after it is never shown, so the gap goes and the words stay.
       const cue = escapeCue(stripOverrides(text).replaceAll('\\h', ' ').replace(/\\[Nn]/g, '\n')).split('\n').filter(part => part.trim()).join('\n').trim();
-      if (start && end && cue) cues.push(`${start} --> ${end}\n${cue}`);
+      // A sign drawn in layers is one line per layer, and the same words three times over read as three signs.
+      const entry = `${start} --> ${end}\n${cue}`;
+      if (start && end && cue && !seen.has(entry)) { seen.add(entry); cues.push(entry); }
     }
     return `WEBVTT\n\n${cues.join('\n\n')}\n`;
   }

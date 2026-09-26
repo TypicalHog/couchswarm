@@ -108,6 +108,20 @@ test('an ASS file is read by the fields its own Format line names', () => {
   assert.match(minimal, /^00:00:01\.000 --> 00:00:02\.000\nHello, there$/m, 'a script that names three fields has three');
 });
 
+test('karaoke syllables and the layers of a sign do not pile up on screen', () => {
+  const out = toWebVTT(['[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+    'Comment: 0,0:00:05.00,0:00:09.00,Romaji,,0,0,0,karaoke,{\\k30}Ka{\\k30}ze',
+    ...['Ka', 'ze', 'no', 'na', 'ka'].map((syllable, i) => `Dialogue: 0,0:00:05.00,0:00:09.00,Romaji,,0,0,0,fx,{\\an5\\pos(${400 + 90 * i},80)}${syllable}`),
+    'Dialogue: 0,0:00:05.00,0:00:09.00,Default,,0,0,0,,In the wind I wait for you',
+    ...[0, 1, 2].map(layer => `Dialogue: ${layer},0:00:10.00,0:00:12.00,Sign,,0,0,0,,{\\pos(960,300)\\blur${layer}}TOKYO STATION`),
+    'Dialogue: 0,0:00:13.00,0:00:14.00,Sign,,0,0,0,,TOKYO STATION'].join('\n'), 'a.ass');
+  assert.deepEqual(out.split('\n\n').slice(1).map(cue => cue.trim()), [
+    '00:00:05.000 --> 00:00:09.000\nIn the wind I wait for you',
+    '00:00:10.000 --> 00:00:12.000\nTOKYO STATION',
+    '00:00:13.000 --> 00:00:14.000\nTOKYO STATION',
+  ], 'the same words at another time are another sign');
+});
+
 test('a crafted ASS line is converted without blocking the thread', () => {
   const dialogue = (text: string) => `[Events]\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,${text}`;
   // Each of these took 20 seconds or more before the scans were bounded — long past the 12 seconds that keep
