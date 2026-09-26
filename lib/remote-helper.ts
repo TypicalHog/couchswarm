@@ -22,13 +22,18 @@ export async function connectRemoteHelper(session: Session, mediaVersion: number
     if (signal.aborted) abort();
   });
   const deadline = Date.now() + 120000, offlineDeadline = Date.now() + 20000;
+  // A guest whose own helper is up but still loading this movie would take the host's the moment that one is ready,
+  // and nothing moves a connected stream again: after a switch of video both helpers reload at once, and which one
+  // answered first was chance. So their own is given a little longer before the host's is taken instead.
+  const ownDeadline = Date.now() + 20000;
+  const awaitingOwn = () => status.ready && !status.own && status.mineOnline && Date.now() < ownDeadline;
   let misses = 0;
-  while (!status.ready) {
+  while (!status.ready || awaitingOwn()) {
     // Offline for a while: stream browser-only now; the readiness watcher upgrades when the helper returns.
     if (!status.online && Date.now() > offlineDeadline) return null;
     if (Date.now() > deadline) throw new Error(`${status.own ? 'Your' : 'The host’s'} helper is not ready. Keep it open and check that the torrent has seeders.`);
     // The helper's own status is written for the launcher window and can still read 'Ready…' while a new movie loads, so only its owner sees it.
-    report(status.online ? status.own ? status.status : 'The host’s helper is loading this movie…'
+    report(status.ready ? 'Your helper is loading this movie…' : status.online ? status.own ? status.status : 'The host’s helper is loading this movie…'
       : status.own ? 'Open your helper to continue…' : 'Waiting for the host to open their helper…');
     await sleep();
     // A blip in a 120 s wait is not a dead helper; the heartbeat below tolerates the same four misses.

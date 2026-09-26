@@ -90,6 +90,27 @@ test('three failed readiness polls are tolerated and a fourth gives up', async t
   assert.equal(calls(), 5, 'the fourth consecutive miss gives up');
 });
 
+// After a switch of video both helpers reload together, and a guest who took the host's because it answered first
+// would stay on it all episode: their own, up and loading, is waited for a little longer first.
+test('a guest waits a while for their own loading helper before taking the host’s', async t => {
+  const reports: string[] = [];
+  stub(t, call => helperStatus({ ready: true, own: call >= 4, mineOnline: true }));
+  const connecting = connect(message => reports.push(message));
+  // Past the wait it goes on to connect, which this suite cannot do; what it connects to is what it reported.
+  void connecting.catch(() => {});
+  await advance(5);
+  assert.ok(reports.includes('Your helper is loading this movie…'));
+  assert.equal(reports.at(-1), 'Connecting to your helper…', 'the guest took the host’s helper while their own was still loading');
+  const later: string[] = [];
+  stub(t, () => helperStatus({ ready: true, own: false, mineOnline: true }));
+  const fallback = connect(message => later.push(message));
+  void fallback.catch(() => {});
+  await advance(18);
+  assert.ok(!later.some(message => message.startsWith('Connecting to')), 'the host’s helper was taken before the guest’s own had its chance');
+  await advance(4);
+  assert.equal(later.at(-1), 'Connecting to the host’s helper…', 'a guest whose helper never finishes loading still gets the host’s');
+});
+
 test('a revoked pairing fails the wait without retrying', async t => {
   const calls = stub(t, call => call === 1 ? helperStatus() : Object.assign(new Error('This pairing was revoked.'), { status: 410 }));
   const revoked = connect();
