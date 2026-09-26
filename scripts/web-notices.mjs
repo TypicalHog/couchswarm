@@ -8,10 +8,14 @@ const manifest = JSON.parse(await fs.readFile(path.join(root, 'package.json'), '
 
 // ffmpeg-core.wasm ships inside playsvideo's dist and carries no licence file of its own, so the walk below never
 // meets it. Its notice is kept here against the version that was reviewed, and the check underneath stops this
-// script on a bump so somebody has to look at what the new build contains and where it came from.
+// script on a bump so somebody has to look at what the new build contains and where it came from. The build is
+// playsvideo's own audio-only one (dist/vendor/ffmpeg-core-audio), not the ffmpeg.wasm project its README links.
 const REVIEWED_PLAYSVIDEO = '0.4.7';
 const wasm = `ffmpeg-core.wasm, shipped inside playsvideo@${REVIEWED_PLAYSVIDEO} and loaded in the browser to transcode audio for MKV playback — LGPL-2.1
-Source: https://github.com/nicolo-ribaudo/ffmpeg.wasm, which builds FFmpeg (https://ffmpeg.org/). playsvideo states no GPL codecs are compiled in.
+Source: FFmpeg n5.1.4 (https://github.com/FFmpeg/FFmpeg/tree/n5.1.4), configured with --disable-everything and only the
+audio decoders, encoder, parsers and filters listed in playsvideo's build recipe, without --enable-gpl
+(https://github.com/kzahel/playsvideo/blob/v${REVIEWED_PLAYSVIDEO}/ffmpegbuild/Dockerfile.ffmpeg-audio), and linked with the
+fftools and bindings of https://github.com/ffmpegwasm/ffmpeg.wasm.
 Licence text: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
 `;
 

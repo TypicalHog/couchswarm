@@ -10,7 +10,10 @@ Regenerate with: node scripts/web-notices.mjs
 ----
 
 ffmpeg-core.wasm, shipped inside playsvideo@0.4.7 and loaded in the browser to transcode audio for MKV playback — LGPL-2.1
-Source: https://github.com/nicolo-ribaudo/ffmpeg.wasm, which builds FFmpeg (https://ffmpeg.org/). playsvideo states no GPL codecs are compiled in.
+Source: FFmpeg n5.1.4 (https://github.com/FFmpeg/FFmpeg/tree/n5.1.4), configured with --disable-everything and only the
+audio decoders, encoder, parsers and filters listed in playsvideo's build recipe, without --enable-gpl
+(https://github.com/kzahel/playsvideo/blob/v0.4.7/ffmpegbuild/Dockerfile.ffmpeg-audio), and linked with the
+fftools and bindings of https://github.com/ffmpegwasm/ffmpeg.wasm.
 Licence text: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
 
 ----
