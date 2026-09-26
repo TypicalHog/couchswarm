@@ -4,8 +4,10 @@ import { allReady, bufferedAhead, estimateServerNow, hasBuffer, PRESENCE_MS, ROO
 import { useTorrent } from '@/hooks/use-torrent';
 
 const seats = new Map<string, Promise<boolean>>();
+const releases = new Map<string, () => void>();
 // One seat per browser profile: a duplicated tab shares this session's token and would fight it for the seat.
 // Memoised per document and room, so a remount or a rotated session never re-requests a lock this tab already holds.
+// A refusal is not kept: it is only true until the other tab closes, and a Join pressed after that has to ask again.
 function claimSeat(roomId: string) {
   let seat = seats.get(roomId);
   if (!seat) {
@@ -13,12 +15,21 @@ function claimSeat(roomId: string) {
       if (typeof navigator.locks === 'undefined') { resolve(true); return; }
       void navigator.locks.request(`couchswarm:seat:${roomId}`, { ifAvailable: true }, lock => {
         resolve(!!lock);
-        return lock ? new Promise<void>(() => { /* Held until this document goes away. */ }) : undefined;
+        if (!lock) { seats.delete(roomId); return undefined; }
+        // Held until this document goes away or its seat does.
+        return new Promise<void>(release => { releases.set(roomId, release); });
       }).catch(() => resolve(true));
     });
     seats.set(roomId, seat);
   }
   return seat;
+}
+// A tab whose seat was taken away holds nothing worth guarding, and the link that brings the guest back - a rotated
+// one, typically - opens in a new tab, which the lock would otherwise refuse for as long as this one stays open.
+function releaseSeat(roomId: string) {
+  releases.get(roomId)?.();
+  releases.delete(roomId);
+  seats.delete(roomId);
 }
 
 // A re-claim key outlives the tab that wrote it by design, but nothing ever took one back, so a device kept an
@@ -281,7 +292,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
   const join = async (name: string) => {
     if (!invitation) return false;
     // A tab that cannot hold the seat must not spend the host's re-claim key: the server would crown a tab that never heartbeats.
-    if (!await claimSeat(invitation.roomId)) { setError('This room is already open in another CouchSwarm tab.'); return false; }
+    if (!await claimSeat(invitation.roomId)) { setError('This room is already open in another CouchSwarm tab. Close that tab, then join again.'); return false; }
     setBusy(true); setError('');
     // A corrected link pasted into this tab only changes the fragment, which never remounts the hook, so join
     // with whatever invite the address bar holds now rather than the one read at load.
@@ -361,6 +372,7 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
         const status = (err as { status?: number }).status;
         if (status === 401 || status === 404 || status === 410) {
           try { sessionStorage.removeItem(`couchswarm:${session.roomId}`); } catch { /* Storage blocked: nothing to clear. */ }
+          releaseSeat(session.roomId);
           const invite = new URLSearchParams(location.hash.slice(1)).get('invite');
           setSession(null); setSnapshot(null); setConnected(false);
           // The dialog that comes back is the one a first-time invitee sees, so without a reason beside it a seat
