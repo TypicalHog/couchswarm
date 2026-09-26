@@ -318,7 +318,8 @@ export default function CouchSwarm() {
   // A touch screen has no hover to bring the fullscreen bar back, and the bar lies over the picture where subtitles
   // are drawn, so there too it goes 2.5 s after the last touch, taking no taps while hidden. Only a finished tap shows
   // it: shown on the way down, or on a finger's jitter, it would take the very tap that asked for it. A pen hovering
-  // clear of the glass is a pointer like a mouse, and shows it as a mouse does.
+  // clear of the glass shows it as a mouse does where the screen has hover, since the hidden bar takes clicks there
+  // anyway; on a touch screen that hover is the pen on its way down to a tap, and showing the bar would hand it that tap.
   function revealControls(extendOnly = false) {
     const card = playerRef.current;
     if (!card || !isFullscreen) return;
@@ -341,7 +342,7 @@ export default function CouchSwarm() {
       <div className="room-heading"><div><div className="eyebrow"><span className={`dot ${swarm.connected || !session ? 'live' : ''}`}/>{session ? `ROOM ${session.roomId.slice(0, 8).toUpperCase()}` : 'YOUR OWN LITTLE CINEMA'}</div><h1 tabIndex={-1} ref={headingRef}>The living room</h1></div><div className="heading-actions"><span className="pill"><LockKeyhole size={12}/> Invite only</span><button className="primary-button" ref={inviteRef} aria-busy={swarm.busy} onClick={() => { if (!swarm.busy) void invite(); }} disabled={!!swarm.invitation || swarm.unsupported || swarm.refused}><Users size={16}/> Invite friends <ArrowRight size={15}/></button></div></div>
       <div className="workspace"><section aria-label="Room player">
         {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- a tap here only shows the bar, which keyboard focus already shows. */}
-        <div className="player-card" ref={playerRef} onPointerMove={event => revealControls(event.pointerType === 'touch' || (event.pointerType === 'pen' && event.buttons !== 0))} onClick={() => revealControls()}>
+        <div className="player-card" ref={playerRef} onPointerMove={event => revealControls(event.pointerType === 'touch' || (event.pointerType === 'pen' && (event.buttons !== 0 || matchMedia('(hover: none)').matches)))} onClick={() => revealControls()}>
           <div className="screen">
             {/* eslint-disable-next-line jsx-a11y/media-has-caption -- each viewer attaches their own track at runtime, so there is none to declare here. */}
             <video ref={videoRef} playsInline preload="auto" muted={muted} disablePictureInPicture aria-label="Shared room video" style={{ visibility: hasSource ? 'visible' : 'hidden' }}/>
