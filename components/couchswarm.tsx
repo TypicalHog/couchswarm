@@ -259,7 +259,13 @@ export default function CouchSwarm() {
   async function remove(member: { id: string; name: string }, resetLink: boolean) {
     if (swarm.busy) return;
     if (!await swarm.control('kick', { memberId: member.id })) return;
-    if (resetLink && !await swarm.control('rotate')) return;
+    // Their row, and the button that was pressed, went with the kick, so focus has somewhere to go either way - and a
+    // host told only that the room could not be reached would take it that the link they asked to reset was reset.
+    if (resetLink && !await swarm.control('rotate')) {
+      couchRef.current?.focus();
+      setFeedback(`${member.name} is out, but the invite link was not reset and still lets them in. Create a new one from Invite to the couch.`);
+      return;
+    }
     couchRef.current?.focus();
     setFeedback(resetLink ? `${member.name} is out and the couch has a new invite link. Everyone else rejoins with it.`
       : `${member.name} was removed. They can rejoin with the current link until you create a new one.`);
