@@ -165,14 +165,16 @@ test('multi-file webseed handles spaces, unicode, and pieces spanning file bound
   const metadata = new Uint8Array(await (await env.call(`/metadata/${lease.id}`)).arrayBuffer());
   const browser = new WebTorrent(offline);
   t.after(() => destroy(browser));
-  const torrent = await new Promise(resolve => browser.add(metadata, { store: MemoryStore }, resolve));
-  const done = once(torrent, 'done');
+  // Selected the way the room selects it: the video alone, whose last piece also carries the head of the next file.
+  const torrent = await new Promise(resolve => browser.add(metadata, { store: MemoryStore, deselect: true }, resolve));
+  const movie = torrent.files.find(file => file.name === files[0].name);
+  movie.select();
+  const done = once(movie, 'done');
   torrent.addWebSeed(`${env.origin}/torrent-helper/seed/${lease.id}`);
   await done;
-  for (const file of torrent.files) {
-    const expected = files.find(value => value.name === file.name);
-    assert.deepEqual(Buffer.from(await file.arrayBuffer()), Buffer.from(expected));
-  }
+  assert.deepEqual(Buffer.from(await movie.arrayBuffer()), Buffer.from(files[0]));
+  const [native] = env.nativeClients[0].torrents;
+  assert.deepEqual([2, 3].map(piece => native.bitfield.get(piece)), [false, false], 'the rest of the next file is not the movie, and the helper fetched none of it');
   const [cached] = await readdir(env.cacheRoot);
   await env.call(`/sessions/${lease.id}`, { method: 'DELETE' });
   const again = await env.open();
@@ -197,6 +199,22 @@ test('the helper serves the video span and the subtitles beside it, and nothing 
   const subtitle = await env.call(`/seed/${lease.id}/Test%20room/en.srt`);
   assert.equal(subtitle.status, 200);
   assert.deepEqual(Buffer.from(await subtitle.arrayBuffer()), Buffer.from(files[2]), 'a subtitle past the span still loads');
+});
+
+test('a file sharing the video’s first piece is served only its share of that piece', { timeout: 20000 }, async t => {
+  // notes.bin fills pieces 0 and 1 and half of 2, where the movie starts.
+  const files = [Object.assign(Buffer.alloc(40960, 3), { name: 'notes.bin' }), Object.assign(Buffer.alloc(57344, 5), { name: 'movie.mkv' })];
+  const env = await setup(t, files);
+  const lease = await env.open();
+  assert.equal((await env.ready(lease.id)).ready, true);
+  const outside = await env.call(`/seed/${lease.id}/Test%20room/notes.bin`, { headers: { Range: 'bytes=0-16383' } });
+  assert.equal(outside.status, 403, 'a piece only the other file uses would be fetched from the swarm for nobody');
+  assert.equal((await env.call(`/seed/${lease.id}/Test%20room/notes.bin`)).status, 403, 'nor does the whole file come out without a range');
+  const [native] = env.nativeClients[0].torrents;
+  assert.deepEqual([0, 1].map(piece => native.bitfield.get(piece)), [false, false], 'the refused pieces were never downloaded');
+  const shared = await env.call(`/seed/${lease.id}/Test%20room/notes.bin`, { headers: { Range: 'bytes=32768-40959' } });
+  assert.equal(shared.status, 206, 'a web seed completing the movie’s first piece still gets the other file’s share of it');
+  assert.deepEqual(Buffer.from(await shared.arrayBuffer()), files[0].subarray(32768));
 });
 
 test('helper rejects private-network metadata URLs and expires inactive viewers', { timeout: 15000 }, async t => {

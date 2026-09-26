@@ -500,6 +500,11 @@ export function createTorrentHelper({ siteOrigin, cacheRoot, idleMs = 120000, gr
       if (ranges === -1) { res.writeHead(416, { 'Content-Range': `bytes */${file.length}` }); res.end(); return; }
       if (ranges && (ranges.type !== 'bytes' || !Array.isArray(ranges) || ranges.length !== 1)) ranges = null;
       const { start, end } = ranges?.[0] || { start: 0, end: file.length - 1 };
+      // A file that only shares an end piece with the video is served that piece's worth of itself: asked for the
+      // rest, the helper would fetch it from the swarm, and the rest can be any size. The paired helper's wire keeps
+      // to the same pieces.
+      const first = Math.floor((file.offset + start) / torrent.pieceLength), last = Math.floor((file.offset + end) / torrent.pieceLength);
+      if (!servedRanges(torrent).some(range => range.from <= first && last <= range.to)) { json(res, 403, { error: 'That part of the torrent is not the movie.' }); return; }
       res.writeHead(ranges ? 206 : 200, { 'Content-Type': 'application/octet-stream', 'Accept-Ranges': 'bytes',
         'Content-Length': end - start + 1, 'Cache-Control': 'no-store',
         ...(ranges ? { 'Content-Range': `bytes ${start}-${end}/${file.length}` } : {}) });
