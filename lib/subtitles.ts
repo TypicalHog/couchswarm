@@ -114,5 +114,8 @@ export function toWebVTT(text: string, filename: string) {
   });
   // A cue number that follows the last cue's text with no blank line between is read as one more line of that text
   // and shows on screen, since only the timing under it starts the next cue: give it the blank line it was missing.
-  return `WEBVTT\n\n${lines.join('\n').replace(/([^\n])\n(\d+\n\d{2}:\d{2}:\d{2}\.\d{3} --> )/g, '$1\n\n$2')}\n`;
+  // Only a file that numbers its cues has cue numbers, though; in one that does not, a line of digits is dialogue.
+  const cues = lines.join('\n');
+  const numbered = /^\d+$/.test(lines.find(line => line.trim()) ?? '');
+  return `WEBVTT\n\n${numbered ? cues.replace(/([^\n])\n(\d+\n\d{2}:\d{2}:\d{2}\.\d{3} --> )/g, '$1\n\n$2') : cues}\n`;
 }

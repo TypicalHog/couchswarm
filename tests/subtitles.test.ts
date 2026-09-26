@@ -74,6 +74,8 @@ test('a cue number with no blank line before it starts its cue instead of ending
   assert.match(vtt, /^Hello there\n\n2\n00:00:03\.000 --> 00:00:04\.000\nGeneral Kenobi$/m, 'the next cue number shows as a line of the cue before it');
   assert.match(toWebVTT('1\n00:00:01,000 --> 00:00:02,000\nIt was 1999\n\n2\n00:00:03,000 --> 00:00:04,000\nx\n', 'a.srt'), /^It was 1999\n\n2\n/m,
     'a well-formed file is left as it was');
+  assert.match(toWebVTT('00:00:01,000 --> 00:00:02,000\nCountdown\n10\n00:00:03,000 --> 00:00:04,000\nLiftoff\n', 'a.srt'), /^Countdown\n10\n00:00:03\.000/m,
+    'a file without cue numbers has none to restore, so a line of digits stays dialogue');
 });
 
 test('an ASS dialogue becomes a plain-text cue', () => {
