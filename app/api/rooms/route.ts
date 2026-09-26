@@ -3,7 +3,12 @@ import { EXPIRY_GRACE_MS, HELPER_PEER_TTL_MS, ROOM_TTL_MS, validSource } from '@
 
 export const maxDuration = 10;
 
-const expiredRooms = 'SELECT id FROM rooms WHERE created_at < ? AND NOT EXISTS (SELECT 1 FROM members WHERE members.room_id = rooms.id AND members.last_seen > ?)';
+// Oldest first, a hundred at a time. Anyone can create rooms, and a burst made in one sitting expires in one sitting:
+// the creation that met it deleted all of it in its own write, holding the database's only writer for as long as that
+// took - 1.5 s for 20,000 rooms on a local file, every open room's heartbeat waiting behind it - and past a remote
+// database's 3 s deadline it failed the creation itself. Ties go by rowid, the order the created_at index already
+// keeps, so every statement below takes the same rooms and the scan stops at the hundredth.
+const expiredRooms = 'SELECT id FROM rooms WHERE created_at < ? AND NOT EXISTS (SELECT 1 FROM members WHERE members.room_id = rooms.id AND members.last_seen > ?) ORDER BY created_at, rowid LIMIT 100';
 
 async function handler(request: Request) {
   let body;
