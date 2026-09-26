@@ -470,6 +470,13 @@ test('an MKV whose sound starts after its first segment or ends before its last 
           'silence must fill exactly the stretch after the soundtrack');
       }
     }
+
+    // Converted off the grid, the old conversion runs up to a frame past the soundtrack's end; the silence after it
+    // must not start before that frame does, or the muxer refuses the segment.
+    const offGrid = (await playSegments(patched, clip, { end: 0.9, stamp: at => at && at + 0.031 })).segments.flatMap(segment => segment.frames);
+    const soundEnds = Math.max(...offGrid.filter(frame => !frame.silent).map(frame => frame.at + frame.lasts));
+    assert.ok(offGrid.some(frame => frame.silent) && offGrid.filter(frame => frame.silent).every(frame => frame.at >= soundEnds - 1e-6),
+      'silence must start after the converted sound ends');
   } finally {
     clip.dispose();
   }
