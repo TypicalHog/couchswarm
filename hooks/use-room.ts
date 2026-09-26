@@ -306,6 +306,8 @@ export function useRoom(videoRef: RefObject<HTMLVideoElement | null>) {
     try { saveSession(await request<Session>(`/api/rooms/${invitation.roomId}`, { action: 'join', name, invite, hostKey })); return true; }
     catch (err) {
       setError((err as Error).message);
+      // No seat came of it, so there is nothing for the lock to guard, and the link that works may open in a new tab.
+      releaseSeat(invitation.roomId);
       // A refused invite, a room that is gone and one that has expired are all final: nothing this guest types
       // changes them. Anything else - a full couch, a lost connection - is worth trying again.
       const status = (err as { status?: number }).status;
