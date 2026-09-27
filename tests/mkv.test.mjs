@@ -317,7 +317,8 @@ const AAC_RATES = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000
 
 // Runs a plan, by default three segments to 2 s cut between audio packets as a 25 fps film's keyframes are, over a
 // stand-in soundtrack running from `start` to `end` seconds: AC-3 or E-AC-3 converted by a stand-in for ffmpeg, or
-// AAC-LC passed through with the AudioSpecificConfig `asc`. `stamp` moves packets, to make a track irregular, and
+// AAC-LC passed through with the AudioSpecificConfig `asc` (by default FFmpeg's: the two bytes of AAC-LC, then an
+// extension saying there is no SBR). `stamp` moves packets, to make a track irregular, and
 // `zeroEvery` gives every so many packets no duration, as FFmpeg's muxer leaves the last one in each cluster, and
 // `order` processes the segments in another order, as a seek has hls.js ask for them.
 // Returns what each segment's fMP4 declares and plays, the span of audio each conversion run was given, and how
@@ -368,7 +369,7 @@ async function playSegments(process, clip, { rate = 48000, start = 0, end = 2.2,
       metrics: { totalMs: 0, audioDurationSec: 0, realtimeRatio: 0, ffmpegMs: 0, ffmpegSpeed: null },
     };
   };
-  const config = asc ?? [2 << 3 | AAC_RATES.indexOf(rate) >> 1, (AAC_RATES.indexOf(rate) & 1) << 7 | 2 << 3];
+  const config = asc ?? [2 << 3 | AAC_RATES.indexOf(rate) >> 1, (AAC_RATES.indexOf(rate) & 1) << 7 | 2 << 3, 0x56, 0xe5, 0x00];
   const audio = convert
     ? { audioCodec: codec, sourceCodec: codec, doTranscode: true, transcodeAudio, audioDecoderConfig: { codec: 'mp4a.40.2', numberOfChannels: 2, sampleRate: rate } }
     : { audioCodec: 'aac', sourceCodec: 'aac', doTranscode: false, audioDecoderConfig: { codec: 'mp4a.40.2', numberOfChannels: 2, sampleRate: rate, description: Uint8Array.from(config) } };
@@ -489,8 +490,8 @@ test('an MKV whose sound starts after its first segment or ends before its last 
       // At 32 kHz a start 9 frames in put the earliest silence a rounding error below zero, which the muxer refuses;
       // at 44.1 kHz an end stamped to the millisecond rounded the silence after it a frame late; a soundtrack whose
       // first packet lies before zero anchors its grid on the first one after; packets without a duration change nothing;
-      // and a seek can ask for a segment past the end before the one that reaches it.
-      for (const cut of [{ start: 1.2 }, { end: 0.9 }, { start: 0.288, rate: 32000 }, { end: 0.9, rate: 44100 }, { start: -0.016, end: 0.9 }, { end: 0.9, zeroEvery: 8 }, { end: 0.9, order: [0, 2, 1] }]) {
+      // a seek can ask for a segment past the end before the one that reaches it; and AAC-LC's config may be bare.
+      for (const cut of [{ start: 1.2 }, { start: 1.2, asc: [0x11, 0x90] }, { end: 0.9 }, { start: 0.288, rate: 32000 }, { end: 0.9, rate: 44100 }, { start: -0.016, end: 0.9 }, { end: 0.9, zeroEvery: 8 }, { end: 0.9, order: [0, 2, 1] }]) {
         const rate = cut.rate ?? 48000, frameSec = 1024 / rate;
         const { plan, segments, trackEnd } = await playSegments(patched, clip, { ...cut, convert });
         assert.ok(segments.every(segment => segment.format === `${rate} Hz × 2`), 'every segment must declare the soundtrack as it plays');
@@ -524,9 +525,11 @@ test('an MKV whose sound starts after its first segment or ends before its last 
     assert.ok(offGrid.some(frame => frame.silent) && offGrid.filter(frame => frame.silent).every(frame => frame.at >= soundEnds - 1e-6),
       'silence must start after the converted sound ends');
 
-    // HE-AAC v2 signalled implicitly reads as AAC-LC, but its AudioSpecificConfig declares one channel where the file
-    // says two, and AAC-LC silence would not decode there; it is left unpadded, as before.
-    for (const heAac of [{ channels: 1 }]) {
+    // Only plain AAC-LC is padded. HE-AAC signalled implicitly reads as AAC-LC, but its config gives it away: HE-AAC v2
+    // declares one channel where the file says two, a file may give the output rate where the config gives the core
+    // rate, and a backward-compatible config carries its SBR in three more bytes. AAC-LC silence would not decode
+    // right in any of them, so they are left as they were.
+    for (const heAac of [{ channels: 1 }, { asc: [0x13, 0x10] }, { rate: 24000, asc: [0x13, 0x10, 0x56, 0xe5, 0x98] }]) {
       const track = { start: 1.2, convert: false, ...heAac };
       if (heAac.channels) track.asc = [2 << 3 | 3 >> 1, (3 & 1) << 7 | heAac.channels << 3];
       assert.deepEqual(await output(patched, clip, track), await output(unpatched, clip, track), `${JSON.stringify(heAac)} must get no silence`);
