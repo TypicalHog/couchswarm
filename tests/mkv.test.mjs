@@ -316,8 +316,9 @@ const SILENT_STEREO_AAC = [0x21, 0x00, 0x49, 0x90, 0x02, 0x19, 0x00, 0x23, 0x80]
 const AAC_RATES = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350];
 
 // Runs a plan, by default three segments to 2 s cut between audio packets as a 25 fps film's keyframes are, over a
-// stand-in soundtrack running from `start` to `end` seconds: AC-3 or E-AC-3 converted by a stand-in for ffmpeg, or
-// AAC-LC passed through with the AudioSpecificConfig `asc` (by default FFmpeg's: the two bytes of AAC-LC, then an
+// stand-in soundtrack running from `start` to `end` seconds: AC-3, E-AC-3, MP3 or FLAC converted by a stand-in for
+// ffmpeg, each packet led by its codec's frame header (or `header`), or AAC-LC passed through with the
+// AudioSpecificConfig `asc` (by default FFmpeg's: the two bytes of AAC-LC, then an
 // extension saying there is no SBR). `stamp` moves packets, to make a track irregular, and
 // `zeroEvery` gives every so many packets no duration, as FFmpeg's muxer leaves the last one in each cluster, and
 // `order` processes the segments in another order, as a seek has hls.js ask for them.
@@ -325,12 +326,12 @@ const AAC_RATES = [96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000
 // many packet lookups each segment made (in a real file, a lookup past the soundtrack's end reads on to the end
 // of the file).
 async function playSegments(process, clip, { rate = 48000, start = 0, end = 2.2, convert = true, codec = convert ? 'ac3' : 'aac',
-  cuts = [0, 0.53, 1.12], until = 2, stamp = at => at, size = convert ? 1536 : 1024, zeroEvery = 0, asc, order = cuts.map((_, i) => i) } = {}) {
+  cuts = [0, 0.53, 1.12], until = 2, stamp = at => at, size = convert ? 1536 : 1024, zeroEvery = 0, asc, order = cuts.map((_, i) => i),
+  header = { eac3: [0x0b, 0x77, 0, 0, [256, 512, 768, 1536].indexOf(size) << 4, 16 << 3], mp3: [0xff, size === 1152 ? 0xfb : 0xf3, 0x90, 0],
+    flac: [0xff, 0xf8, { 192: 1, 1152: 3, 4608: 5, 4096: 12 }[size] << 4 | 9, 0x08] }[codec] ?? [] } = {}) {
   const plan = cuts.map((startSec, i) => ({ startSec, durationSec: (cuts[i + 1] ?? until) - startSec }));
   // The track as mediabunny reads one from an MKV: packets stamped to the millisecond, each lasting until the next,
-  // led by the frame header E-AC-3 names its length in, then carrying their stamp, their true length and the exact
-  // time their sound starts.
-  const header = codec === 'eac3' ? [0x0b, 0x77, 0, 0, [256, 512, 768, 1536].indexOf(size) << 4, 16 << 3] : [];
+  // led by the frame header, then carrying their stamp, their true length and the exact time their sound starts.
   const count = Math.ceil((end - start) * rate / size);
   const stamps = Array.from({ length: count }, (_, i) => stamp(start + Math.round(i * size / rate * 1000) / 1000));
   const track = stamps.map((at, i) => {
@@ -424,17 +425,18 @@ test('converted MKV audio meets frame for frame at every segment seam', { timeou
     assert.ok(before[1][0].at < before[0].at(-1).at + before[0].at(-1).lasts, 'unpatched, a segment must still overlap the one before');
 
     // The packet length comes from the codec: 1536 samples for AC-3, stamped unevenly to the millisecond at 44.1 kHz,
-    // and what the frame header says for E-AC-3, here three blocks of 256. Packets FFmpeg leaves without a duration
-    // change nothing.
-    for (const track of [{}, { rate: 44100 }, { codec: 'eac3', size: 768 }, { zeroEvery: 8 }]) {
+    // and what the frame header says for the rest: E-AC-3 in three blocks of 256; MPEG-1 Layer III and FLAC in blocks
+    // of 4096, both at 44.1 kHz. Packets FFmpeg leaves without a duration change nothing.
+    const gcd = (a, b) => b ? gcd(b, a % b) : a;
+    for (const track of [{}, { rate: 44100 }, { codec: 'eac3', size: 768 }, { codec: 'mp3', size: 1152, rate: 44100 }, { codec: 'flac', size: 4096, rate: 44100 }, { zeroEvery: 8 }]) {
       const { plan, segments, runs } = await playSegments(patched, clip, track);
-      const rate = track.rate ?? 48000, frameSec = 1024 / rate;
+      const rate = track.rate ?? 48000, frameSec = 1024 / rate, size = track.size ?? 1536, stepSec = size / gcd(size, 1024) * 1024 / rate;
       const frames = segments.flatMap(segment => segment.frames);
       for (const frame of frames) assert.ok(Math.abs(frame.at - frame.holds) < 1e-6, `the frame at ${frame.at} s must play the audio stamped on it`);
       assertMeets(frames, 'frames must meet with no gap or overlap, seams included');
       for (let index = 1; index < plan.length; index++) {
         const seam = segments[index].frames[0].at;
-        assert.ok(seam <= plan[index].startSec && plan[index].startSec - seam < 3072 / rate, 'a segment’s sound must start with its picture or just before it');
+        assert.ok(seam <= plan[index].startSec && plan[index].startSec - seam < stepSec, 'a segment’s sound must start with its picture or just before it');
         assert.ok(runs[index].start <= seam - 2 * frameSec, 'the encoder must reach the seam on real audio');
         assert.ok(runs[index - 1].end >= seam + 2 * frameSec, 'and the run before it must carry on past the seam');
       }
