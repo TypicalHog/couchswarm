@@ -344,7 +344,8 @@ async function playSegments(process, clip, { rate = 48000, start = 0, end = 2.2,
   const reads = plan.map(() => ({ lookups: 0, pastEnd: 0 }));
   let current = 0;
   const audioSink = {
-    getFirstPacket: async () => track[0] ?? null,
+    // Read for its metadata only, a packet comes back without its bytes, as mediabunny's placeholders do.
+    getFirstPacket: async options => options?.metadataOnly ? new EncodedPacket(new Uint8Array(0), 'key', track[0].timestamp, track[0].duration, 0) : track[0],
     getPacket: async at => { reads[current].lookups++; return track.findLast(packet => packet.timestamp <= at) ?? null; },
     getNextPacket: async packet => {
       reads[current].lookups++;
@@ -425,10 +426,12 @@ test('converted MKV audio meets frame for frame at every segment seam', { timeou
     assert.ok(before[1][0].at < before[0].at(-1).at + before[0].at(-1).lasts, 'unpatched, a segment must still overlap the one before');
 
     // The packet length comes from the codec: 1536 samples for AC-3, stamped unevenly to the millisecond at 44.1 kHz,
-    // and what the frame header says for the rest: E-AC-3 in three blocks of 256; MPEG-1 Layer III and FLAC in blocks
-    // of 4096, both at 44.1 kHz. Packets FFmpeg leaves without a duration change nothing.
+    // and what the frame header says for the rest: E-AC-3 in three blocks of 256; E-AC-3 at a reduced rate, where the
+    // header has no block count and a frame is always six blocks; AC-3 frames carried in an E-AC-3 track; MPEG-1
+    // Layer III and FLAC in blocks of 4096, both at 44.1 kHz. Packets FFmpeg leaves without a duration change nothing.
     const gcd = (a, b) => b ? gcd(b, a % b) : a;
-    for (const track of [{}, { rate: 44100 }, { codec: 'eac3', size: 768 }, { codec: 'mp3', size: 1152, rate: 44100 }, { codec: 'flac', size: 4096, rate: 44100 }, { zeroEvery: 8 }]) {
+    for (const track of [{}, { rate: 44100 }, { codec: 'eac3', size: 768 }, { codec: 'eac3', rate: 24000, header: [0x0b, 0x77, 0, 0, 0xc0, 16 << 3] },
+      { codec: 'eac3', header: [0x0b, 0x77, 0, 0, 0x12, 8 << 3] }, { codec: 'mp3', size: 1152, rate: 44100 }, { codec: 'flac', size: 4096, rate: 44100 }, { zeroEvery: 8 }]) {
       const { plan, segments, runs } = await playSegments(patched, clip, track);
       const rate = track.rate ?? 48000, frameSec = 1024 / rate, size = track.size ?? 1536, stepSec = size / gcd(size, 1024) * 1024 / rate;
       const frames = segments.flatMap(segment => segment.frames);
