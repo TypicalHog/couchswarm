@@ -487,9 +487,10 @@ test('an MKV whose sound starts after its first segment or ends before its last 
         'unpatched, a segment past an early end must still carry only sound from before it');
 
       // At 32 kHz a start 9 frames in put the earliest silence a rounding error below zero, which the muxer refuses;
-      // packets without a duration change nothing; and a seek can ask for a segment past the end before the one that
-      // reaches it.
-      for (const cut of [{ start: 1.2 }, { end: 0.9 }, { start: 0.288, rate: 32000 }, { end: 0.9, zeroEvery: 8 }, { end: 0.9, order: [0, 2, 1] }]) {
+      // at 44.1 kHz an end stamped to the millisecond rounded the silence after it a frame late; a soundtrack whose
+      // first packet lies before zero anchors its grid on the first one after; packets without a duration change nothing;
+      // and a seek can ask for a segment past the end before the one that reaches it.
+      for (const cut of [{ start: 1.2 }, { end: 0.9 }, { start: 0.288, rate: 32000 }, { end: 0.9, rate: 44100 }, { start: -0.016, end: 0.9 }, { end: 0.9, zeroEvery: 8 }, { end: 0.9, order: [0, 2, 1] }]) {
         const rate = cut.rate ?? 48000, frameSec = 1024 / rate;
         const { plan, segments, trackEnd } = await playSegments(patched, clip, { ...cut, convert });
         assert.ok(segments.every(segment => segment.format === `${rate} Hz × 2`), 'every segment must declare the soundtrack as it plays');
